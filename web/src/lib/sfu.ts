@@ -4,6 +4,7 @@ import type {
   IceCandidate,
   IceParameters,
   MediaKind,
+  Producer,
   RtpCapabilities,
   RtpParameters,
   Transport,
@@ -17,11 +18,15 @@ function createDevice(): Device {
 }
 
 export type SfuRole = 'speaker' | 'compositor';
+export type MediaSource = 'camera' | 'screen';
 
 export interface RemotePeer {
   id: string;
   name: string;
+  /** Camera + mic tracks. */
   stream: MediaStream;
+  /** Screen-share video, when this peer is sharing. */
+  screenStream?: MediaStream;
 }
 
 export interface SfuCallbacks {
@@ -34,6 +39,7 @@ interface ProducerInfo {
   peerId: string;
   peerName: string;
   kind: 'audio' | 'video';
+  appData?: { source?: MediaSource };
 }
 
 interface JoinResult {
@@ -67,6 +73,7 @@ type SignalingResponse =
 type SignalingEvent =
   | { event: 'newProducer'; data: ProducerInfo }
   | { event: 'peerLeft'; data: { peerId: string } }
+  | { event: 'consumerClosed'; data: { consumerId: string } }
   | { event: string; data: unknown };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -84,6 +91,10 @@ function parseSignalingMessage(raw: unknown): SignalingResponse | SignalingEvent
     return { event: raw.event, data: raw.data };
   }
   return null;
+}
+
+function resolveSource(info: ProducerInfo): MediaSource {
+  return info.appData?.source === 'screen' ? 'screen' : 'camera';
 }
 
 /**
@@ -105,6 +116,9 @@ export class SfuClient {
   >();
   private peers = new Map<string, RemotePeer>();
   private callbacks: SfuCallbacks;
+  /** Maps consumer id → peer id + track for consumerClosed cleanup. */
+  private consumerTracks = new Map<string, { peerId: string; track: MediaStreamTrack; source: MediaSource }>();
+  private screenProducer: Producer | undefined;
 
   constructor(callbacks: SfuCallbacks) {
     this.callbacks = callbacks;
@@ -149,7 +163,7 @@ export class SfuClient {
     }
   }
 
-  /** Publish local tracks (studio only; the compositor never calls this). */
+  /** Publish local camera/mic tracks (studio only; the compositor never calls this). */
   async publish(stream: MediaStream): Promise<void> {
     this.sendTransport = await this.createTransport('send');
     for (const track of stream.getTracks()) {
@@ -160,17 +174,47 @@ export class SfuClient {
           track,
           encodings: [{ maxBitrate: 4_000_000 }],
           codecOptions: { videoGoogleStartBitrate: 2000 },
+          appData: { source: 'camera' },
         });
       } else {
         await this.sendTransport.produce({
           track,
           encodings: [{ maxBitrate: 128_000 }],
+          appData: { source: 'camera' },
         });
       }
     }
   }
 
+  /** Publish a screen-share video track (separate producer from camera). */
+  async publishScreen(track: MediaStreamTrack): Promise<void> {
+    if (!this.sendTransport) throw new Error('publish camera/mic first');
+    if (this.screenProducer) throw new Error('already sharing screen');
+    this.screenProducer = await this.sendTransport.produce({
+      track,
+      encodings: [{ maxBitrate: 4_000_000 }],
+      codecOptions: { videoGoogleStartBitrate: 2000 },
+      appData: { source: 'screen' },
+    });
+  }
+
+  /** Stop the local screen-share producer without leaving the room. */
+  async stopScreen(): Promise<void> {
+    const producer = this.screenProducer;
+    if (!producer) return;
+    this.screenProducer = undefined;
+    const producerId = producer.id;
+    producer.close();
+    try {
+      await this.request('closeProducer', { producerId });
+    } catch (err) {
+      console.warn('[sfu] closeProducer failed:', err);
+    }
+  }
+
   close(): void {
+    this.screenProducer?.close();
+    this.screenProducer = undefined;
     this.sendTransport?.close();
     this.recvTransport?.close();
     this.ws?.close();
@@ -194,8 +238,13 @@ export class SfuClient {
     });
 
     if (direction === 'send') {
-      transport.on('produce', ({ kind, rtpParameters }, callback, errback) => {
-        this.request<ProduceResult>('produce', { transportId: transport.id, kind, rtpParameters })
+      transport.on('produce', ({ kind, rtpParameters, appData }, callback, errback) => {
+        this.request<ProduceResult>('produce', {
+          transportId: transport.id,
+          kind,
+          rtpParameters,
+          appData,
+        })
           .then(({ id }) => callback({ id }))
           .catch(errback);
       });
@@ -205,6 +254,7 @@ export class SfuClient {
 
   private async consumeProducer(info: ProducerInfo): Promise<void> {
     if (!this.recvTransport) throw new Error('recv transport missing');
+    const source = resolveSource(info);
     const data = await this.request<ConsumeResult>('consume', {
       transportId: this.recvTransport.id,
       producerId: info.producerId,
@@ -222,9 +272,41 @@ export class SfuClient {
       peer = { id: info.peerId, name: info.peerName, stream: new MediaStream() };
       this.peers.set(info.peerId, peer);
     }
-    peer.stream.addTrack(consumer.track);
+
+    if (source === 'screen') {
+      if (!peer.screenStream) peer.screenStream = new MediaStream();
+      peer.screenStream.addTrack(consumer.track);
+    } else {
+      peer.stream.addTrack(consumer.track);
+    }
+
+    this.consumerTracks.set(consumer.id, {
+      peerId: info.peerId,
+      track: consumer.track,
+      source,
+    });
 
     await this.request('resumeConsumer', { consumerId: data.id });
+    this.emitPeers();
+  }
+
+  private removeConsumerTrack(consumerId: string): void {
+    const entry = this.consumerTracks.get(consumerId);
+    if (!entry) return;
+    this.consumerTracks.delete(consumerId);
+
+    const peer = this.peers.get(entry.peerId);
+    if (!peer) return;
+
+    if (entry.source === 'screen') {
+      peer.screenStream?.removeTrack(entry.track);
+      if (peer.screenStream && peer.screenStream.getTracks().length === 0) {
+        peer.screenStream = undefined;
+      }
+    } else {
+      peer.stream.removeTrack(entry.track);
+    }
+    entry.track.stop();
     this.emitPeers();
   }
 
@@ -250,8 +332,18 @@ export class SfuClient {
       case 'peerLeft': {
         const data = msg.data;
         if (isRecord(data) && typeof data.peerId === 'string') {
+          for (const [consumerId, entry] of this.consumerTracks) {
+            if (entry.peerId === data.peerId) this.consumerTracks.delete(consumerId);
+          }
           this.peers.delete(data.peerId);
           this.emitPeers();
+        }
+        break;
+      }
+      case 'consumerClosed': {
+        const data = msg.data;
+        if (isRecord(data) && typeof data.consumerId === 'string') {
+          this.removeConsumerTrack(data.consumerId);
         }
         break;
       }
@@ -272,6 +364,13 @@ export class SfuClient {
   }
 
   private emitPeers(): void {
-    this.callbacks.onPeersChanged([...this.peers.values()]);
+    this.callbacks.onPeersChanged(
+      [...this.peers.values()].map((peer) => ({
+        ...peer,
+        // Fresh object so React state updates reliably when only tracks change.
+        stream: peer.stream,
+        screenStream: peer.screenStream,
+      })),
+    );
   }
 }

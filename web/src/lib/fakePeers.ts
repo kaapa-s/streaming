@@ -74,3 +74,48 @@ export function createFakePeer(index: number, { audio = true } = {}): FakePeerHa
 
   return { id, name, stream, stop };
 }
+
+export interface FakeScreenHandle {
+  stream: MediaStream;
+  stop: () => void;
+}
+
+/** Synthetic widescreen "slides" stream for presentation-layout testing. */
+export function createFakeScreen(): FakeScreenHandle {
+  const canvas = document.createElement('canvas');
+  canvas.width = 1280;
+  canvas.height = 720;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('2d canvas context unavailable');
+
+  let frame = 0;
+  const draw = () => {
+    frame += 1;
+    ctx.fillStyle = '#f4f6fa';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.fillStyle = '#1a2332';
+    ctx.fillRect(80, 80, canvas.width - 160, canvas.height - 160);
+
+    ctx.fillStyle = '#7eb6ff';
+    ctx.font = '700 56px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Shared screen', canvas.width / 2, canvas.height / 2 - 20);
+
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.font = '500 24px system-ui, sans-serif';
+    ctx.fillText(`slide preview · frame ${frame}`, canvas.width / 2, canvas.height / 2 + 36);
+    ctx.textAlign = 'left';
+  };
+  draw();
+  const timer = window.setInterval(draw, 1000 / 30);
+  const stream = canvas.captureStream(30);
+
+  return {
+    stream,
+    stop: () => {
+      window.clearInterval(timer);
+      for (const track of stream.getTracks()) track.stop();
+    },
+  };
+}

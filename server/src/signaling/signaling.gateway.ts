@@ -6,6 +6,7 @@ import { verifyJoinToken } from '../common/join-token';
 import { MediasoupService } from '../mediasoup/mediasoup.service';
 
 type PeerRole = 'speaker' | 'compositor';
+type MediaSource = 'camera' | 'screen';
 
 interface Peer {
   id: string;
@@ -16,6 +17,28 @@ interface Peer {
   transports: Map<string, types.WebRtcTransport>;
   producers: Map<string, types.Producer>;
   consumers: Map<string, types.Consumer>;
+}
+
+function resolveMediaSource(appData: unknown): MediaSource {
+  if (
+    typeof appData === 'object' &&
+    appData !== null &&
+    'source' in appData &&
+    (appData as { source: unknown }).source === 'screen'
+  ) {
+    return 'screen';
+  }
+  return 'camera';
+}
+
+function producerInfo(member: Peer, producer: types.Producer) {
+  return {
+    producerId: producer.id,
+    peerId: member.id,
+    peerName: member.name,
+    kind: producer.kind,
+    appData: { source: resolveMediaSource(producer.appData) },
+  };
 }
 
 interface RequestMessage {
@@ -104,12 +127,7 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
 
       const members = this.rooms.get(room) ?? new Set<Peer>();
       const producers = [...members].flatMap((member) =>
-        [...member.producers.values()].map((producer) => ({
-          producerId: producer.id,
-          peerId: member.id,
-          peerName: member.name,
-          kind: producer.kind,
-        })),
+        [...member.producers.values()].map((producer) => producerInfo(member, producer)),
       );
       members.add(peer);
       this.rooms.set(room, members);
@@ -147,18 +165,27 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
       case 'produce': {
         const transport = peer.transports.get(String(data.transportId));
         if (!transport) throw new Error('unknown transport');
+        const source = resolveMediaSource(data.appData);
         const producer = await transport.produce({
           kind: data.kind as types.MediaKind,
           rtpParameters: data.rtpParameters as types.RtpParameters,
+          appData: { source },
         });
         peer.producers.set(producer.id, producer);
-        this.broadcast(peer.room, peer, 'newProducer', {
-          producerId: producer.id,
-          peerId: peer.id,
-          peerName: peer.name,
-          kind: producer.kind,
+        producer.on('transportclose', () => {
+          peer.producers.delete(producer.id);
         });
+        this.broadcast(peer.room, peer, 'newProducer', producerInfo(peer, producer));
         return { id: producer.id };
+      }
+
+      case 'closeProducer': {
+        const producerId = String(data.producerId);
+        const producer = peer.producers.get(producerId);
+        if (!producer) throw new Error('unknown producer');
+        producer.close();
+        peer.producers.delete(producerId);
+        return {};
       }
 
       case 'consume': {

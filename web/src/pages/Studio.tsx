@@ -17,7 +17,17 @@ const params = new URLSearchParams(location.search);
 const YT_RTMP_STORAGE_KEY = 'streaming-studio-yt-rtmp';
 const YT_RES_STORAGE_KEY = 'streaming-studio-resolution';
 
-function VideoTile({ stream, muted, label }: { stream: MediaStream; muted: boolean; label: string }) {
+function VideoTile({
+  stream,
+  muted,
+  label,
+  sharing,
+}: {
+  stream: MediaStream;
+  muted: boolean;
+  label: string;
+  sharing?: boolean;
+}) {
   const ref = useRef<HTMLVideoElement>(null);
   useEffect(() => {
     if (ref.current && ref.current.srcObject !== stream) {
@@ -28,6 +38,7 @@ function VideoTile({ stream, muted, label }: { stream: MediaStream; muted: boole
     <div className="tile">
       <video ref={ref} autoPlay playsInline muted={muted} />
       <span className="tile-label">{label}</span>
+      {sharing && <span className="tile-badge">Sharing</span>}
     </div>
   );
 }
@@ -42,6 +53,7 @@ export function Studio() {
   const [joined, setJoined] = useState(false);
   const [error, setError] = useState('');
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [localScreenStream, setLocalScreenStream] = useState<MediaStream | null>(null);
   const [remotePeers, setRemotePeers] = useState<RemotePeer[]>([]);
   const [recording, setRecording] = useState(false);
   const [live, setLive] = useState(false);
@@ -73,7 +85,16 @@ export function Studio() {
     }
   };
 
+  const stopLocalScreen = useCallback(async () => {
+    await sfuRef.current?.stopScreen();
+    setLocalScreenStream((prev) => {
+      prev?.getTracks().forEach((t) => t.stop());
+      return null;
+    });
+  }, []);
+
   const onLogout = async () => {
+    await stopLocalScreen();
     sfuRef.current?.close();
     sfuRef.current = null;
     localStream?.getTracks().forEach((t) => t.stop());
@@ -145,10 +166,53 @@ export function Studio() {
   useEffect(() => {
     if (!compositorRef.current || !localStream) return;
     compositorRef.current.setPeers([
-      { id: 'local', name, stream: localStream },
+      {
+        id: 'local',
+        name,
+        stream: localStream,
+        ...(localScreenStream ? { screenStream: localScreenStream } : {}),
+      },
       ...remotePeers,
     ]);
-  }, [joined, localStream, remotePeers, name]);
+  }, [joined, localStream, localScreenStream, remotePeers, name]);
+
+  const toggleScreenShare = async () => {
+    setError('');
+    if (localScreenStream) {
+      await stopLocalScreen();
+      return;
+    }
+    try {
+      if (!navigator.mediaDevices?.getDisplayMedia) {
+        throw new Error('Screen sharing is not supported in this browser');
+      }
+      const sfu = sfuRef.current;
+      if (!sfu) throw new Error('not connected');
+      const screen = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: false,
+      });
+      const track = screen.getVideoTracks()[0];
+      if (!track) {
+        screen.getTracks().forEach((t) => t.stop());
+        throw new Error('no screen video track');
+      }
+      track.addEventListener('ended', () => {
+        void stopLocalScreen();
+      });
+      try {
+        await sfu.publishScreen(track);
+      } catch (err) {
+        screen.getTracks().forEach((t) => t.stop());
+        throw err;
+      }
+      setLocalScreenStream(screen);
+    } catch (err) {
+      // User cancelled the picker — not an error worth showing.
+      if (err instanceof DOMException && err.name === 'NotAllowedError') return;
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
 
   const onRtmpChange = (value: string) => {
     setRtmpUrl(value);
@@ -316,6 +380,9 @@ export function Studio() {
             disabled={recording}
             title="Paste rtmp://a.rtmp.youtube.com/live2/<key> or just the stream key"
           />
+          <button type="button" onClick={() => void toggleScreenShare()}>
+            {localScreenStream ? 'Stop sharing' : 'Share screen'}
+          </button>
           {recording && <span className="rec-dot">{live ? 'LIVE' : 'REC'}</span>}
           <button className={recording ? 'danger' : 'primary'} onClick={() => void toggleRecording()}>
             {actionLabel}
@@ -332,9 +399,22 @@ export function Studio() {
         <section>
           <h2>Speakers</h2>
           <div className="tiles">
-            {localStream && <VideoTile stream={localStream} muted label={`${name} (you)`} />}
+            {localStream && (
+              <VideoTile
+                stream={localStream}
+                muted
+                label={`${name} (you)`}
+                sharing={!!localScreenStream}
+              />
+            )}
             {remotePeers.map((peer) => (
-              <VideoTile key={peer.id} stream={peer.stream} muted={false} label={peer.name} />
+              <VideoTile
+                key={peer.id}
+                stream={peer.stream}
+                muted={false}
+                label={peer.name}
+                sharing={!!peer.screenStream}
+              />
             ))}
           </div>
         </section>

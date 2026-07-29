@@ -2,6 +2,8 @@ export interface CompositorPeer {
   id: string;
   name: string;
   stream: MediaStream;
+  /** When set, triggers presentation layout (left cameras + main screen). */
+  screenStream?: MediaStream;
 }
 
 export interface Compositor {
@@ -28,10 +30,22 @@ interface TileEntry {
   videoTrackCount: number;
 }
 
+interface ScreenEntry {
+  peerId: string;
+  stream: MediaStream;
+  video: HTMLVideoElement;
+  videoTrackCount: number;
+}
+
+const SPEAKER_STRIP_RATIO = 0.22;
+
 /**
  * Draws all peers into a single canvas (grid layout, cover-fit, name labels)
  * and optionally mixes their audio with Web Audio. The same module powers the
  * studio's program preview and the headless recorder, so both are identical.
+ *
+ * When any peer has a screenStream, switches to presentation layout:
+ * shrunk cameras stacked on the left, screen contain-fit on the right.
  */
 export function createCompositor(options: CompositorOptions = {}): Compositor {
   const { width = 1280, height = 720, fps = 30, mixAudio = false } = options;
@@ -51,24 +65,32 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
   }
 
   const entries = new Map<string, TileEntry>();
+  let screenEntry: ScreenEntry | undefined;
   let diagAt = 0;
 
-  const bindVideo = (entry: TileEntry) => {
-    entry.video.srcObject = entry.stream;
-    entry.videoTrackCount = entry.stream.getVideoTracks().length;
-    void entry.video.play().catch(() => undefined);
+  const createVideoEl = () => {
+    const video = document.createElement('video');
+    video.muted = true;
+    video.playsInline = true;
+    video.autoplay = true;
+    return video;
+  };
+
+  const bindVideo = (video: HTMLVideoElement, stream: MediaStream): number => {
+    video.srcObject = stream;
+    void video.play().catch(() => undefined);
+    return stream.getVideoTracks().length;
   };
 
   const setPeers = (peers: CompositorPeer[]) => {
     const seen = new Set<string>();
+    let nextScreen: { peerId: string; stream: MediaStream } | undefined;
+
     for (const peer of peers) {
       seen.add(peer.id);
       let entry = entries.get(peer.id);
       if (!entry) {
-        const video = document.createElement('video');
-        video.muted = true;
-        video.playsInline = true;
-        video.autoplay = true;
+        const video = createVideoEl();
         entry = {
           name: peer.name,
           stream: peer.stream,
@@ -76,13 +98,13 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
           videoTrackCount: -1,
         };
         entries.set(peer.id, entry);
-        bindVideo(entry);
+        entry.videoTrackCount = bindVideo(entry.video, entry.stream);
       } else {
         entry.name = peer.name;
         entry.stream = peer.stream;
         const videoCount = peer.stream.getVideoTracks().length;
         if (entry.video.srcObject !== peer.stream || entry.videoTrackCount !== videoCount) {
-          bindVideo(entry);
+          entry.videoTrackCount = bindVideo(entry.video, peer.stream);
         }
       }
       // Tracks can arrive one at a time; hook up audio once it exists.
@@ -90,7 +112,13 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
         entry.audioSource = audioCtx.createMediaStreamSource(peer.stream);
         entry.audioSource.connect(audioDestination);
       }
+
+      // First peer with a screenStream wins (deterministic peer order).
+      if (!nextScreen && peer.screenStream && peer.screenStream.getVideoTracks().length > 0) {
+        nextScreen = { peerId: peer.id, stream: peer.screenStream };
+      }
     }
+
     for (const [id, entry] of entries) {
       if (!seen.has(id)) {
         entry.audioSource?.disconnect();
@@ -98,15 +126,45 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
         entries.delete(id);
       }
     }
+
+    if (nextScreen) {
+      if (
+        !screenEntry ||
+        screenEntry.peerId !== nextScreen.peerId ||
+        screenEntry.stream !== nextScreen.stream
+      ) {
+        if (screenEntry) screenEntry.video.srcObject = null;
+        const video = createVideoEl();
+        screenEntry = {
+          peerId: nextScreen.peerId,
+          stream: nextScreen.stream,
+          video,
+          videoTrackCount: bindVideo(video, nextScreen.stream),
+        };
+      } else {
+        const videoCount = nextScreen.stream.getVideoTracks().length;
+        if (screenEntry.videoTrackCount !== videoCount) {
+          screenEntry.videoTrackCount = bindVideo(screenEntry.video, nextScreen.stream);
+        }
+      }
+    } else if (screenEntry) {
+      screenEntry.video.srcObject = null;
+      screenEntry = undefined;
+    }
   };
 
-  const drawTile = (entry: TileEntry, x: number, y: number, w: number, h: number) => {
+  const drawTileCover = (
+    video: HTMLVideoElement,
+    name: string | undefined,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+  ) => {
     ctx.fillStyle = '#1a1d24';
     ctx.fillRect(x, y, w, h);
 
-    const video = entry.video;
     if (video.readyState >= 2 && video.videoWidth > 0) {
-      // cover-fit: crop the video to fill the tile
       const scale = Math.max(w / video.videoWidth, h / video.videoHeight);
       const sw = w / scale;
       const sh = h / scale;
@@ -115,13 +173,75 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
       ctx.drawImage(video, sx, sy, sw, sh, x, y, w, h);
     }
 
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
-    const label = entry.name;
-    ctx.font = '600 20px system-ui, sans-serif';
-    const labelWidth = ctx.measureText(label).width + 20;
-    ctx.fillRect(x + 12, y + h - 44, labelWidth, 32);
-    ctx.fillStyle = '#fff';
-    ctx.fillText(label, x + 22, y + h - 21);
+    if (name) {
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+      ctx.font = '600 20px system-ui, sans-serif';
+      const labelWidth = ctx.measureText(name).width + 20;
+      ctx.fillRect(x + 12, y + h - 44, labelWidth, 32);
+      ctx.fillStyle = '#fff';
+      ctx.fillText(name, x + 22, y + h - 21);
+    }
+  };
+
+  const drawContain = (video: HTMLVideoElement, x: number, y: number, w: number, h: number) => {
+    ctx.fillStyle = '#0b0d10';
+    ctx.fillRect(x, y, w, h);
+
+    if (video.readyState >= 2 && video.videoWidth > 0) {
+      const scale = Math.min(w / video.videoWidth, h / video.videoHeight);
+      const dw = video.videoWidth * scale;
+      const dh = video.videoHeight * scale;
+      const dx = x + (w - dw) / 2;
+      const dy = y + (h - dh) / 2;
+      ctx.drawImage(video, dx, dy, dw, dh);
+    }
+  };
+
+  const drawGrid = (list: TileEntry[]) => {
+    const cols = list.length <= 2 ? list.length : Math.ceil(Math.sqrt(list.length));
+    const rows = Math.ceil(list.length / cols);
+    const gap = 8;
+    const tileW = (width - gap * (cols + 1)) / cols;
+    const tileH = (height - gap * (rows + 1)) / rows;
+
+    list.forEach((entry, i) => {
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      drawTileCover(
+        entry.video,
+        entry.name,
+        gap + col * (tileW + gap),
+        gap + row * (tileH + gap),
+        tileW,
+        tileH,
+      );
+    });
+  };
+
+  const drawPresentation = (speakers: TileEntry[], screen: ScreenEntry) => {
+    const gap = 8;
+    const stripW = Math.floor(width * SPEAKER_STRIP_RATIO);
+    const mainX = stripW + gap;
+    const mainW = width - mainX - gap;
+    const mainY = gap;
+    const mainH = height - gap * 2;
+
+    drawContain(screen.video, mainX, mainY, mainW, mainH);
+
+    if (speakers.length === 0) return;
+
+    const tileW = stripW - gap;
+    const tileH = Math.min(
+      tileW * (9 / 16),
+      (height - gap * (speakers.length + 1)) / speakers.length,
+    );
+    const totalH = speakers.length * tileH + (speakers.length - 1) * gap;
+    let y = Math.max(gap, (height - totalH) / 2);
+
+    for (const entry of speakers) {
+      drawTileCover(entry.video, entry.name, gap, y, tileW, tileH);
+      y += tileH + gap;
+    }
   };
 
   const draw = () => {
@@ -129,7 +249,7 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
     ctx.fillRect(0, 0, width, height);
 
     const list = [...entries.values()];
-    if (list.length === 0) {
+    if (list.length === 0 && !screenEntry) {
       ctx.fillStyle = '#5c6470';
       ctx.font = '600 32px system-ui, sans-serif';
       ctx.textAlign = 'center';
@@ -149,19 +269,20 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
             `${v.videoWidth}x${v.videoHeight} paused=${v.paused} tracks=[${tracks.join(',')}]`,
         );
       }
+      if (screenEntry) {
+        const v = screenEntry.video;
+        console.log(
+          `[compositor] screen peerId=${screenEntry.peerId} readyState=${v.readyState} ` +
+            `${v.videoWidth}x${v.videoHeight}`,
+        );
+      }
     }
 
-    const cols = list.length <= 2 ? list.length : Math.ceil(Math.sqrt(list.length));
-    const rows = Math.ceil(list.length / cols);
-    const gap = 8;
-    const tileW = (width - gap * (cols + 1)) / cols;
-    const tileH = (height - gap * (rows + 1)) / rows;
-
-    list.forEach((entry, i) => {
-      const col = i % cols;
-      const row = Math.floor(i / cols);
-      drawTile(entry, gap + col * (tileW + gap), gap + row * (tileH + gap), tileW, tileH);
-    });
+    if (screenEntry) {
+      drawPresentation(list, screenEntry);
+    } else {
+      drawGrid(list);
+    }
   };
 
   // setInterval instead of requestAnimationFrame: keeps drawing in headless
@@ -181,6 +302,10 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
       entry.video.srcObject = null;
     }
     entries.clear();
+    if (screenEntry) {
+      screenEntry.video.srcObject = null;
+      screenEntry = undefined;
+    }
     for (const track of stream.getTracks()) track.stop();
     void audioCtx?.close();
   };
