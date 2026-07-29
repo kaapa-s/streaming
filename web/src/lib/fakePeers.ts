@@ -18,7 +18,8 @@ export function createFakePeer(index: number, { audio = true } = {}): FakePeerHa
   const canvas = document.createElement('canvas');
   canvas.width = 640;
   canvas.height = 360;
-  const ctx = canvas.getContext('2d')!;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('2d canvas context unavailable');
 
   let frame = 0;
   const draw = () => {

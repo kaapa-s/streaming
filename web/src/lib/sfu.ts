@@ -1,5 +1,13 @@
 import { Device, detectDevice } from 'mediasoup-client';
-import type { Transport } from 'mediasoup-client/types';
+import type {
+  DtlsParameters,
+  IceCandidate,
+  IceParameters,
+  MediaKind,
+  RtpCapabilities,
+  RtpParameters,
+  Transport,
+} from 'mediasoup-client/types';
 
 function createDevice(): Device {
   // detectDevice() does not recognize HeadlessChrome (the server-side
@@ -28,6 +36,56 @@ interface ProducerInfo {
   kind: 'audio' | 'video';
 }
 
+interface JoinResult {
+  peerId: string;
+  routerRtpCapabilities: RtpCapabilities;
+  producers: ProducerInfo[];
+}
+
+interface TransportParams {
+  id: string;
+  iceParameters: IceParameters;
+  iceCandidates: IceCandidate[];
+  dtlsParameters: DtlsParameters;
+}
+
+interface ConsumeResult {
+  id: string;
+  producerId: string;
+  kind: MediaKind;
+  rtpParameters: RtpParameters;
+}
+
+interface ProduceResult {
+  id: string;
+}
+
+type SignalingResponse =
+  | { id: number; ok: true; data: unknown }
+  | { id: number; ok: false; error?: string };
+
+type SignalingEvent =
+  | { event: 'newProducer'; data: ProducerInfo }
+  | { event: 'peerLeft'; data: { peerId: string } }
+  | { event: string; data: unknown };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function parseSignalingMessage(raw: unknown): SignalingResponse | SignalingEvent | null {
+  if (!isRecord(raw)) return null;
+  if (typeof raw.id === 'number') {
+    if (raw.ok === true) return { id: raw.id, ok: true, data: raw.data };
+    if (raw.ok === false) return { id: raw.id, ok: false, error: typeof raw.error === 'string' ? raw.error : undefined };
+    return null;
+  }
+  if (typeof raw.event === 'string') {
+    return { event: raw.event, data: raw.data };
+  }
+  return null;
+}
+
 /**
  * Thin client for our signaling protocol + mediasoup-client.
  * Requests:  { id, method, data } -> { id, ok, data | error }
@@ -36,12 +94,15 @@ interface ProducerInfo {
 export class SfuClient {
   peerId = '';
 
-  private ws!: WebSocket;
+  private ws: WebSocket | undefined;
   private device = createDevice();
-  private sendTransport?: Transport;
-  private recvTransport?: Transport;
+  private sendTransport: Transport | undefined;
+  private recvTransport: Transport | undefined;
   private nextRequestId = 1;
-  private pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
+  private pending = new Map<
+    number,
+    { resolve: (v: unknown) => void; reject: (e: Error) => void }
+  >();
   private peers = new Map<string, RemotePeer>();
   private callbacks: SfuCallbacks;
 
@@ -49,26 +110,41 @@ export class SfuClient {
     this.callbacks = callbacks;
   }
 
-  async join(room: string, name: string, role: SfuRole = 'speaker'): Promise<void> {
+  async join(
+    room: string,
+    name: string,
+    role: SfuRole = 'speaker',
+    joinToken?: string,
+  ): Promise<void> {
+    if (!joinToken) throw new Error('join token required');
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     this.ws = new WebSocket(`${proto}//${location.host}/ws/signaling`);
+    const ws = this.ws;
     await new Promise<void>((resolve, reject) => {
-      this.ws.onopen = () => resolve();
-      this.ws.onerror = () => reject(new Error('signaling connection failed'));
+      ws.onopen = () => resolve();
+      ws.onerror = () => reject(new Error('signaling connection failed'));
     });
-    this.ws.onmessage = (ev) => this.handleMessage(JSON.parse(ev.data));
-    this.ws.onclose = () => {
+    ws.onmessage = (ev) => {
+      let raw: unknown;
+      try {
+        raw = JSON.parse(String(ev.data));
+      } catch {
+        return;
+      }
+      this.handleMessage(raw);
+    };
+    ws.onclose = () => {
       for (const { reject } of this.pending.values()) reject(new Error('signaling closed'));
       this.pending.clear();
     };
 
-    const joined = await this.request('join', { room, name, role });
+    const joined = await this.request<JoinResult>('join', { room, name, role, token: joinToken });
     this.peerId = joined.peerId;
 
     await this.device.load({ routerRtpCapabilities: joined.routerRtpCapabilities });
     this.recvTransport = await this.createTransport('recv');
 
-    for (const producer of joined.producers as ProducerInfo[]) {
+    for (const producer of joined.producers) {
       await this.consumeProducer(producer);
     }
   }
@@ -77,7 +153,20 @@ export class SfuClient {
   async publish(stream: MediaStream): Promise<void> {
     this.sendTransport = await this.createTransport('send');
     for (const track of stream.getTracks()) {
-      await this.sendTransport.produce({ track });
+      if (track.kind === 'video') {
+        // Moderate cap only — enough for 1080p into the compositor without the
+        // aggressive transport/simulcast tweaks that previously starved RTP.
+        await this.sendTransport.produce({
+          track,
+          encodings: [{ maxBitrate: 4_000_000 }],
+          codecOptions: { videoGoogleStartBitrate: 2000 },
+        });
+      } else {
+        await this.sendTransport.produce({
+          track,
+          encodings: [{ maxBitrate: 128_000 }],
+        });
+      }
     }
   }
 
@@ -88,7 +177,7 @@ export class SfuClient {
   }
 
   private async createTransport(direction: 'send' | 'recv'): Promise<Transport> {
-    const params = await this.request('createTransport', { direction });
+    const params = await this.request<TransportParams>('createTransport', { direction });
     const transport =
       direction === 'send'
         ? this.device.createSendTransport(params)
@@ -100,9 +189,13 @@ export class SfuClient {
         .catch(errback);
     });
 
+    transport.on('connectionstatechange', (state) => {
+      console.log(`[sfu] ${direction} transport ${state}`);
+    });
+
     if (direction === 'send') {
       transport.on('produce', ({ kind, rtpParameters }, callback, errback) => {
-        this.request('produce', { transportId: transport.id, kind, rtpParameters })
+        this.request<ProduceResult>('produce', { transportId: transport.id, kind, rtpParameters })
           .then(({ id }) => callback({ id }))
           .catch(errback);
       });
@@ -112,7 +205,7 @@ export class SfuClient {
 
   private async consumeProducer(info: ProducerInfo): Promise<void> {
     if (!this.recvTransport) throw new Error('recv transport missing');
-    const data = await this.request('consume', {
+    const data = await this.request<ConsumeResult>('consume', {
       transportId: this.recvTransport.id,
       producerId: info.producerId,
       rtpCapabilities: this.device.rtpCapabilities,
@@ -135,8 +228,11 @@ export class SfuClient {
     this.emitPeers();
   }
 
-  private handleMessage(msg: any): void {
-    if (typeof msg.id === 'number') {
+  private handleMessage(raw: unknown): void {
+    const msg = parseSignalingMessage(raw);
+    if (!msg) return;
+
+    if ('id' in msg) {
       const pending = this.pending.get(msg.id);
       if (!pending) return;
       this.pending.delete(msg.id);
@@ -151,18 +247,27 @@ export class SfuClient {
           console.error('[sfu] consume failed:', err),
         );
         break;
-      case 'peerLeft':
-        this.peers.delete(msg.data.peerId);
-        this.emitPeers();
+      case 'peerLeft': {
+        const data = msg.data;
+        if (isRecord(data) && typeof data.peerId === 'string') {
+          this.peers.delete(data.peerId);
+          this.emitPeers();
+        }
         break;
+      }
     }
   }
 
-  private request(method: string, data: Record<string, unknown>): Promise<any> {
+  private request<T = unknown>(method: string, data: Record<string, unknown>): Promise<T> {
+    const ws = this.ws;
+    if (!ws) return Promise.reject(new Error('signaling not connected'));
     const id = this.nextRequestId++;
-    return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      this.ws.send(JSON.stringify({ id, method, data }));
+    return new Promise<T>((resolve, reject) => {
+      this.pending.set(id, {
+        resolve: (v) => resolve(v as T),
+        reject,
+      });
+      ws.send(JSON.stringify({ id, method, data }));
     });
   }
 

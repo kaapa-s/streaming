@@ -1,0 +1,41 @@
+---
+description: Ban TypeScript type-escaping hacks (non-null !, as any, ts-ignore)
+globs: "**/*.{ts,tsx}"
+alwaysApply: true
+---
+
+# No TypeScript escaping
+
+Do not silence the typechecker. Prefer correct types over assertions.
+
+## Banned
+
+- Definite assignment / non-null assertions: `prop!: Type`, `value!`, `foo!.bar`
+- `as any`, `as unknown as T` used only to bypass checking
+- `@ts-ignore`, `@ts-nocheck` in hand-written code
+- `@ts-expect-error` without a one-line justification comment on the same or next line
+
+## Allowed alternatives
+
+- TypeORM / class-validator class fields: use `declare prop: Type` (runtime filled by framework)
+- Late init (e.g. Nest `onModuleInit`): `T | undefined` + a private getter that throws if missing
+- Cross-realm bridges (Puppeteer ↔ page): ambient `declare global` typings, not `as any`
+- Generated files (e.g. `routeTree.gen.ts`): leave alone; keep excluded from lint
+
+## Examples
+
+```ts
+// BAD
+id!: string;
+(window as any).__stopRecording = fn;
+private worker!: Worker;
+
+// GOOD
+declare id: string;
+window.__stopRecording = fn;
+private worker: Worker | undefined;
+private requireWorker(): Worker {
+  if (!this.worker) throw new Error('worker not initialized');
+  return this.worker;
+}
+```

@@ -4,12 +4,11 @@ import { createWriteStream } from 'fs';
 import type { IncomingMessage } from 'http';
 import type { WebSocket } from 'ws';
 import { RecordingsService } from './recordings.service';
-import { STREAM_PROFILES } from './stream-quality';
+import { parseRecorderCodec, STREAM_PROFILES, type StreamProfile } from './stream-quality';
 
 /**
- * Binary sink on /ws/recording?room=X — the compositor page streams
- * MediaRecorder webm chunks here; they are appended to a file and, when an
- * RTMP URL was provided at start, also piped through ffmpeg to YouTube Live.
+ * Binary sink on /ws/recording?room=X&codec=h264|vp9|vp8 — compositor streams
+ * MediaRecorder chunks here. File always; RTMP via ffmpeg when live.
  */
 @WebSocketGateway({ path: '/ws/recording' })
 export class RecordingGateway implements OnGatewayConnection {
@@ -18,58 +17,17 @@ export class RecordingGateway implements OnGatewayConnection {
   handleConnection(socket: WebSocket, request: IncomingMessage): void {
     const url = new URL(request.url ?? '/', 'http://localhost');
     const room = url.searchParams.get('room') ?? 'main';
+    const codec = parseRecorderCodec(url.searchParams.get('codec'));
     const { file, rtmpUrl, resolution } = this.recordings.getSink(room);
     const profile = STREAM_PROFILES[resolution];
     const out = createWriteStream(file);
-    console.log(`[recording] writing ${file} (${resolution})`);
+    console.log(`[recording] writing ${file} (${resolution}, codec=${codec})`);
 
     let ffmpeg: ChildProcess | undefined;
     if (rtmpUrl) {
       const bin = process.env.FFMPEG_PATH ?? 'ffmpeg';
-      // Re-encode VP8/VP9+Opus → H.264+AAC for YouTube. Prefer quality over
-      // the previous zerolatency/veryfast settings (double-encode already hurts).
-      ffmpeg = spawn(
-        bin,
-        [
-          '-hide_banner',
-          '-loglevel',
-          'warning',
-          '-fflags',
-          '+genpts',
-          '-i',
-          'pipe:0',
-          '-c:v',
-          'libx264',
-          '-preset',
-          profile.ffmpegPreset,
-          '-profile:v',
-          'high',
-          '-pix_fmt',
-          'yuv420p',
-          '-g',
-          String(profile.fps * 2),
-          '-keyint_min',
-          String(profile.fps * 2),
-          '-sc_threshold',
-          '0',
-          '-b:v',
-          profile.rtmpVideoBitrate,
-          '-maxrate',
-          profile.rtmpMaxrate,
-          '-bufsize',
-          profile.rtmpBufsize,
-          '-c:a',
-          'aac',
-          '-b:a',
-          profile.rtmpAudioBitrate,
-          '-ar',
-          '48000',
-          '-f',
-          'flv',
-          rtmpUrl,
-        ],
-        { stdio: ['pipe', 'ignore', 'pipe'] },
-      );
+      const args = buildFfmpegArgs(profile, codec, rtmpUrl);
+      ffmpeg = spawn(bin, args, { stdio: ['pipe', 'ignore', 'pipe'] });
       this.recordings.attachFfmpeg(room, ffmpeg);
       ffmpeg.stderr?.on('data', (chunk: Buffer) => {
         const line = chunk.toString().trim();
@@ -78,9 +36,10 @@ export class RecordingGateway implements OnGatewayConnection {
       ffmpeg.on('exit', (code, signal) => {
         console.log(`[ffmpeg:${room}] exited code=${code} signal=${signal}`);
       });
+      const mode = codec === 'h264' ? 'copy+aac' : `libx264/${profile.ffmpegPreset}`;
       console.log(
-        `[recording] live RTMP ${resolution} @ ${profile.rtmpVideoBitrate} ` +
-          `(preset ${profile.ffmpegPreset}) for room ${room}`,
+        `[recording] live RTMP ${resolution} codec=${codec} mode=${mode} ` +
+          `@ ${profile.rtmpVideoBitrate} for room ${room}`,
       );
     }
 
@@ -101,4 +60,42 @@ export class RecordingGateway implements OnGatewayConnection {
       console.log(`[recording] finished ${file}`);
     });
   }
+}
+
+function buildFfmpegArgs(profile: StreamProfile, codec: string, rtmpUrl: string): string[] {
+  const commonHead = ['-hide_banner', '-loglevel', 'warning', '-fflags', '+genpts', '-i', 'pipe:0'];
+  const audio = ['-c:a', 'aac', '-b:a', profile.rtmpAudioBitrate, '-ar', '48000'];
+  const out = ['-f', 'flv', rtmpUrl];
+
+  // H.264 from MediaRecorder: copy video, only transcode Opus → AAC for FLV/YouTube.
+  if (codec === 'h264') {
+    return [...commonHead, '-c:v', 'copy', ...audio, ...out];
+  }
+
+  // VP8/VP9 → H.264. medium preset + higher bitrate than the earlier "fast" path.
+  return [
+    ...commonHead,
+    '-c:v',
+    'libx264',
+    '-preset',
+    profile.ffmpegPreset,
+    '-profile:v',
+    'high',
+    '-pix_fmt',
+    'yuv420p',
+    '-g',
+    String(profile.fps * 2),
+    '-keyint_min',
+    String(profile.fps * 2),
+    '-sc_threshold',
+    '0',
+    '-b:v',
+    profile.rtmpVideoBitrate,
+    '-maxrate',
+    profile.rtmpMaxrate,
+    '-bufsize',
+    profile.rtmpBufsize,
+    ...audio,
+    ...out,
+  ];
 }

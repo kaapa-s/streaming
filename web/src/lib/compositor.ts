@@ -39,7 +39,8 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
-  const ctx = canvas.getContext('2d')!;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('2d canvas context unavailable');
 
   let audioCtx: AudioContext | undefined;
   let audioDestination: MediaStreamAudioDestinationNode | undefined;

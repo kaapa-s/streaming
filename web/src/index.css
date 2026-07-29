@@ -87,7 +87,19 @@ input:focus {
 
 .lobby form {
   display: flex;
+  flex-direction: column;
   gap: 10px;
+  width: min(360px, 90vw);
+}
+
+.lobby form.row {
+  flex-direction: row;
+  width: auto;
+}
+
+.auth-tabs {
+  display: flex;
+  gap: 8px;
 }
 
 /* Studio */

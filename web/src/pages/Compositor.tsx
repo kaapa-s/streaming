@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createCompositor } from '../lib/compositor';
 import { SfuClient } from '../lib/sfu';
-import { parseResolution, pickRecorderMimeType, STREAM_PROFILES } from '../lib/stream-quality';
+import { parseResolution, pickRecorderFormat, STREAM_PROFILES } from '../lib/stream-quality';
 
 /**
  * Hidden recorder page, loaded by the server's headless Chromium at
@@ -23,6 +23,8 @@ export function CompositorPage() {
     const run = async () => {
       const params = new URLSearchParams(location.search);
       const room = params.get('room') ?? 'main';
+      const token = params.get('token');
+      if (!token) throw new Error('missing join token');
       const resolution = parseResolution(params.get('resolution'));
       const profile = STREAM_PROFILES[resolution];
 
@@ -36,17 +38,20 @@ export function CompositorPage() {
       container.appendChild(compositor.canvas);
 
       const sfu = new SfuClient({ onPeersChanged: (peers) => compositor.setPeers(peers) });
-      await sfu.join(room, 'Recorder', 'compositor');
+      await sfu.join(room, 'Recorder', 'compositor', token);
       setStatus(`joined room "${room}" (${resolution}), connecting recorder…`);
 
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const ws = new WebSocket(`${proto}//${location.host}/ws/recording?room=${encodeURIComponent(room)}`);
+      const { mimeType, codec } = pickRecorderFormat();
+      const ws = new WebSocket(
+        `${proto}//${location.host}/ws/recording` +
+          `?room=${encodeURIComponent(room)}&codec=${encodeURIComponent(codec)}`,
+      );
       await new Promise<void>((resolve, reject) => {
         ws.onopen = () => resolve();
         ws.onerror = () => reject(new Error('recording sink connection failed'));
       });
 
-      const mimeType = pickRecorderMimeType();
       const recorder = new MediaRecorder(compositor.stream, {
         mimeType,
         videoBitsPerSecond: profile.recorderVideoBps,
@@ -60,10 +65,10 @@ export function CompositorPage() {
       setStatus(`recording room "${room}" @ ${resolution} (${mimeType})`);
       console.log(
         `[compositor] recording started for room ${room} @ ${resolution} ` +
-          `${profile.width}x${profile.height} ${mimeType} video=${profile.recorderVideoBps}`,
+          `${profile.width}x${profile.height} ${mimeType} codec=${codec} video=${profile.recorderVideoBps}`,
       );
 
-      (window as any).__stopRecording = () =>
+      window.__stopRecording = () =>
         new Promise<void>((resolve) => {
           recorder.onstop = () => {
             // Give the final ondataavailable chunk a moment to be sent,

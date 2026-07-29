@@ -15,7 +15,8 @@ export default defineConfig({
   ],
   server: {
     host: true,
-    https: true,
+    // Object form required by Vite 8 ServerOptions; mkcert still injects the cert.
+    https: {},
     proxy: {
       '/api': 'http://localhost:3000',
       '/ws': { target: 'ws://localhost:3000', ws: true },

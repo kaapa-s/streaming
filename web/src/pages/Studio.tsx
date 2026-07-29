@@ -1,4 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  apiFetch,
+  clearSession,
+  getStoredUser,
+  joinRoom,
+  login,
+  logout,
+  register,
+  type AuthUser,
+} from '../lib/auth';
 import { createCompositor, type Compositor } from '../lib/compositor';
 import { SfuClient, type RemotePeer } from '../lib/sfu';
 import type { StreamResolution } from '../lib/stream-quality';
@@ -23,7 +33,11 @@ function VideoTile({ stream, muted, label }: { stream: MediaStream; muted: boole
 }
 
 export function Studio() {
-  const [name, setName] = useState(params.get('name') ?? '');
+  const [user, setUser] = useState<AuthUser | null>(() => getStoredUser());
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [displayName, setDisplayName] = useState('');
   const [room] = useState(params.get('room') ?? 'main');
   const [joined, setJoined] = useState(false);
   const [error, setError] = useState('');
@@ -42,10 +56,37 @@ export function Studio() {
   const compositorRef = useRef<Compositor | null>(null);
   const previewRef = useRef<HTMLDivElement>(null);
 
+  const name = user?.name ?? '';
+
+  const onAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    try {
+      const session =
+        authMode === 'register'
+          ? await register(email.trim(), password, displayName.trim())
+          : await login(email.trim(), password);
+      setUser(session.user);
+      setPassword('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const onLogout = async () => {
+    sfuRef.current?.close();
+    sfuRef.current = null;
+    localStream?.getTracks().forEach((t) => t.stop());
+    setLocalStream(null);
+    setRemotePeers([]);
+    setJoined(false);
+    joiningRef.current = false;
+    await logout();
+    setUser(null);
+  };
+
   const join = useCallback(async () => {
-    // Synchronous guard: StrictMode double-fires the auto-join effect and
-    // sfuRef is only assigned after async work.
-    if (!name.trim() || joiningRef.current) return;
+    if (!user || joiningRef.current) return;
     joiningRef.current = true;
     setError('');
     try {
@@ -54,6 +95,7 @@ export function Studio() {
           'Camera/mic unavailable: this page must be served over HTTPS (or localhost). Open the https:// URL Vite prints.',
         );
       }
+      const { joinToken, room: joinedRoom } = await joinRoom(room);
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           width: { ideal: 1920 },
@@ -66,21 +108,25 @@ export function Studio() {
 
       const sfu = new SfuClient({ onPeersChanged: (peers) => setRemotePeers([...peers]) });
       sfuRef.current = sfu;
-      await sfu.join(room, name.trim());
+      await sfu.join(joinedRoom.slug, user.name, 'speaker', joinToken);
       await sfu.publish(stream);
       setJoined(true);
     } catch (err) {
       sfuRef.current?.close();
       sfuRef.current = null;
       joiningRef.current = false;
+      if (String(err).includes('401') || String(err).toLowerCase().includes('unauthorized')) {
+        clearSession();
+        setUser(null);
+      }
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, [name, room]);
+  }, [user, room]);
 
-  // Auto-join (used by the e2e test): /?room=x&name=y&auto=1
+  // Auto-join (used by the e2e test): /?room=x&auto=1 after login
   useEffect(() => {
-    if (params.get('auto') === '1' && name && !joined) void join();
-  }, [join, name, joined]);
+    if (params.get('auto') === '1' && user && !joined) void join();
+  }, [join, user, joined]);
 
   // Program preview: same compositing code as the recorder (video only, no audio mix).
   useEffect(() => {
@@ -119,9 +165,8 @@ export function Studio() {
     try {
       const action = recording ? 'stop' : 'start';
       const trimmed = rtmpUrl.trim();
-      const res = await fetch(`/api/recordings/${action}`, {
+      const res = await apiFetch(`/api/recordings/${action}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           room,
           ...(action === 'start'
@@ -164,27 +209,79 @@ export function Studio() {
       ? 'Go live'
       : 'Start recording';
 
+  if (!user) {
+    return (
+      <div className="lobby">
+        <h1>Streaming Studio</h1>
+        <p className="hint">Sign in to join room <strong>{room}</strong></p>
+        <div className="auth-tabs">
+          <button
+            type="button"
+            className={authMode === 'login' ? 'primary' : undefined}
+            onClick={() => setAuthMode('login')}
+          >
+            Log in
+          </button>
+          <button
+            type="button"
+            className={authMode === 'register' ? 'primary' : undefined}
+            onClick={() => setAuthMode('register')}
+          >
+            Register
+          </button>
+        </div>
+        <form onSubmit={(e) => void onAuth(e)}>
+          {authMode === 'register' && (
+            <input
+              placeholder="Display name"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              autoComplete="nickname"
+              required
+            />
+          )}
+          <input
+            type="email"
+            placeholder="Email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            autoComplete="email"
+            autoFocus
+            required
+          />
+          <input
+            type="password"
+            placeholder="Password (min 8)"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete={authMode === 'register' ? 'new-password' : 'current-password'}
+            minLength={8}
+            required
+          />
+          <button type="submit">{authMode === 'register' ? 'Create account' : 'Log in'}</button>
+        </form>
+        {error && <p className="error">{error}</p>}
+      </div>
+    );
+  }
+
   if (!joined) {
     return (
       <div className="lobby">
         <h1>Streaming Studio</h1>
         <p className="hint">
-          Room: <strong>{room}</strong>
+          Signed in as <strong>{user.name}</strong> · Room: <strong>{room}</strong>
         </p>
         <form
+          className="row"
           onSubmit={(e) => {
             e.preventDefault();
             void join();
           }}
         >
-          <input
-            placeholder="Your name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            autoFocus
-          />
-          <button type="submit" disabled={!name.trim()}>
-            Join studio
+          <button type="submit">Join studio</button>
+          <button type="button" className="danger" onClick={() => void onLogout()}>
+            Log out
           </button>
         </form>
         {error && <p className="error">{error}</p>}
@@ -197,6 +294,7 @@ export function Studio() {
       <header>
         <h1>Streaming Studio</h1>
         <div className="header-right">
+          <span className="hint">{user.name}</span>
           <select
             className="resolution-select"
             value={resolution}

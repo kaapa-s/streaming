@@ -2,6 +2,7 @@ import { OnGatewayConnection, OnGatewayDisconnect, WebSocketGateway } from '@nes
 import { randomUUID } from 'crypto';
 import type { types } from 'mediasoup';
 import type { WebSocket } from 'ws';
+import { verifyJoinToken } from '../common/join-token';
 import { MediasoupService } from '../mediasoup/mediasoup.service';
 
 type PeerRole = 'speaker' | 'compositor';
@@ -75,9 +76,18 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
     const { method, data } = msg;
 
     if (method === 'join') {
-      const room = String(data.room ?? 'main');
-      const name = String(data.name ?? 'anonymous');
-      const role: PeerRole = data.role === 'compositor' ? 'compositor' : 'speaker';
+      const token = String(data.token ?? '');
+      if (!token) throw new Error('join token required');
+      const claims = verifyJoinToken(token);
+      const room = claims.roomSlug;
+      const name = claims.name;
+      const role: PeerRole = claims.role;
+      if (data.room != null && String(data.room) !== room) {
+        throw new Error('join token room mismatch');
+      }
+      if (data.role != null && data.role !== role) {
+        throw new Error('join token role mismatch');
+      }
       const router = await this.mediasoup.getRouter(room);
 
       const peer: Peer = {

@@ -1,8 +1,12 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
 import { spawnSync, type ChildProcess } from 'child_process';
 import { mkdirSync } from 'fs';
 import * as path from 'path';
 import puppeteer, { Browser, Page } from 'puppeteer';
+import { Repository } from 'typeorm';
+import { Recording, Room } from '../entities';
+import { RoomsService } from '../rooms/rooms.service';
 import {
   parseResolution,
   STREAM_PROFILES,
@@ -12,6 +16,8 @@ import {
 interface ActiveRecording {
   browser: Browser;
   page: Page;
+  roomId: string;
+  recordingId: string;
   file?: string;
   rtmpUrl?: string;
   resolution: StreamResolution;
@@ -29,76 +35,117 @@ export class RecordingsService {
   private readonly dir = path.resolve(process.cwd(), 'recordings');
   private active = new Map<string, ActiveRecording>();
 
+  constructor(
+    private readonly rooms: RoomsService,
+    @InjectRepository(Recording)
+    private readonly recordings: Repository<Recording>,
+  ) {}
+
   /** Called by RecordingGateway when the compositor's chunk stream connects. */
-  getSink(room: string): RecordingSink {
+  getSink(roomSlug: string): RecordingSink {
     mkdirSync(this.dir, { recursive: true });
-    const file = path.join(this.dir, `${room}-${new Date().toISOString().replace(/[:.]/g, '-')}.webm`);
-    const entry = this.active.get(room);
-    if (entry) entry.file = file;
+    const file = path.join(
+      this.dir,
+      `${roomSlug}-${new Date().toISOString().replace(/[:.]/g, '-')}.webm`,
+    );
+    const entry = this.active.get(roomSlug);
+    if (entry) {
+      entry.file = file;
+      void this.recordings.update(entry.recordingId, { filePath: file, status: 'recording' });
+    }
     return { file, rtmpUrl: entry?.rtmpUrl, resolution: entry?.resolution ?? '720p' };
   }
 
-  attachFfmpeg(room: string, ffmpeg: ChildProcess): void {
-    const entry = this.active.get(room);
+  attachFfmpeg(roomSlug: string, ffmpeg: ChildProcess): void {
+    const entry = this.active.get(roomSlug);
     if (entry) entry.ffmpeg = ffmpeg;
   }
 
   async start(
-    room: string,
+    room: Room,
     rtmpUrl?: string,
     resolutionInput?: string,
   ): Promise<{ room: string; live: boolean; resolution: StreamResolution }> {
-    if (this.active.has(room)) throw new BadRequestException(`already recording room "${room}"`);
+    const slug = room.slug;
+    if (this.active.has(slug)) throw new BadRequestException(`already recording room "${slug}"`);
 
     const resolution = parseResolution(resolutionInput);
     const profile = STREAM_PROFILES[resolution];
     const normalized = rtmpUrl?.trim() ? normalizeRtmpUrl(rtmpUrl.trim()) : undefined;
     if (normalized) assertFfmpegAvailable();
 
+    const row = await this.recordings.save(
+      this.recordings.create({
+        roomId: room.id,
+        status: 'starting',
+        resolution,
+        startedAt: new Date(),
+        filePath: null,
+        endedAt: null,
+      }),
+    );
+
+    const joinToken = this.rooms.issueCompositorJoinToken(slug);
     const webOrigin = process.env.WEB_ORIGIN ?? 'https://localhost:5173';
-    const browser = await puppeteer.launch({
-      args: [
-        '--no-sandbox',
-        '--autoplay-policy=no-user-gesture-required',
-        '--use-fake-ui-for-media-stream',
-        // Dev Vite uses a local mkcert CA; Chromium won't trust it by default.
-        '--ignore-certificate-errors',
-      ],
-    });
+    let browser: Browser;
+    try {
+      browser = await puppeteer.launch({
+        args: [
+          '--no-sandbox',
+          '--autoplay-policy=no-user-gesture-required',
+          '--use-fake-ui-for-media-stream',
+          // Dev Vite uses a local mkcert CA; Chromium won't trust it by default.
+          '--ignore-certificate-errors',
+        ],
+      });
+    } catch (err) {
+      await this.recordings.update(row.id, { status: 'failed', endedAt: new Date() });
+      throw err;
+    }
     try {
       const page = await browser.newPage();
       await page.setViewport({ width: profile.width, height: profile.height, deviceScaleFactor: 1 });
-      page.on('console', (msg) => console.log(`[compositor:${room}] ${msg.text()}`));
-      page.on('pageerror', (err) => console.error(`[compositor:${room}] page error:`, String(err)));
-      this.active.set(room, { browser, page, rtmpUrl: normalized, resolution });
+      page.on('console', (msg) => console.log(`[compositor:${slug}] ${msg.text()}`));
+      page.on('pageerror', (err) => console.error(`[compositor:${slug}] page error:`, String(err)));
+      this.active.set(slug, {
+        browser,
+        page,
+        roomId: room.id,
+        recordingId: row.id,
+        rtmpUrl: normalized,
+        resolution,
+      });
       const compositorUrl =
-        `${webOrigin}/compositor?room=${encodeURIComponent(room)}` +
-        `&resolution=${encodeURIComponent(resolution)}`;
+        `${webOrigin}/compositor?room=${encodeURIComponent(slug)}` +
+        `&resolution=${encodeURIComponent(resolution)}` +
+        `&token=${encodeURIComponent(joinToken)}`;
       await page.goto(compositorUrl, { waitUntil: 'domcontentloaded' });
       console.log(
-        `[recordings] started ${resolution} recorder for room ${room}` +
+        `[recordings] started ${resolution} recorder for room ${slug}` +
           `${normalized ? ` → ${redactRtmp(normalized)}` : ''}`,
       );
-      return { room, live: !!normalized, resolution };
+      return { room: slug, live: !!normalized, resolution };
     } catch (err) {
-      this.active.delete(room);
+      this.active.delete(slug);
+      await this.recordings.update(row.id, { status: 'failed', endedAt: new Date() });
       await browser.close().catch(() => undefined);
       throw err;
     }
   }
 
-  async stop(room: string): Promise<{ room: string; file?: string; live: boolean }> {
-    const entry = this.active.get(room);
-    if (!entry) throw new NotFoundException(`no active recording for room "${room}"`);
-    this.active.delete(room);
+  async stop(room: Room): Promise<{ room: string; file?: string; live: boolean }> {
+    const slug = room.slug;
+    const entry = this.active.get(slug);
+    if (!entry) throw new NotFoundException(`no active recording for room "${slug}"`);
+    this.active.delete(slug);
     const wasLive = !!entry.rtmpUrl;
 
     try {
       // Compositor page exposes __stopRecording; it stops MediaRecorder and
       // flushes remaining chunks over the WebSocket before resolving.
-      await entry.page.evaluate(() => (globalThis as any).__stopRecording?.());
+      await entry.page.evaluate(() => globalThis.__stopRecording?.());
     } catch (err) {
-      console.error(`[recordings] graceful stop failed for room ${room}:`, err);
+      console.error(`[recordings] graceful stop failed for room ${slug}:`, err);
     }
 
     if (entry.ffmpeg && !entry.ffmpeg.killed) {
@@ -116,8 +163,13 @@ export class RecordingsService {
     }
 
     await entry.browser.close().catch(() => undefined);
-    console.log(`[recordings] stopped recorder for room ${room} -> ${entry.file ?? 'no file'}`);
-    return { room, file: entry.file, live: wasLive };
+    await this.recordings.update(entry.recordingId, {
+      status: 'stopped',
+      filePath: entry.file ?? null,
+      endedAt: new Date(),
+    });
+    console.log(`[recordings] stopped recorder for room ${slug} -> ${entry.file ?? 'no file'}`);
+    return { room: slug, file: entry.file, live: wasLive };
   }
 
   status(): { room: string; file?: string; live: boolean; resolution: StreamResolution }[] {

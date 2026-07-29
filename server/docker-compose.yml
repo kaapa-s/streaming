@@ -1,0 +1,15 @@
+# Dev-only Postgres for Plan 1 (full stack Compose is Plan 2).
+services:
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - '5432:5432'
+    environment:
+      POSTGRES_USER: streaming
+      POSTGRES_PASSWORD: streaming
+      POSTGRES_DB: streaming
+    volumes:
+      - streaming_pg:/var/lib/postgresql/data
+
+volumes:
+  streaming_pg:
