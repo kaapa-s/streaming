@@ -50,7 +50,8 @@ services:
     depends_on:
       - server
     ports:
-      - "80:80"
+      # Bound to localhost so host nginx + certbot own 80/443
+      - "127.0.0.1:8080:80"
 
 volumes:
   pg_data:

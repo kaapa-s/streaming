@@ -110,7 +110,7 @@ Monolith stack: `postgres` + `server` (API, SFU, recording) + `web` (nginx).
 | Port | Protocol | Purpose |
 |------|----------|---------|
 | 22 | tcp | SSH (restrict to your IP) |
-| 80 | tcp | HTTP (Caddy ACME + proxy to nginx) |
+| 80 | tcp | HTTP (ACME + redirect to HTTPS) |
 | 443 | tcp | HTTPS |
 | 40000-40100 | udp + tcp | WebRTC (mediasoup) |
 
@@ -122,14 +122,18 @@ Browsers require HTTPS for camera/mic. Let's Encrypt won't issue for a bare IP, 
 EIP 203.0.113.42  →  https://203-0-113-42.sslip.io
 ```
 
-No DNS setup required — sslip.io resolves automatically.
+No DNS setup or sslip.io signup required — the hostname resolves automatically.
+
+The compose `web` service listens on `127.0.0.1:8080`. Host nginx terminates TLS on 80/443 and proxies to that port.
 
 ### Deploy
 
 ```bash
-# Docker
-sudo apt-get update && sudo apt-get install -y docker.io docker-compose-v2
-sudo usermod -aG docker $USER && newgrp docker
+# Docker (Amazon Linux example)
+sudo dnf install -y docker
+# Install compose plugin or use docker-compose binary — see troubleshooting if needed
+sudo systemctl enable --now docker
+sudo usermod -aG docker $USER   # then log out / back in
 
 # App
 git clone <repo> streaming && cd streaming
@@ -137,19 +141,46 @@ cp .env.prod.example .env.prod
 # Edit .env.prod: POSTGRES_PASSWORD, JWT_SECRET, SFU_JOIN_SECRET (openssl rand -hex 32),
 # MEDIASOUP_ANNOUNCED_IP = Elastic IP, PUBLIC_ORIGIN = https://<eip-with-dashes>.sslip.io
 
-docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
-
-# TLS (host Caddy → nginx on :80)
-sudo apt-get install -y caddy
-sudo tee /etc/caddy/Caddyfile <<'EOF'
-203-0-113-42.sslip.io {
-    reverse_proxy localhost:80
-}
-EOF
-sudo systemctl reload caddy
+docker-compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
 ```
 
-Share **`https://203-0-113-42.sslip.io`** with testers (replace with your sslip.io hostname).
+### TLS with certbot + host nginx
+
+Replace `203-0-113-42` with your Elastic IP (dots → dashes).
+
+```bash
+# Amazon Linux 2023
+sudo dnf install -y nginx certbot python3-certbot-nginx
+
+# Proxy HTTP → Docker web (certbot will add SSL later)
+sudo tee /etc/nginx/conf.d/streaming.conf <<'EOF'
+server {
+    listen 80;
+    server_name 203-0-113-42.sslip.io;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 3600s;
+    }
+}
+EOF
+
+sudo nginx -t && sudo systemctl enable --now nginx
+
+# Issue certificate (opens interactive prompts for email / ToS)
+sudo certbot --nginx -d 203-0-113-42.sslip.io
+```
+
+Certbot rewrites the nginx config for HTTPS and sets up renewal. Share **`https://203-0-113-42.sslip.io`** with testers.
+
+Renewal check: `sudo certbot renew --dry-run`
 
 ### Verify
 
