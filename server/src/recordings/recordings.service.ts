@@ -7,6 +7,7 @@ import puppeteer, { Browser, Page } from 'puppeteer';
 import { Repository } from 'typeorm';
 import { Recording, Room } from '../entities';
 import { RoomsService } from '../rooms/rooms.service';
+import { SessionLog, sessionStamp } from './session-log';
 import {
   parseResolution,
   STREAM_PROFILES,
@@ -22,12 +23,15 @@ interface ActiveRecording {
   rtmpUrl?: string;
   resolution: StreamResolution;
   ffmpeg?: ChildProcess;
+  sessionLog: SessionLog;
+  stamp: string;
 }
 
 export interface RecordingSink {
   file: string;
   rtmpUrl?: string;
   resolution: StreamResolution;
+  sessionLog?: SessionLog;
 }
 
 @Injectable()
@@ -44,16 +48,20 @@ export class RecordingsService {
   /** Called by RecordingGateway when the compositor's chunk stream connects. */
   getSink(roomSlug: string): RecordingSink {
     mkdirSync(this.dir, { recursive: true });
-    const file = path.join(
-      this.dir,
-      `${roomSlug}-${new Date().toISOString().replace(/[:.]/g, '-')}.webm`,
-    );
     const entry = this.active.get(roomSlug);
+    const stamp = entry?.stamp ?? sessionStamp();
+    const file = path.join(this.dir, `${roomSlug}-${stamp}.webm`);
     if (entry) {
       entry.file = file;
+      entry.sessionLog.write(`recording file=${file}`);
       void this.recordings.update(entry.recordingId, { filePath: file, status: 'recording' });
     }
-    return { file, rtmpUrl: entry?.rtmpUrl, resolution: entry?.resolution ?? '720p' };
+    return {
+      file,
+      rtmpUrl: entry?.rtmpUrl,
+      resolution: entry?.resolution ?? '720p',
+      sessionLog: entry?.sessionLog,
+    };
   }
 
   attachFfmpeg(roomSlug: string, ffmpeg: ChildProcess): void {
@@ -87,6 +95,14 @@ export class RecordingsService {
 
     const joinToken = this.rooms.issueCompositorJoinToken(slug);
     const webOrigin = process.env.WEB_ORIGIN ?? 'https://localhost:5173';
+    const stamp = sessionStamp();
+    const sessionLog = new SessionLog(this.dir, slug, stamp);
+    sessionLog.write(
+      `start room=${slug} resolution=${resolution} ` +
+        `live=${!!normalized} rtmp=${normalized ? redactRtmp(normalized) : 'none'} ` +
+        `profile=${profile.width}x${profile.height}@${profile.fps}`,
+    );
+
     let browser: Browser;
     try {
       browser = await puppeteer.launch({
@@ -100,14 +116,23 @@ export class RecordingsService {
         ],
       });
     } catch (err) {
+      sessionLog.write(`puppeteer launch failed: ${String(err)}`);
+      sessionLog.close('status=failed');
       await this.recordings.update(row.id, { status: 'failed', endedAt: new Date() });
       throw err;
     }
     try {
       const page = await browser.newPage();
       await page.setViewport({ width: profile.width, height: profile.height, deviceScaleFactor: 1 });
-      page.on('console', (msg) => console.log(`[compositor:${slug}] ${msg.text()}`));
-      page.on('pageerror', (err) => console.error(`[compositor:${slug}] page error:`, String(err)));
+      page.on('console', (msg) => {
+        const text = msg.text();
+        console.log(`[compositor:${slug}] ${text}`);
+        sessionLog.write(`compositor console: ${text}`);
+      });
+      page.on('pageerror', (err) => {
+        console.error(`[compositor:${slug}] page error:`, String(err));
+        sessionLog.write(`compositor pageerror: ${String(err)}`);
+      });
       this.active.set(slug, {
         browser,
         page,
@@ -115,19 +140,24 @@ export class RecordingsService {
         recordingId: row.id,
         rtmpUrl: normalized,
         resolution,
+        sessionLog,
+        stamp,
       });
       const compositorUrl =
         `${webOrigin}/compositor?room=${encodeURIComponent(slug)}` +
         `&resolution=${encodeURIComponent(resolution)}` +
         `&token=${encodeURIComponent(joinToken)}`;
       await page.goto(compositorUrl, { waitUntil: 'domcontentloaded' });
+      sessionLog.write(`compositor navigated url=${webOrigin}/compositor?room=${slug}&resolution=${resolution}`);
       console.log(
         `[recordings] started ${resolution} recorder for room ${slug}` +
-          `${normalized ? ` → ${redactRtmp(normalized)}` : ''}`,
+          `${normalized ? ` → ${redactRtmp(normalized)}` : ''} (log ${sessionLog.path})`,
       );
       return { room: slug, live: !!normalized, resolution };
     } catch (err) {
       this.active.delete(slug);
+      sessionLog.write(`start failed: ${String(err)}`);
+      sessionLog.close('status=failed');
       await this.recordings.update(row.id, { status: 'failed', endedAt: new Date() });
       await browser.close().catch(() => undefined);
       throw err;
@@ -140,6 +170,7 @@ export class RecordingsService {
     if (!entry) throw new NotFoundException(`no active recording for room "${slug}"`);
     this.active.delete(slug);
     const wasLive = !!entry.rtmpUrl;
+    entry.sessionLog.write('stop requested');
 
     try {
       // Compositor page exposes __stopRecording; it stops MediaRecorder and
@@ -147,6 +178,7 @@ export class RecordingsService {
       await entry.page.evaluate(() => globalThis.__stopRecording?.());
     } catch (err) {
       console.error(`[recordings] graceful stop failed for room ${slug}:`, err);
+      entry.sessionLog.write(`graceful stop failed: ${String(err)}`);
     }
 
     if (entry.ffmpeg && !entry.ffmpeg.killed) {
@@ -169,7 +201,13 @@ export class RecordingsService {
       filePath: entry.file ?? null,
       endedAt: new Date(),
     });
-    console.log(`[recordings] stopped recorder for room ${slug} -> ${entry.file ?? 'no file'}`);
+    entry.sessionLog.close(
+      `status=stopped file=${entry.file ?? 'none'} live=${wasLive}`,
+    );
+    console.log(
+      `[recordings] stopped recorder for room ${slug} -> ${entry.file ?? 'no file'} ` +
+        `(log ${entry.sessionLog.path})`,
+    );
     return { room: slug, file: entry.file, live: wasLive };
   }
 

@@ -194,8 +194,23 @@ docker compose -f docker-compose.prod.yml exec server ls /app/recordings
 
 **Cellular ICE test:** one tester on a mobile hotspot confirms `MEDIASOUP_ANNOUNCED_IP` and SG `40000-40100/udp` are correct.
 
+### Post-live diagnostics
+
+Every recording/live session always writes a `*.session.log` next to the `.webm` (codec/mode, ffmpeg stderr including `speed=`, compositor console, loadavg/memory every 10s, ingress bitrate). The compose `monitor` service also samples `docker stats` every 15s into `recordings/diagnostics/host-stats.log`.
+
+After a live:
+
+```bash
+chmod +x scripts/collect-logs.sh
+./scripts/collect-logs.sh
+# → diagnostics-<utc>.tar.gz  (session logs + container logs + host stats)
+```
+
+What to look for: `speed=` below `1.0`, rising `loadavg`, `codec=vp8/vp9` with `libx264/medium`, `stdin backpressure`, or `server` CPU/RAM pegged in `host-stats.log`.
+
 ### Troubleshooting
 
 - **ICE fails for external users:** SG allows `40000-40100/udp`, `MEDIASOUP_ANNOUNCED_IP` equals the Elastic IP, `docker logs server` shows `[mediasoup] worker started`
 - **Recording fails / Chrome crash:** check `shm_size` in compose, `docker logs server`
 - **Compositor can't connect:** `WEB_ORIGIN` must stay `http://web` in compose (internal Docker URL, not the public HTTPS URL)
+- **Choppy YouTube A/V:** undersized instance (use ≥ `t3.medium`); pull a diagnostics bundle and check session + host-stats logs above

@@ -88,6 +88,18 @@ function localIPv4s(): string[] {
   return out;
 }
 
+/** RFC1918 / loopback — typical LAN or Docker bridge addresses. */
+function isPrivateIPv4(ip: string): boolean {
+  const parts = ip.split('.').map(Number);
+  if (parts.length !== 4 || parts.some((n) => Number.isNaN(n))) return false;
+  const [a, b] = parts;
+  if (a === 10) return true;
+  if (a === 127) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  return false;
+}
+
 function warnIfAnnouncedIpStale(): void {
   const announced = process.env.MEDIASOUP_ANNOUNCED_IP;
   if (!announced) return;
@@ -96,10 +108,21 @@ function warnIfAnnouncedIpStale(): void {
     console.log(`[mediasoup] announced IP ${announced} matches this host (${locals.join(', ')})`);
     return;
   }
+
+  // EC2 Elastic IP / Docker: public announced IP is NAT'd onto the host and
+  // never appears on the container NIC. That is expected, not a misconfig.
+  if (!isPrivateIPv4(announced)) {
+    console.log(
+      `[mediasoup] announced IP ${announced} (public; not on local NICs: ${locals.join(', ') || 'none'}). ` +
+        `OK for cloud/NAT — clients will ICE to this address.`,
+    );
+    return;
+  }
+
   console.warn(
     `[mediasoup] WARNING: MEDIASOUP_ANNOUNCED_IP=${announced} is NOT on this machine. ` +
       `Local IPv4s: ${locals.join(', ') || '(none)'}. ` +
-      `WebRTC will stay muted (black compositor) until you restart with the current IP, e.g.\n` +
+      `WebRTC may stay muted until you restart with the current LAN IP, e.g.\n` +
       `  MEDIASOUP_LISTEN_IP=0.0.0.0 MEDIASOUP_ANNOUNCED_IP=${locals[0] ?? 'YOUR_LAN_IP'} npm run dev`,
   );
 }

@@ -4,6 +4,7 @@ import { createWriteStream } from 'fs';
 import type { IncomingMessage } from 'http';
 import type { WebSocket } from 'ws';
 import { RecordingsService } from './recordings.service';
+import type { SessionLog } from './session-log';
 import { parseRecorderCodec, STREAM_PROFILES, type StreamProfile } from './stream-quality';
 
 /**
@@ -18,10 +19,17 @@ export class RecordingGateway implements OnGatewayConnection {
     const url = new URL(request.url ?? '/', 'http://localhost');
     const room = url.searchParams.get('room') ?? 'main';
     const codec = parseRecorderCodec(url.searchParams.get('codec'));
-    const { file, rtmpUrl, resolution } = this.recordings.getSink(room);
+    const { file, rtmpUrl, resolution, sessionLog } = this.recordings.getSink(room);
     const profile = STREAM_PROFILES[resolution];
     const out = createWriteStream(file);
+    let bytesIn = 0;
+    let chunkCount = 0;
+    let windowBytes = 0;
+    let windowChunks = 0;
+    let windowStartedAt = Date.now();
+
     console.log(`[recording] writing ${file} (${resolution}, codec=${codec})`);
+    sessionLog?.write(`sink connected codec=${codec} resolution=${resolution} file=${file}`);
 
     let ffmpeg: ChildProcess | undefined;
     if (rtmpUrl) {
@@ -29,26 +37,41 @@ export class RecordingGateway implements OnGatewayConnection {
       const args = buildFfmpegArgs(profile, codec, rtmpUrl);
       ffmpeg = spawn(bin, args, { stdio: ['pipe', 'ignore', 'pipe'] });
       this.recordings.attachFfmpeg(room, ffmpeg);
-      ffmpeg.stderr?.on('data', (chunk: Buffer) => {
-        const line = chunk.toString().trim();
-        if (line) console.log(`[ffmpeg:${room}] ${line}`);
-      });
-      ffmpeg.on('exit', (code, signal) => {
-        console.log(`[ffmpeg:${room}] exited code=${code} signal=${signal}`);
-      });
+      attachFfmpegLogging(room, ffmpeg, sessionLog);
       const mode = codec === 'h264' ? 'copy+aac' : `libx264/${profile.ffmpegPreset}`;
-      console.log(
-        `[recording] live RTMP ${resolution} codec=${codec} mode=${mode} ` +
-          `@ ${profile.rtmpVideoBitrate} for room ${room}`,
+      const banner =
+        `live RTMP ${resolution} codec=${codec} mode=${mode} ` +
+        `@ ${profile.rtmpVideoBitrate} for room ${room}`;
+      console.log(`[recording] ${banner}`);
+      sessionLog?.write(banner);
+      sessionLog?.write(
+        `ffmpeg args: ${args.map((a) => (/^rtmps?:\/\//i.test(a) ? redactRtmpArg(a) : a)).join(' ')}`,
       );
     }
 
     socket.on('message', (data, isBinary) => {
       if (!isBinary) return;
       const buf = data as Buffer;
+      bytesIn += buf.length;
+      chunkCount += 1;
+      windowBytes += buf.length;
+      windowChunks += 1;
       out.write(buf);
       if (ffmpeg?.stdin && !ffmpeg.stdin.destroyed) {
-        ffmpeg.stdin.write(buf);
+        const ok = ffmpeg.stdin.write(buf);
+        if (!ok) sessionLog?.write('ffmpeg stdin backpressure (write returned false)');
+      }
+      const now = Date.now();
+      const elapsedMs = now - windowStartedAt;
+      if (elapsedMs >= 10_000) {
+        const kbps = ((windowBytes * 8) / (elapsedMs / 1000) / 1000).toFixed(0);
+        sessionLog?.write(
+          `ingress window_s=${(elapsedMs / 1000).toFixed(1)} chunks=${windowChunks} ` +
+            `bytes=${windowBytes} kbps=${kbps} total_chunks=${chunkCount} total_bytes=${bytesIn}`,
+        );
+        windowBytes = 0;
+        windowChunks = 0;
+        windowStartedAt = now;
       }
     });
 
@@ -57,13 +80,53 @@ export class RecordingGateway implements OnGatewayConnection {
       if (ffmpeg?.stdin && !ffmpeg.stdin.destroyed) {
         ffmpeg.stdin.end();
       }
+      sessionLog?.write(`sink closed chunks=${chunkCount} total_bytes=${bytesIn}`);
       console.log(`[recording] finished ${file}`);
     });
   }
 }
 
+function attachFfmpegLogging(
+  room: string,
+  ffmpeg: ChildProcess,
+  sessionLog: SessionLog | undefined,
+): void {
+  let stderrBuf = '';
+  ffmpeg.stderr?.on('data', (chunk: Buffer) => {
+    stderrBuf += chunk.toString();
+    const parts = stderrBuf.split(/\r?\n/);
+    stderrBuf = parts.pop() ?? '';
+    for (const line of parts) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      sessionLog?.write(`ffmpeg: ${trimmed}`);
+      // Console: keep noise down — stats / errors only.
+      if (/error|warn|speed=|drop|fail|queue|delay|past duration/i.test(trimmed)) {
+        console.log(`[ffmpeg:${room}] ${trimmed}`);
+      }
+    }
+  });
+  ffmpeg.on('exit', (code, signal) => {
+    if (stderrBuf.trim()) sessionLog?.write(`ffmpeg: ${stderrBuf.trim()}`);
+    const msg = `ffmpeg exited code=${code} signal=${signal}`;
+    console.log(`[ffmpeg:${room}] ${msg}`);
+    sessionLog?.write(msg);
+  });
+}
+
 function buildFfmpegArgs(profile: StreamProfile, codec: string, rtmpUrl: string): string[] {
-  const commonHead = ['-hide_banner', '-loglevel', 'warning', '-fflags', '+genpts', '-i', 'pipe:0'];
+  // info: capture encode speed=/frame= lines for post-live diagnosis; session log keeps full stream.
+  const commonHead = [
+    '-hide_banner',
+    '-loglevel',
+    'info',
+    '-stats_period',
+    '5',
+    '-fflags',
+    '+genpts',
+    '-i',
+    'pipe:0',
+  ];
   const audio = ['-c:a', 'aac', '-b:a', profile.rtmpAudioBitrate, '-ar', '48000'];
   const out = ['-f', 'flv', rtmpUrl];
 
@@ -98,4 +161,16 @@ function buildFfmpegArgs(profile: StreamProfile, codec: string, rtmpUrl: string)
     ...audio,
     ...out,
   ];
+}
+
+function redactRtmpArg(url: string): string {
+  try {
+    const u = new URL(url);
+    const parts = u.pathname.split('/');
+    if (parts.length > 0) parts[parts.length - 1] = '***';
+    u.pathname = parts.join('/');
+    return u.toString();
+  } catch {
+    return 'rtmp://***';
+  }
 }

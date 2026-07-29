@@ -1,7 +1,15 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+    tag: "{{.Name}}"
+
 services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    logging: *default-logging
     environment:
       POSTGRES_USER: streaming
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -19,6 +27,7 @@ services:
       context: ./server
       dockerfile: Dockerfile
     restart: unless-stopped
+    logging: *default-logging
     depends_on:
       postgres:
         condition: service_healthy
@@ -47,11 +56,34 @@ services:
       context: ./web
       dockerfile: Dockerfile
     restart: unless-stopped
+    logging: *default-logging
     depends_on:
       - server
     ports:
       # Bound to localhost so host nginx + certbot own 80/443
       - "127.0.0.1:8080:80"
+
+  # Continuous host/container samples for post-live CPU/RAM diagnosis (t3 credit exhaustion, OOM).
+  # Writes to the shared recordings volume under diagnostics/host-stats.log
+  monitor:
+    image: docker:27-cli
+    restart: unless-stopped
+    logging: *default-logging
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - recordings:/data
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        mkdir -p /data/diagnostics
+        echo "$$(date -u +%Y-%m-%dT%H:%M:%SZ) monitor started" >> /data/diagnostics/host-stats.log
+        while true; do
+          {
+            echo "=== $$(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
+            docker stats --no-stream --format 'table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.NetIO}}' 2>/dev/null || true
+          } >> /data/diagnostics/host-stats.log
+          sleep 15
+        done
 
 volumes:
   pg_data:
