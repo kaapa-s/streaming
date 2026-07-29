@@ -94,8 +94,9 @@ export class RecordingsService {
           '--no-sandbox',
           '--autoplay-policy=no-user-gesture-required',
           '--use-fake-ui-for-media-stream',
-          // Dev Vite uses a local mkcert CA; Chromium won't trust it by default.
-          '--ignore-certificate-errors',
+          ...(process.env.NODE_ENV !== 'production'
+            ? ['--ignore-certificate-errors']
+            : []),
         ],
       });
     } catch (err) {

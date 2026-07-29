@@ -95,7 +95,76 @@ iterate on layout without mediasoup or the Nest server.
 - `MEDIASOUP_LISTEN_IP` / `MEDIASOUP_ANNOUNCED_IP` — set for LAN/internet use (defaults target localhost)
 - `FFMPEG_PATH` — optional path to the ffmpeg binary (default `ffmpeg` on `PATH`)
 
-## Later (out of scope for the POC)
+## Deploy to EC2 (Docker Compose)
 
-- Internet deployment: set `MEDIASOUP_ANNOUNCED_IP`, add TURN (coturn) for restrictive NATs.
-- Process split + full Docker Compose (api / sfu / compositor) — Plan 2.
+Monolith stack: `postgres` + `server` (API, SFU, recording) + `web` (nginx).
+
+### Instance
+
+- **AMI:** Ubuntu 24.04 LTS
+- **Size:** `t3.medium` minimum (2 vCPU / 4 GB); `c5.xlarge` if recordings feel sluggish
+- **Elastic IP:** attach and set as `MEDIASOUP_ANNOUNCED_IP` in `.env.prod`
+
+### Security group
+
+| Port | Protocol | Purpose |
+|------|----------|---------|
+| 22 | tcp | SSH (restrict to your IP) |
+| 80 | tcp | HTTP (Caddy ACME + proxy to nginx) |
+| 443 | tcp | HTTPS |
+| 40000-40100 | udp + tcp | WebRTC (mediasoup) |
+
+### HTTPS without a domain (sslip.io)
+
+Browsers require HTTPS for camera/mic. Let's Encrypt won't issue for a bare IP, but it will for an sslip.io hostname:
+
+```
+EIP 203.0.113.42  →  https://203-0-113-42.sslip.io
+```
+
+No DNS setup required — sslip.io resolves automatically.
+
+### Deploy
+
+```bash
+# Docker
+sudo apt-get update && sudo apt-get install -y docker.io docker-compose-v2
+sudo usermod -aG docker $USER && newgrp docker
+
+# App
+git clone <repo> streaming && cd streaming
+cp .env.prod.example .env.prod
+# Edit .env.prod: POSTGRES_PASSWORD, JWT_SECRET, SFU_JOIN_SECRET (openssl rand -hex 32),
+# MEDIASOUP_ANNOUNCED_IP = Elastic IP, PUBLIC_ORIGIN = https://<eip-with-dashes>.sslip.io
+
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+
+# TLS (host Caddy → nginx on :80)
+sudo apt-get install -y caddy
+sudo tee /etc/caddy/Caddyfile <<'EOF'
+203-0-113-42.sslip.io {
+    reverse_proxy localhost:80
+}
+EOF
+sudo systemctl reload caddy
+```
+
+Share **`https://203-0-113-42.sslip.io`** with testers (replace with your sslip.io hostname).
+
+### Verify
+
+```bash
+docker compose -f docker-compose.prod.yml ps
+docker stats   # during a test recording
+
+# Two browsers → register → join same room → Start recording → Stop recording
+docker compose -f docker-compose.prod.yml exec server ls /app/recordings
+```
+
+**Cellular ICE test:** one tester on a mobile hotspot confirms `MEDIASOUP_ANNOUNCED_IP` and SG `40000-40100/udp` are correct.
+
+### Troubleshooting
+
+- **ICE fails for external users:** SG allows `40000-40100/udp`, `MEDIASOUP_ANNOUNCED_IP` equals the Elastic IP, `docker logs server` shows `[mediasoup] worker started`
+- **Recording fails / Chrome crash:** check `shm_size` in compose, `docker logs server`
+- **Compositor can't connect:** `WEB_ORIGIN` must stay `http://web` in compose (internal Docker URL, not the public HTTPS URL)

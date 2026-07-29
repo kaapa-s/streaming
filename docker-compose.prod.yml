@@ -1,0 +1,57 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: streaming
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: streaming
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U streaming"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "40000-40100:40000-40100/udp"
+      - "40000-40100:40000-40100/tcp"
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://streaming:${POSTGRES_PASSWORD}@postgres:5432/streaming
+      JWT_SECRET: ${JWT_SECRET}
+      SFU_JOIN_SECRET: ${SFU_JOIN_SECRET}
+      WEB_ORIGIN: http://web
+      MEDIASOUP_LISTEN_IP: 0.0.0.0
+      MEDIASOUP_ANNOUNCED_IP: ${MEDIASOUP_ANNOUNCED_IP}
+      MEDIASOUP_RTC_MIN_PORT: 40000
+      MEDIASOUP_RTC_MAX_PORT: 40100
+      PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
+      PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "true"
+      PORT: 3000
+    volumes:
+      - recordings:/app/recordings
+    shm_size: "512m"
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - server
+    ports:
+      - "80:80"
+
+volumes:
+  pg_data:
+  recordings:
