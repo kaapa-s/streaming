@@ -1,7 +1,8 @@
 FROM node:22-slim AS deps
 WORKDIR /app
+# mediasoup prebuilds often fail on slim; local worker build needs pip + a C++ toolchain.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 make g++ \
+    build-essential python3 python3-pip \
   && rm -rf /var/lib/apt/lists/*
 COPY shared/join-token /app/shared/join-token
 RUN cd /app/shared/join-token && npm ci && npm run build
@@ -12,7 +13,7 @@ RUN npm ci --omit=dev
 FROM node:22-slim AS build
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 make g++ \
+    build-essential python3 python3-pip \
   && rm -rf /var/lib/apt/lists/*
 COPY shared/join-token /app/shared/join-token
 RUN cd /app/shared/join-token && npm ci && npm run build
