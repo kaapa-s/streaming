@@ -143,10 +143,12 @@ export class RecordingsService {
         sessionLog,
         stamp,
       });
+      const sfuUrl = process.env.SFU_PUBLIC_WS_URL?.trim();
       const compositorUrl =
         `${webOrigin}/compositor?room=${encodeURIComponent(slug)}` +
         `&resolution=${encodeURIComponent(resolution)}` +
-        `&token=${encodeURIComponent(joinToken)}`;
+        `&token=${encodeURIComponent(joinToken)}` +
+        (sfuUrl ? `&sfuUrl=${encodeURIComponent(sfuUrl)}` : '');
       await page.goto(compositorUrl, { waitUntil: 'domcontentloaded' });
       sessionLog.write(`compositor navigated url=${webOrigin}/compositor?room=${slug}&resolution=${resolution}`);
       console.log(

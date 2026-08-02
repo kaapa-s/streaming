@@ -116,7 +116,7 @@ export function Studio() {
           'Camera/mic unavailable: this page must be served over HTTPS (or localhost). Open the https:// URL Vite prints.',
         );
       }
-      const { joinToken, room: joinedRoom } = await joinRoom(room);
+      const { joinToken, room: joinedRoom, sfuUrl } = await joinRoom(room);
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           width: { ideal: 1920 },
@@ -129,7 +129,7 @@ export function Studio() {
 
       const sfu = new SfuClient({ onPeersChanged: (peers) => setRemotePeers([...peers]) });
       sfuRef.current = sfu;
-      await sfu.join(joinedRoom.slug, user.name, 'speaker', joinToken);
+      await sfu.join(joinedRoom.slug, user.name, 'speaker', joinToken, sfuUrl);
       await sfu.publish(stream);
       setJoined(true);
     } catch (err) {

@@ -3,5 +3,6 @@ dist/
 server/recordings/
 server/.chrome-cache/
 server/.env
+sfu/.env
 *.log
 .DS_Store

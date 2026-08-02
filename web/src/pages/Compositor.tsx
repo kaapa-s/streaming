@@ -25,6 +25,7 @@ export function CompositorPage() {
       const room = params.get('room') ?? 'main';
       const token = params.get('token');
       if (!token) throw new Error('missing join token');
+      const sfuUrl = params.get('sfuUrl') ?? undefined;
       const resolution = parseResolution(params.get('resolution'));
       const profile = STREAM_PROFILES[resolution];
 
@@ -38,7 +39,7 @@ export function CompositorPage() {
       container.appendChild(compositor.canvas);
 
       const sfu = new SfuClient({ onPeersChanged: (peers) => compositor.setPeers(peers) });
-      await sfu.join(room, 'Recorder', 'compositor', token);
+      await sfu.join(room, 'Recorder', 'compositor', token, sfuUrl);
       setStatus(`joined room "${room}" (${resolution}), connecting recorder…`);
 
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';

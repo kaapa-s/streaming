@@ -129,10 +129,12 @@ export class SfuClient {
     name: string,
     role: SfuRole = 'speaker',
     joinToken?: string,
+    sfuUrl?: string,
   ): Promise<void> {
     if (!joinToken) throw new Error('join token required');
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    this.ws = new WebSocket(`${proto}//${location.host}/ws/signaling`);
+    const url = sfuUrl?.trim() || `${proto}//${location.host}/ws/signaling`;
+    this.ws = new WebSocket(url);
     const ws = this.ws;
     await new Promise<void>((resolve, reject) => {
       ws.onopen = () => resolve();

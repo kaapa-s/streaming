@@ -129,6 +129,7 @@ export async function joinRoom(slug: string): Promise<{
   room: { id: string; slug: string };
   role: string;
   joinToken: string;
+  sfuUrl?: string;
 }> {
   const res = await apiFetch(`/api/rooms/${encodeURIComponent(slug)}/join`, { method: 'POST' });
   if (!res.ok) throw new Error(await parseError(res));

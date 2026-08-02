@@ -18,7 +18,7 @@ echo "==> docker stats (snapshot)"
 docker stats --no-stream >"$OUT_DIR/docker-stats.txt" 2>&1 || true
 
 echo "==> container logs (last 6h / 10k lines each)"
-for svc in server web postgres monitor; do
+for svc in server sfu web postgres monitor; do
   "${COMPOSE[@]}" logs --no-color --since 6h --tail 10000 "$svc" \
     >"$OUT_DIR/docker-$svc.log" 2>&1 || true
 done
@@ -26,8 +26,8 @@ done
 echo "==> session + host diagnostic files from recordings volume"
 "${COMPOSE[@]}" exec -T server sh -c '
   mkdir -p /tmp/diag-export
-  cp -a /app/recordings/*.session.log /tmp/diag-export/ 2>/dev/null || true
-  cp -a /app/recordings/diagnostics /tmp/diag-export/ 2>/dev/null || true
+  cp -a /app/server/recordings/*.session.log /tmp/diag-export/ 2>/dev/null || true
+  cp -a /app/server/recordings/diagnostics /tmp/diag-export/ 2>/dev/null || true
   cd /tmp/diag-export && tar cf - .
 ' >"$OUT_DIR/recordings-diags.tar" 2>/dev/null || true
 
@@ -45,7 +45,8 @@ fi
   echo "## What to look for"
   echo "- *.session.log: codec/mode, ffmpeg speed=, loadavg, ingress kbps, backpressure"
   echo "- diagnostics/host-stats.log: docker CPU/RAM every 15s (t3 credit / OOM)"
-  echo "- docker-server.log: mediasoup / compositor / nest stdout"
+  echo "- docker-server.log: compositor / nest API stdout"
+  echo "- docker-sfu.log: mediasoup / signaling stdout"
   echo "- ffmpeg speed= < 1.0 or rising loadavg → undersized instance"
   echo "- codec=vp8/vp9 + libx264/medium → heavy re-encode path"
 } >"$OUT_DIR/README.txt"

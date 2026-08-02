@@ -1,23 +1,28 @@
 # Streaming Studio POC
 
 A StreamYard-style proof of concept: speakers join a browser studio, media flows
-through a mediasoup SFU embedded in a NestJS server, and a server-launched
-headless Chromium joins the room as a hidden "compositor" that records the
-program feed (both speakers side by side, mixed audio) to a `.webm` file — and
-optionally pushes it live to YouTube via ffmpeg/RTMP.
+through a mediasoup SFU process, and a server-launched headless Chromium joins
+the room as a hidden "compositor" that records the program feed (both speakers
+side by side, mixed audio) to a `.webm` file — and optionally pushes it live to
+YouTube via ffmpeg/RTMP.
 
 ## Architecture
 
-- `server/` — NestJS + Postgres/TypeORM auth + mediasoup SFU + WebSocket signaling + recording sink + Puppeteer launcher
-- `web/` — React (Vite) studio UI and compositor page, sharing one canvas/WebAudio compositing module
+- `server/` — NestJS + Postgres/TypeORM auth, rooms API, recording sink, Puppeteer launcher
+- `sfu/` — mediasoup worker + `/ws/signaling` (join tokens only; no DB)
+- `shared/join-token/` — HMAC issue/verify used by API and SFU
+- `web/` — React (Vite) studio UI and compositor page
 
 Auth: register/login (JWT + refresh tokens). Speakers get a short-lived join token
 from `POST /api/rooms/:slug/join` before SFU signaling. Recording start/stop requires
 room membership.
 
+Vite (local) and nginx (prod) same-origin path-proxy `/ws/signaling` → SFU and
+`/api` + `/ws/recording` → API. WebRTC media still goes to the SFU announced IP.
+
 Every participant (speakers and the compositor) connects only to the SFU — no
 peer-to-peer connections. The recording is produced by the compositor page
-itself (canvas + Web Audio + MediaRecorder) and streamed to the server over a
+itself (canvas + Web Audio + MediaRecorder) and streamed to the API over a
 WebSocket, where it is appended to `server/recordings/<room>-<timestamp>.webm`.
 If you paste a YouTube RTMP URL (or stream key) in the studio, those same chunks
 are also piped through `ffmpeg` to YouTube Live (transcoded to H.264 + AAC).
@@ -32,23 +37,33 @@ are also piped through `ffmpeg` to YouTube Live (transcoded to H.264 + AAC).
 ## Setup
 
 ```bash
+# Postgres
+cd server && docker compose up -d
+
+# Shared join-token + API
 cd server && npm install
 cp .env.example .env   # DATABASE_URL, JWT_SECRET, SFU_JOIN_SECRET
-# ensure Postgres is up and DATABASE_URL points at it, then:
 npm run migration:run
 npx puppeteer browsers install chrome   # one-time Chrome download for the recorder
+
+# SFU (same SFU_JOIN_SECRET as server/.env)
+cd ../sfu && npm install
+cp .env.example .env
+
+# Web + root concurrently
 cd ../web && npm install
+cd .. && npm install
 ```
 
-## Run (two terminals)
+## Run
+
+From the repo root (API `:3000`, SFU `:3001`, web `:5173`):
 
 ```bash
-# terminal 1
-cd server && npm run dev    # API + SFU + signaling on http://localhost:3000
-
-# terminal 2
-cd web && npm run dev       # studio on https://localhost:5173 (proxies /api and /ws to :3000)
+npm run dev
 ```
+
+Or three terminals: `npm run dev:api`, `npm run dev:sfu`, `npm run dev:web`.
 
 Register / log in in the studio, then join a room. Recording and signaling require auth (Bearer JWT + room join token).
 
@@ -85,19 +100,28 @@ iterate on layout without mediasoup or the Nest server.
 - `?peers=4` — start with N fake speakers (default 2)
 - `?audio=0` — skip oscillator tracks on new peers
 
-## Environment variables (server)
+## Environment variables
+
+### server
 
 - `PORT` — HTTP/WS port (default `3000`)
 - `WEB_ORIGIN` — where the compositor page is served (default `https://localhost:5173`)
 - `DATABASE_URL` — Postgres connection string
 - `JWT_SECRET` — access-token signing secret
-- `SFU_JOIN_SECRET` — HMAC secret for short-lived SFU join tokens
-- `MEDIASOUP_LISTEN_IP` / `MEDIASOUP_ANNOUNCED_IP` — set for LAN/internet use (defaults target localhost)
+- `SFU_JOIN_SECRET` — HMAC secret for short-lived SFU join tokens (must match SFU)
+- `SFU_PUBLIC_WS_URL` — optional direct signaling URL; leave unset for same-origin `/ws/signaling`
 - `FFMPEG_PATH` — optional path to the ffmpeg binary (default `ffmpeg` on `PATH`)
+
+### sfu
+
+- `PORT` — signaling HTTP/WS port (default `3001`)
+- `SFU_JOIN_SECRET` — same secret as server
+- `MEDIASOUP_LISTEN_IP` / `MEDIASOUP_ANNOUNCED_IP` — set for LAN/internet use (defaults target localhost)
+- `MEDIASOUP_RTC_MIN_PORT` / `MEDIASOUP_RTC_MAX_PORT` — WebRTC port range (default `40000–40100`)
 
 ## Deploy to EC2 (Docker Compose)
 
-Monolith stack: `postgres` + `server` (API, SFU, recording) + `web` (nginx).
+Stack: `postgres` + `server` (API + recording) + `sfu` (mediasoup) + `web` (nginx).
 
 ### Instance
 
@@ -112,7 +136,7 @@ Monolith stack: `postgres` + `server` (API, SFU, recording) + `web` (nginx).
 | 22 | tcp | SSH (restrict to your IP) |
 | 80 | tcp | HTTP (ACME + redirect to HTTPS) |
 | 443 | tcp | HTTPS |
-| 40000-40100 | udp + tcp | WebRTC (mediasoup) |
+| 40000-40100 | udp + tcp | WebRTC (mediasoup SFU) |
 
 ### HTTPS without a domain (sslip.io)
 
@@ -189,7 +213,7 @@ docker compose -f docker-compose.prod.yml ps
 docker stats   # during a test recording
 
 # Two browsers → register → join same room → Start recording → Stop recording
-docker compose -f docker-compose.prod.yml exec server ls /app/recordings
+docker compose -f docker-compose.prod.yml exec server ls /app/server/recordings
 ```
 
 **Cellular ICE test:** one tester on a mobile hotspot confirms `MEDIASOUP_ANNOUNCED_IP` and SG `40000-40100/udp` are correct.
@@ -206,11 +230,11 @@ chmod +x scripts/collect-logs.sh
 # → diagnostics-<utc>.tar.gz  (session logs + container logs + host stats)
 ```
 
-What to look for: `speed=` below `1.0`, rising `loadavg`, `codec=vp8/vp9` with `libx264/medium`, `stdin backpressure`, or `server` CPU/RAM pegged in `host-stats.log`.
+What to look for: `speed=` below `1.0`, rising `loadavg`, `codec=vp8/vp9` with `libx264/medium`, `stdin backpressure`, or `server`/`sfu` CPU/RAM pegged in `host-stats.log`.
 
 ### Troubleshooting
 
-- **ICE fails for external users:** SG allows `40000-40100/udp`, `MEDIASOUP_ANNOUNCED_IP` equals the Elastic IP, `docker logs server` shows `[mediasoup] worker started`
+- **ICE fails for external users:** SG allows `40000-40100/udp`, `MEDIASOUP_ANNOUNCED_IP` equals the Elastic IP, `docker logs sfu` shows `[mediasoup] worker started`
 - **Recording fails / Chrome crash:** check `shm_size` in compose, `docker logs server`
 - **Compositor can't connect:** `WEB_ORIGIN` must stay `http://web` in compose (internal Docker URL, not the public HTTPS URL)
 - **Choppy YouTube A/V:** undersized instance (use ≥ `t3.medium`); pull a diagnostics bundle and check session + host-stats logs above

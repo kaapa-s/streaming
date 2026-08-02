@@ -25,7 +25,7 @@ function sign(body: string): string {
   return createHmac('sha256', secret()).update(body).digest('base64url');
 }
 
-/** Short-lived HMAC token for SFU signaling join (shared secret with Plan 2 SFU). */
+/** Short-lived HMAC token for SFU signaling join (shared secret with SFU process). */
 export function issueJoinToken(
   payload: Omit<JoinTokenPayload, 'exp'>,
   ttlSeconds = 60 * 60,

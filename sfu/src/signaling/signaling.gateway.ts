@@ -1,8 +1,8 @@
 import { OnGatewayConnection, OnGatewayDisconnect, WebSocketGateway } from '@nestjs/websockets';
+import { verifyJoinToken } from '@streaming/join-token';
 import { randomUUID } from 'crypto';
 import type { types } from 'mediasoup';
 import type { WebSocket } from 'ws';
-import { verifyJoinToken } from '../common/join-token';
 import { MediasoupService } from '../mediasoup/mediasoup.service';
 
 type PeerRole = 'speaker' | 'compositor';

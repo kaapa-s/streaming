@@ -6,9 +6,14 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { issueJoinToken } from '../common/join-token';
+import { issueJoinToken } from '@streaming/join-token';
 import { Room, RoomMember, type RoomRole } from '../entities';
 import type { AuthUser } from '../auth/jwt.strategy';
+
+function optionalSfuUrl(): string | undefined {
+  const value = process.env.SFU_PUBLIC_WS_URL?.trim();
+  return value || undefined;
+}
 
 @Injectable()
 export class RoomsService {
@@ -64,6 +69,7 @@ export class RoomsService {
     room: { id: string; slug: string };
     role: RoomRole;
     joinToken: string;
+    sfuUrl?: string;
   }> {
     const normalized = slug.trim().toLowerCase();
     let room = await this.rooms.findOne({ where: { slug: normalized } });
@@ -100,6 +106,7 @@ export class RoomsService {
       room: { id: room.id, slug: room.slug },
       role,
       joinToken,
+      sfuUrl: optionalSfuUrl(),
     };
   }
 
@@ -107,6 +114,7 @@ export class RoomsService {
     room: { id: string; slug: string };
     role: RoomRole;
     joinToken: string;
+    sfuUrl?: string;
   }> {
     const room = await this.findById(roomId);
     return this.joinBySlug(room.slug, user);

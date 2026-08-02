@@ -24,32 +24,43 @@ services:
 
   server:
     build:
-      context: ./server
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: server/Dockerfile
     restart: unless-stopped
     logging: *default-logging
     depends_on:
       postgres:
         condition: service_healthy
-    ports:
-      - "40000-40100:40000-40100/udp"
-      - "40000-40100:40000-40100/tcp"
     environment:
       NODE_ENV: production
       DATABASE_URL: postgres://streaming:${POSTGRES_PASSWORD}@postgres:5432/streaming
       JWT_SECRET: ${JWT_SECRET}
       SFU_JOIN_SECRET: ${SFU_JOIN_SECRET}
       WEB_ORIGIN: http://web
-      MEDIASOUP_LISTEN_IP: 0.0.0.0
-      MEDIASOUP_ANNOUNCED_IP: ${MEDIASOUP_ANNOUNCED_IP}
-      MEDIASOUP_RTC_MIN_PORT: 40000
-      MEDIASOUP_RTC_MAX_PORT: 40100
       PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
       PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "true"
       PORT: 3000
     volumes:
-      - recordings:/app/recordings
+      - recordings:/app/server/recordings
     shm_size: "512m"
+
+  sfu:
+    build:
+      context: .
+      dockerfile: sfu/Dockerfile
+    restart: unless-stopped
+    logging: *default-logging
+    ports:
+      - "40000-40100:40000-40100/udp"
+      - "40000-40100:40000-40100/tcp"
+    environment:
+      NODE_ENV: production
+      SFU_JOIN_SECRET: ${SFU_JOIN_SECRET}
+      MEDIASOUP_LISTEN_IP: 0.0.0.0
+      MEDIASOUP_ANNOUNCED_IP: ${MEDIASOUP_ANNOUNCED_IP}
+      MEDIASOUP_RTC_MIN_PORT: 40000
+      MEDIASOUP_RTC_MAX_PORT: 40100
+      PORT: 3001
 
   web:
     build:
@@ -59,6 +70,7 @@ services:
     logging: *default-logging
     depends_on:
       - server
+      - sfu
     ports:
       # Bound to localhost so host nginx + certbot own 80/443
       - "127.0.0.1:8080:80"

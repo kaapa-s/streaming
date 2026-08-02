@@ -1,5 +1,14 @@
 {
+  "name": "streaming",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -n api,sfu,web -c blue,magenta,green \"npm run dev --prefix server\" \"npm run dev --prefix sfu\" \"npm run dev --prefix web\"",
+    "dev:api": "npm run dev --prefix server",
+    "dev:sfu": "npm run dev --prefix sfu",
+    "dev:web": "npm run dev --prefix web"
+  },
   "devDependencies": {
+    "concurrently": "^9.2.1",
     "vite-plugin-mkcert": "^2.1.0"
   }
 }

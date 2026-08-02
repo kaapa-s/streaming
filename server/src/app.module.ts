@@ -9,12 +9,10 @@ import {
   RoomMember,
   User,
 } from './entities';
-import { MediasoupService } from './mediasoup/mediasoup.service';
 import { RecordingGateway } from './recordings/recording.gateway';
 import { RecordingsController } from './recordings/recordings.controller';
 import { RecordingsService } from './recordings/recordings.service';
 import { RoomsModule } from './rooms/rooms.module';
-import { SignalingGateway } from './signaling/signaling.gateway';
 import { UsersModule } from './users/users.module';
 
 @Module({
@@ -38,6 +36,6 @@ import { UsersModule } from './users/users.module';
     RoomsModule,
   ],
   controllers: [RecordingsController],
-  providers: [MediasoupService, SignalingGateway, RecordingGateway, RecordingsService],
+  providers: [RecordingGateway, RecordingsService],
 })
 export class AppModule {}

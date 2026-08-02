@@ -19,7 +19,8 @@ export default defineConfig({
     https: {},
     proxy: {
       '/api': 'http://localhost:3000',
-      '/ws': { target: 'ws://localhost:3000', ws: true },
+      '/ws/recording': { target: 'ws://localhost:3000', ws: true },
+      '/ws/signaling': { target: 'ws://localhost:3001', ws: true },
     },
   },
 });
