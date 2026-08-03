@@ -191,7 +191,7 @@ Each edge ships its own nginx image:
 - `web/Dockerfile` — SPA + API/recording proxy + TLS
 - `sfu/nginx/Dockerfile` — WSS → `sfu:3001` + TLS
 
-`certbot` / `sfu-certbot` renew on a 12h loop and `HUP` the matching nginx service via the Docker socket. First certificate:
+`certbot` / `sfu-certbot` renew on a 12h loop; nginx reloads twice a day to pick up new certs. First certificate:
 
 ```bash
 ./scripts/issue-cert.sh web   # API box

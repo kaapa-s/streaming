@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
 # Issue a Let's Encrypt cert (webroot) and reload the matching nginx service.
 # Usage:
-#   ./scripts/issue-cert.sh web          # API box — SERVER_NAME
-#   ./scripts/issue-cert.sh sfu          # SFU box — SFU_SERVER_NAME
+#   ./scripts/issue-cert.sh web [env-file]   # API box — SERVER_NAME (default .env.prod)
+#   ./scripts/issue-cert.sh sfu [env-file]   # SFU box — SFU_SERVER_NAME (default .env.prod)
+# Examples:
+#   ./scripts/issue-cert.sh sfu sfu/env
+#   ENV_FILE=sfu/env ./scripts/issue-cert.sh sfu
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 TARGET="${1:-}"
-ENV_FILE="${ENV_FILE:-.env.prod}"
+ENV_FILE="${2:-${ENV_FILE:-.env.prod}}"
 COMPOSE=(docker compose -f docker-compose.prod.yml --env-file "$ENV_FILE")
 
 if [[ ! -f "$ENV_FILE" ]]; then
-  echo "missing $ENV_FILE — copy .env.prod.example and fill in values" >&2
+  echo "missing $ENV_FILE — pass the path: $0 $TARGET /path/to/env" >&2
   exit 1
 fi
 
@@ -40,12 +43,12 @@ case "$TARGET" in
     PROFILE_ARGS=(--profile sfu)
     ;;
   *)
-    echo "usage: $0 web|sfu" >&2
+    echo "usage: $0 web|sfu [env-file]" >&2
     exit 1
     ;;
 esac
 
-echo "Issuing cert for ${DOMAIN} (${TARGET})…"
+echo "Issuing cert for ${DOMAIN} (${TARGET}) using ${ENV_FILE}…"
 "${COMPOSE[@]}" "${PROFILE_ARGS[@]}" run --rm --entrypoint certbot "$SERVICE" \
   certonly --webroot -w /var/www/certbot \
   -d "$DOMAIN" \

@@ -64,17 +64,21 @@ services:
       - web_certbot_www:/var/www/certbot
 
   certbot:
-    build:
-      context: ./deploy/certbot
+    image: certbot/certbot:v2.11.0
     restart: unless-stopped
     logging: *default-logging
-    environment:
-      SERVER_NAME: ${SERVER_NAME}
-      RELOAD_SERVICE: web
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        trap exit TERM
+        while :; do
+          certbot renew --webroot -w /var/www/certbot || true
+          sleep 12h & wait $$!
+        done
     volumes:
       - web_letsencrypt:/etc/letsencrypt
       - web_certbot_www:/var/www/certbot
-      - /var/run/docker.sock:/var/run/docker.sock
 
   # Opt-in via --profile sfu. Default `up` (API box) never starts these.
   # On the SFU box: --profile sfu up -d --build sfu sfu-nginx sfu-certbot
@@ -119,17 +123,21 @@ services:
 
   sfu-certbot:
     profiles: ["sfu"]
-    build:
-      context: ./deploy/certbot
+    image: certbot/certbot:v2.11.0
     restart: unless-stopped
     logging: *default-logging
-    environment:
-      SERVER_NAME: ${SFU_SERVER_NAME}
-      RELOAD_SERVICE: sfu-nginx
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        trap exit TERM
+        while :; do
+          certbot renew --webroot -w /var/www/certbot || true
+          sleep 12h & wait $$!
+        done
     volumes:
       - sfu_letsencrypt:/etc/letsencrypt
       - sfu_certbot_www:/var/www/certbot
-      - /var/run/docker.sock:/var/run/docker.sock
 
   # Continuous host/container samples for post-live CPU/RAM diagnosis (t3 credit exhaustion, OOM).
   # Writes to the shared recordings volume under diagnostics/host-stats.log
