@@ -12,7 +12,7 @@ services:
     logging: *default-logging
     environment:
       POSTGRES_USER: streaming
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
       POSTGRES_DB: streaming
     volumes:
       - pg_data:/var/lib/postgresql/data
@@ -33,9 +33,9 @@ services:
         condition: service_healthy
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgres://streaming:${POSTGRES_PASSWORD}@postgres:5432/streaming
-      JWT_SECRET: ${JWT_SECRET}
-      SFU_JOIN_SECRET: ${SFU_JOIN_SECRET}
+      DATABASE_URL: postgres://streaming:${POSTGRES_PASSWORD:-}@postgres:5432/streaming
+      JWT_SECRET: ${JWT_SECRET:-}
+      SFU_JOIN_SECRET: ${SFU_JOIN_SECRET:-}
       # Required when SFU is on another host; omitted → clients use same-origin /ws/signaling
       SFU_PUBLIC_WS_URL: ${SFU_PUBLIC_WS_URL:-}
       WEB_ORIGIN: http://web
@@ -58,7 +58,7 @@ services:
       - "80:80"
       - "443:443"
     environment:
-      SERVER_NAME: ${SERVER_NAME}
+      SERVER_NAME: ${SERVER_NAME:-}
     volumes:
       - web_letsencrypt:/etc/letsencrypt
       - web_certbot_www:/var/www/certbot
@@ -96,9 +96,9 @@ services:
       - "40000-40100:40000-40100/tcp"
     environment:
       NODE_ENV: production
-      SFU_JOIN_SECRET: ${SFU_JOIN_SECRET}
+      SFU_JOIN_SECRET: ${SFU_JOIN_SECRET:-}
       MEDIASOUP_LISTEN_IP: 0.0.0.0
-      MEDIASOUP_ANNOUNCED_IP: ${MEDIASOUP_ANNOUNCED_IP}
+      MEDIASOUP_ANNOUNCED_IP: ${MEDIASOUP_ANNOUNCED_IP:-}
       MEDIASOUP_RTC_MIN_PORT: 40000
       MEDIASOUP_RTC_MAX_PORT: 40100
       PORT: 3001
@@ -116,7 +116,7 @@ services:
       - "80:80"
       - "443:443"
     environment:
-      SERVER_NAME: ${SFU_SERVER_NAME}
+      SERVER_NAME: ${SFU_SERVER_NAME:-}
     volumes:
       - sfu_letsencrypt:/etc/letsencrypt
       - sfu_certbot_www:/var/www/certbot
