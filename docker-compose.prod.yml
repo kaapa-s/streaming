@@ -36,6 +36,8 @@ services:
       DATABASE_URL: postgres://streaming:${POSTGRES_PASSWORD}@postgres:5432/streaming
       JWT_SECRET: ${JWT_SECRET}
       SFU_JOIN_SECRET: ${SFU_JOIN_SECRET}
+      # Required when SFU is on another host; omitted → clients use same-origin /ws/signaling
+      SFU_PUBLIC_WS_URL: ${SFU_PUBLIC_WS_URL:-}
       WEB_ORIGIN: http://web
       PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
       PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "true"
@@ -44,13 +46,17 @@ services:
       - recordings:/app/server/recordings
     shm_size: "512m"
 
+  # Opt-in via --profile sfu. Default `up` (API box) never starts this.
   sfu:
+    profiles: ["sfu"]
     build:
       context: .
       dockerfile: sfu/Dockerfile
     restart: unless-stopped
     logging: *default-logging
     ports:
+      # Signaling (needed when clients connect directly / SFU on its own host)
+      - "3001:3001"
       - "40000-40100:40000-40100/udp"
       - "40000-40100:40000-40100/tcp"
     environment:
@@ -70,7 +76,6 @@ services:
     logging: *default-logging
     depends_on:
       - server
-      - sfu
     ports:
       # Bound to localhost so host nginx + certbot own 80/443
       - "127.0.0.1:8080:80"

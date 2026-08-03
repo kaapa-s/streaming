@@ -121,22 +121,23 @@ iterate on layout without mediasoup or the Nest server.
 
 ## Deploy to EC2 (Docker Compose)
 
-Stack: `postgres` + `server` (API + recording) + `sfu` (mediasoup) + `web` (nginx).
+Stack: `postgres` + `server` (API + recording) + `web` (nginx). SFU is opt-in (`--profile sfu`) so it can run on a separate instance.
 
 ### Instance
 
 - **AMI:** Ubuntu 24.04 LTS
 - **Size:** `t3.medium` minimum (2 vCPU / 4 GB); `c5.xlarge` if recordings feel sluggish
-- **Elastic IP:** attach and set as `MEDIASOUP_ANNOUNCED_IP` in `.env.prod`
+- **Elastic IP:** attach; set `MEDIASOUP_ANNOUNCED_IP` to the **SFU** box EIP
 
 ### Security group
 
-| Port | Protocol | Purpose |
-|------|----------|---------|
-| 22 | tcp | SSH (restrict to your IP) |
-| 80 | tcp | HTTP (ACME + redirect to HTTPS) |
-| 443 | tcp | HTTPS |
-| 40000-40100 | udp + tcp | WebRTC (mediasoup SFU) |
+| Port | Protocol | Purpose | Where |
+|------|----------|---------|-------|
+| 22 | tcp | SSH (restrict to your IP) | both |
+| 80 | tcp | HTTP (ACME + redirect to HTTPS) | API |
+| 443 | tcp | HTTPS | API |
+| 3001 | tcp | SFU signaling (when SFU is split) | SFU |
+| 40000-40100 | udp + tcp | WebRTC (mediasoup SFU) | SFU |
 
 ### HTTPS without a domain (sslip.io)
 
@@ -163,10 +164,17 @@ sudo usermod -aG docker $USER   # then log out / back in
 git clone <repo> streaming && cd streaming
 cp .env.prod.example .env.prod
 # Edit .env.prod: POSTGRES_PASSWORD, JWT_SECRET, SFU_JOIN_SECRET (openssl rand -hex 32),
-# MEDIASOUP_ANNOUNCED_IP = Elastic IP, PUBLIC_ORIGIN = https://<eip-with-dashes>.sslip.io
+# PUBLIC_ORIGIN = https://<api-eip-with-dashes>.sslip.io
+# Split SFU: SFU_PUBLIC_WS_URL=ws://<sfu-eip>:3001/ws/signaling (same SFU_JOIN_SECRET on both)
 
+# API box (does NOT start sfu)
 docker-compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+
+# SFU box only
+docker-compose -f docker-compose.prod.yml --env-file .env.prod --profile sfu up -d --build sfu
 ```
+
+Redeploy API code only: `docker-compose -f docker-compose.prod.yml --env-file .env.prod up -d --build --no-deps server`
 
 ### TLS with certbot + host nginx
 
