@@ -1,0 +1,39 @@
+# ${SERVER_NAME} is substituted at container start (official nginx image templates).
+# Nginx vars like $host are left alone (not in the envsubst allowlist).
+
+# ACME + redirect for the public sslip hostname.
+# Internal clients (Host: web) keep plain HTTP for WEB_ORIGIN=http://web.
+server {
+    listen 80;
+    server_name ${SERVER_NAME};
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 80;
+    server_name web _;
+
+    include /etc/nginx/app_proxy.conf;
+}
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name ${SERVER_NAME};
+
+    ssl_certificate     /etc/nginx/ssl/fullchain.pem;
+    ssl_certificate_key /etc/nginx/ssl/privkey.pem;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    include /etc/nginx/app_proxy.conf;
+}

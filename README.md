@@ -17,8 +17,9 @@ Auth: register/login (JWT + refresh tokens). Speakers get a short-lived join tok
 from `POST /api/rooms/:slug/join` before SFU signaling. Recording start/stop requires
 room membership.
 
-Vite (local) and nginx (prod) same-origin path-proxy `/ws/signaling` → SFU and
-`/api` + `/ws/recording` → API. WebRTC media still goes to the SFU announced IP.
+Locally, Vite same-origin path-proxies `/ws/signaling` → SFU and `/api` + `/ws/recording` → API.
+In split prod, browsers use `SFU_PUBLIC_WS_URL` (WSS via `sfu-nginx`); `web` nginx only proxies API/recording.
+WebRTC media still goes to the SFU announced IP.
 
 Every participant (speakers and the compositor) connects only to the SFU — no
 peer-to-peer connections. The recording is produced by the compositor page
@@ -121,7 +122,7 @@ iterate on layout without mediasoup or the Nest server.
 
 ## Deploy to EC2 (Docker Compose)
 
-Stack: `postgres` + `server` (API + recording) + `web` (nginx). SFU is opt-in (`--profile sfu`) so it can run on a separate instance.
+Stack: `postgres` + `server` (API + recording) + `web` (nginx + TLS). SFU is opt-in (`--profile sfu`: `sfu` + `sfu-nginx` + `sfu-certbot`) so it can run on a separate instance.
 
 ### Instance
 
@@ -134,14 +135,15 @@ Stack: `postgres` + `server` (API + recording) + `web` (nginx). SFU is opt-in (`
 | Port | Protocol | Purpose | Where |
 |------|----------|---------|-------|
 | 22 | tcp | SSH (restrict to your IP) | both |
-| 80 | tcp | HTTP (ACME + redirect to HTTPS) | API |
-| 443 | tcp | HTTPS | API |
-| 3001 | tcp | SFU signaling (when SFU is split) | SFU |
+| 80 | tcp | HTTP (ACME + redirect to HTTPS) | both |
+| 443 | tcp | HTTPS / WSS | both |
 | 40000-40100 | udp + tcp | WebRTC (mediasoup SFU) | SFU |
+
+TLS terminates **inside Compose** (`web` on the API box, `sfu-nginx` on the SFU box). Do not run host nginx on 80/443.
 
 ### HTTPS without a domain (sslip.io)
 
-Browsers require HTTPS for camera/mic. Let's Encrypt won't issue for a bare IP, but it will for an sslip.io hostname:
+Browsers require HTTPS for camera/mic, and an HTTPS page cannot open plain `ws://` signaling (mixed content). Let's Encrypt won't issue for a bare IP, but it will for an sslip.io hostname:
 
 ```
 EIP 203.0.113.42  →  https://203-0-113-42.sslip.io
@@ -149,7 +151,9 @@ EIP 203.0.113.42  →  https://203-0-113-42.sslip.io
 
 No DNS setup or sslip.io signup required — the hostname resolves automatically.
 
-The compose `web` service listens on `127.0.0.1:8080`. Host nginx terminates TLS on 80/443 and proxies to that port.
+When API and SFU are on separate instances, each EIP gets its **own** sslip hostname:
+- API: `SERVER_NAME` / `PUBLIC_ORIGIN=https://<api-eip-dashes>.sslip.io`
+- SFU: `SFU_SERVER_NAME` / `SFU_PUBLIC_WS_URL=wss://<sfu-eip-dashes>.sslip.io/ws/signaling`
 
 ### Deploy
 
@@ -163,56 +167,40 @@ sudo usermod -aG docker $USER   # then log out / back in
 # App
 git clone <repo> streaming && cd streaming
 cp .env.prod.example .env.prod
-# Edit .env.prod: POSTGRES_PASSWORD, JWT_SECRET, SFU_JOIN_SECRET (openssl rand -hex 32),
-# PUBLIC_ORIGIN = https://<api-eip-with-dashes>.sslip.io
-# Split SFU: SFU_PUBLIC_WS_URL=ws://<sfu-eip>:3001/ws/signaling (same SFU_JOIN_SECRET on both)
+# Edit .env.prod:
+#   POSTGRES_PASSWORD, JWT_SECRET, SFU_JOIN_SECRET (openssl rand -hex 32)
+#   CERTBOT_EMAIL, SERVER_NAME, PUBLIC_ORIGIN  (API EIP → sslip)
+#   Split SFU: SFU_SERVER_NAME, SFU_PUBLIC_WS_URL, MEDIASOUP_ANNOUNCED_IP=<sfu-eip>
+#              (same SFU_JOIN_SECRET on both boxes)
 
-# API box (does NOT start sfu)
-docker-compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+# API box (does NOT start sfu / sfu-nginx)
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+./scripts/issue-cert.sh web
 
-# SFU box only
-docker-compose -f docker-compose.prod.yml --env-file .env.prod --profile sfu up -d --build sfu
+# SFU box only (explicit services — avoids starting postgres/server/web)
+docker compose -f docker-compose.prod.yml --env-file .env.prod --profile sfu \
+  up -d --build sfu sfu-nginx sfu-certbot
+./scripts/issue-cert.sh sfu
 ```
 
-Redeploy API code only: `docker-compose -f docker-compose.prod.yml --env-file .env.prod up -d --build --no-deps server`
+Redeploy API code only: `docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build --no-deps server`
 
-### TLS with certbot + host nginx
+### TLS (nginx in Docker + certbot)
 
-Replace `203-0-113-42` with your Elastic IP (dots → dashes).
+Each edge ships its own nginx image:
+- `web/Dockerfile` — SPA + API/recording proxy + TLS
+- `sfu/nginx/Dockerfile` — WSS → `sfu:3001` + TLS
+
+`certbot` / `sfu-certbot` renew on a 12h loop and `HUP` the matching nginx service via the Docker socket. First certificate:
 
 ```bash
-# Amazon Linux 2023
-sudo dnf install -y nginx certbot python3-certbot-nginx
-
-# Proxy HTTP → Docker web (certbot will add SSL later)
-sudo tee /etc/nginx/conf.d/streaming.conf <<'EOF'
-server {
-    listen 80;
-    server_name 203-0-113-42.sslip.io;
-
-    location / {
-        proxy_pass http://127.0.0.1:8080;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_read_timeout 3600s;
-    }
-}
-EOF
-
-sudo nginx -t && sudo systemctl enable --now nginx
-
-# Issue certificate (opens interactive prompts for email / ToS)
-sudo certbot --nginx -d 203-0-113-42.sslip.io
+./scripts/issue-cert.sh web   # API box
+./scripts/issue-cert.sh sfu   # SFU box
 ```
 
-Certbot rewrites the nginx config for HTTPS and sets up renewal. Share **`https://203-0-113-42.sslip.io`** with testers.
+Until then nginx serves a temporary self-signed cert so the container can listen on 443. Share **`https://<api-eip-dashes>.sslip.io`** with testers.
 
-Renewal check: `sudo certbot renew --dry-run`
+Internal compositor traffic stays on `http://web` (no TLS redirect for that Host).
 
 ### Verify
 
@@ -245,4 +233,7 @@ What to look for: `speed=` below `1.0`, rising `loadavg`, `codec=vp8/vp9` with `
 - **ICE fails for external users:** SG allows `40000-40100/udp`, `MEDIASOUP_ANNOUNCED_IP` equals the Elastic IP, `docker logs sfu` shows `[mediasoup] worker started`
 - **Recording fails / Chrome crash:** check `shm_size` in compose, `docker logs server`
 - **Compositor can't connect:** `WEB_ORIGIN` must stay `http://web` in compose (internal Docker URL, not the public HTTPS URL)
+- **Signaling fails from HTTPS UI / mixed content:** use `wss://…sslip.io/ws/signaling` (`sfu-nginx` + `./scripts/issue-cert.sh sfu`), not `ws://…:3001`
+- **SFU WSS 502:** `sfu-nginx` proxies to `http://sfu:3001`; check `docker compose … --profile sfu ps`
+- **ACME / cert issue fails:** SG allows 80 from the internet; `SERVER_NAME` / `SFU_SERVER_NAME` matches the box EIP sslip hostname; no host process bound to 80/443
 - **Choppy YouTube A/V:** undersized instance (use ≥ `t3.medium`); pull a diagnostics bundle and check session + host-stats logs above

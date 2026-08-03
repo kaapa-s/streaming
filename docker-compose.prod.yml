@@ -46,7 +46,38 @@ services:
       - recordings:/app/server/recordings
     shm_size: "512m"
 
-  # Opt-in via --profile sfu. Default `up` (API box) never starts this.
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      - server
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SERVER_NAME: ${SERVER_NAME}
+    volumes:
+      - web_letsencrypt:/etc/letsencrypt
+      - web_certbot_www:/var/www/certbot
+
+  certbot:
+    build:
+      context: ./deploy/certbot
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      SERVER_NAME: ${SERVER_NAME}
+      RELOAD_SERVICE: web
+    volumes:
+      - web_letsencrypt:/etc/letsencrypt
+      - web_certbot_www:/var/www/certbot
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  # Opt-in via --profile sfu. Default `up` (API box) never starts these.
+  # On the SFU box: --profile sfu up -d --build sfu sfu-nginx sfu-certbot
   sfu:
     profiles: ["sfu"]
     build:
@@ -54,9 +85,9 @@ services:
       dockerfile: sfu/Dockerfile
     restart: unless-stopped
     logging: *default-logging
+    expose:
+      - "3001"
     ports:
-      # Signaling (needed when clients connect directly / SFU on its own host)
-      - "3001:3001"
       - "40000-40100:40000-40100/udp"
       - "40000-40100:40000-40100/tcp"
     environment:
@@ -68,17 +99,37 @@ services:
       MEDIASOUP_RTC_MAX_PORT: 40100
       PORT: 3001
 
-  web:
+  sfu-nginx:
+    profiles: ["sfu"]
     build:
-      context: ./web
+      context: ./sfu/nginx
       dockerfile: Dockerfile
     restart: unless-stopped
     logging: *default-logging
     depends_on:
-      - server
+      - sfu
     ports:
-      # Bound to localhost so host nginx + certbot own 80/443
-      - "127.0.0.1:8080:80"
+      - "80:80"
+      - "443:443"
+    environment:
+      SERVER_NAME: ${SFU_SERVER_NAME}
+    volumes:
+      - sfu_letsencrypt:/etc/letsencrypt
+      - sfu_certbot_www:/var/www/certbot
+
+  sfu-certbot:
+    profiles: ["sfu"]
+    build:
+      context: ./deploy/certbot
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      SERVER_NAME: ${SFU_SERVER_NAME}
+      RELOAD_SERVICE: sfu-nginx
+    volumes:
+      - sfu_letsencrypt:/etc/letsencrypt
+      - sfu_certbot_www:/var/www/certbot
+      - /var/run/docker.sock:/var/run/docker.sock
 
   # Continuous host/container samples for post-live CPU/RAM diagnosis (t3 credit exhaustion, OOM).
   # Writes to the shared recordings volume under diagnostics/host-stats.log
@@ -105,3 +156,7 @@ services:
 volumes:
   pg_data:
   recordings:
+  web_letsencrypt:
+  web_certbot_www:
+  sfu_letsencrypt:
+  sfu_certbot_www:
