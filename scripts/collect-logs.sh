@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Bundle session diagnostics + container logs for post-live analysis.
-# Run on the EC2 host from the repo root (where docker-compose.prod.yml lives).
+# Run on the EC2 host from the repo root (where compose.yml lives).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-COMPOSE=(docker compose -f "$ROOT/docker-compose.prod.yml" --env-file "$ROOT/.env.prod")
+ENV_FILE="${ENV_FILE:-$ROOT/.env}"
+COMPOSE=(docker compose -f "$ROOT/compose.yml" --env-file "$ENV_FILE")
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 OUT_DIR="${1:-$ROOT/diagnostics-$STAMP}"
 mkdir -p "$OUT_DIR"
@@ -12,14 +13,14 @@ mkdir -p "$OUT_DIR"
 echo "==> writing bundle to $OUT_DIR"
 
 echo "==> compose ps"
-"${COMPOSE[@]}" ps >"$OUT_DIR/compose-ps.txt" 2>&1 || true
+"${COMPOSE[@]}" --profile sfu ps >"$OUT_DIR/compose-ps.txt" 2>&1 || true
 
 echo "==> docker stats (snapshot)"
 docker stats --no-stream >"$OUT_DIR/docker-stats.txt" 2>&1 || true
 
 echo "==> container logs (last 6h / 10k lines each)"
-for svc in server sfu web postgres monitor; do
-  "${COMPOSE[@]}" logs --no-color --since 6h --tail 10000 "$svc" \
+for svc in server web postgres monitor certbot sfu sfu-nginx sfu-certbot; do
+  "${COMPOSE[@]}" --profile sfu --profile tools logs --no-color --since 6h --tail 10000 "$svc" \
     >"$OUT_DIR/docker-$svc.log" 2>&1 || true
 done
 

@@ -2,22 +2,20 @@
 # Issue a Let's Encrypt cert (manual DNS-01) and reload the matching nginx service.
 # Certbot prints the _acme-challenge TXT value, waits for you to create it, then continues.
 # Usage:
-#   ./scripts/issue-cert.sh web [env-file]   # API box — SERVER_NAME (default .env.prod)
-#   ./scripts/issue-cert.sh sfu [env-file]   # SFU box — SFU_SERVER_NAME (default .env.prod)
-# Examples:
-#   ./scripts/issue-cert.sh sfu sfu/.env
-#   ENV_FILE=sfu/.env ./scripts/issue-cert.sh sfu
+#   ./scripts/issue-cert.sh web [env-file]   # API box — SERVER_NAME (default .env)
+#   ./scripts/issue-cert.sh sfu [env-file]   # SFU box — SFU_SERVER_NAME (default .env)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 TARGET="${1:-}"
-ENV_FILE="${2:-${ENV_FILE:-.env.prod}}"
-COMPOSE=(docker compose -f docker-compose.prod.yml --env-file "$ENV_FILE")
+ENV_FILE="${2:-${ENV_FILE:-.env}}"
+COMPOSE=(docker compose -f compose.yml --env-file "$ENV_FILE")
 
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "missing $ENV_FILE — pass the path: $0 $TARGET /path/to/env" >&2
+  echo "hint: cp .env.example .env" >&2
   exit 1
 fi
 
@@ -39,14 +37,14 @@ case "$TARGET" in
     DOMAIN="$SERVER_NAME"
     SERVICE=certbot
     RELOAD=web
-    PROFILE_ARGS=()
+    PROFILE_ARGS=(--profile tools)
     ;;
   sfu)
     : "${SFU_SERVER_NAME:?set SFU_SERVER_NAME in $ENV_FILE}"
     DOMAIN="$SFU_SERVER_NAME"
     SERVICE=sfu-certbot
     RELOAD=sfu-nginx
-    PROFILE_ARGS=(--profile sfu)
+    PROFILE_ARGS=(--profile tools --profile sfu)
     ;;
   *)
     echo "usage: $0 web|sfu [env-file]" >&2
@@ -64,11 +62,10 @@ echo "When prompted: create the TXT record in DigitalOcean DNS, wait for it to r
   --email "$CERTBOT_EMAIL" \
   --agree-tos
 
-echo "Linking certs + reloading ${RELOAD}…"
-# Pass DOMAIN explicitly — the container may still have a stale SERVER_NAME from an older compose up.
-"${COMPOSE[@]}" "${PROFILE_ARGS[@]}" exec -T -e SERVER_NAME="$DOMAIN" "$RELOAD" \
-  /docker-entrypoint.d/40-selfsigned.sh
-"${COMPOSE[@]}" "${PROFILE_ARGS[@]}" exec -T "$RELOAD" nginx -s reload
+echo "Reloading ${RELOAD} (if running)…"
+if "${COMPOSE[@]}" "${PROFILE_ARGS[@]}" ps --status running --services 2>/dev/null | grep -qx "$RELOAD"; then
+  "${COMPOSE[@]}" "${PROFILE_ARGS[@]}" exec -T "$RELOAD" nginx -s reload
+else
+  echo "${RELOAD} is not running yet — start the stack (./scripts/deploy.sh) so nginx picks up the cert."
+fi
 echo "Done — https://${DOMAIN}"
-echo "If nginx still serves the wrong Host/cert, recreate the edge so SERVER_NAME is refreshed:"
-echo "  ${COMPOSE[*]} ${PROFILE_ARGS[*]} up -d ${RELOAD}"

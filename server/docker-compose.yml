@@ -1,4 +1,4 @@
-# Dev-only Postgres for Plan 1 (full stack Compose is Plan 2).
+# Dev-only Postgres for local npm workflow.
 services:
   postgres:
     image: postgres:16-alpine

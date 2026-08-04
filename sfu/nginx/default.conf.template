@@ -2,10 +2,6 @@ server {
     listen 80;
     server_name ${SERVER_NAME};
 
-    location /.well-known/acme-challenge/ {
-        root /var/www/certbot;
-    }
-
     location / {
         return 301 https://$host$request_uri;
     }
@@ -19,12 +15,8 @@ server {
     # Docker embedded DNS — required when proxy_pass uses a variable.
     resolver 127.0.0.11 valid=10s ipv6=off;
 
-    ssl_certificate     /etc/nginx/ssl/fullchain.pem;
-    ssl_certificate_key /etc/nginx/ssl/privkey.pem;
-
-    location /.well-known/acme-challenge/ {
-        root /var/www/certbot;
-    }
+    ssl_certificate     /etc/letsencrypt/live/${SERVER_NAME}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${SERVER_NAME}/privkey.pem;
 
     location /ws/signaling {
         set $sfu_upstream http://sfu:3001;

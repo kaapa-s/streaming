@@ -61,28 +61,17 @@ services:
       SERVER_NAME: ${SERVER_NAME:-}
     volumes:
       - web_letsencrypt:/etc/letsencrypt
-      - web_certbot_www:/var/www/certbot
 
+  # Helper only — used by `docker compose run` in scripts/issue-cert.sh (DNS-01).
+  # Not started by default; no renew loop (manual DNS does not auto-renew).
   certbot:
+    profiles: ["tools"]
     image: certbot/certbot:v2.11.0
-    restart: unless-stopped
-    logging: *default-logging
-    entrypoint: /bin/sh
-    command:
-      - -c
-      - |
-        trap exit TERM
-        while :; do
-          # Manual DNS certs do not auto-renew here — re-run ./scripts/issue-cert.sh web ~every 60d
-          certbot renew || true
-          sleep 12h & wait $$!
-        done
     volumes:
       - web_letsencrypt:/etc/letsencrypt
-      - web_certbot_www:/var/www/certbot
 
   # Opt-in via --profile sfu. Default `up` (API box) never starts these.
-  # On the SFU box: --profile sfu up -d --build sfu sfu-nginx sfu-certbot
+  # On the SFU box: --profile sfu up -d --build sfu sfu-nginx
   sfu:
     profiles: ["sfu"]
     build:
@@ -120,26 +109,12 @@ services:
       SERVER_NAME: ${SFU_SERVER_NAME:-}
     volumes:
       - sfu_letsencrypt:/etc/letsencrypt
-      - sfu_certbot_www:/var/www/certbot
 
   sfu-certbot:
-    profiles: ["sfu"]
+    profiles: ["tools"]
     image: certbot/certbot:v2.11.0
-    restart: unless-stopped
-    logging: *default-logging
-    entrypoint: /bin/sh
-    command:
-      - -c
-      - |
-        trap exit TERM
-        while :; do
-          # Manual DNS certs do not auto-renew here — re-run ./scripts/issue-cert.sh sfu ~every 60d
-          certbot renew || true
-          sleep 12h & wait $$!
-        done
     volumes:
       - sfu_letsencrypt:/etc/letsencrypt
-      - sfu_certbot_www:/var/www/certbot
 
   # Continuous host/container samples for post-live CPU/RAM diagnosis (t3 credit exhaustion, OOM).
   # Writes to the shared recordings volume under diagnostics/host-stats.log
@@ -167,6 +142,4 @@ volumes:
   pg_data:
   recordings:
   web_letsencrypt:
-  web_certbot_www:
   sfu_letsencrypt:
-  sfu_certbot_www:

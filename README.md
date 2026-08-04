@@ -28,37 +28,26 @@ WebSocket, where it is appended to `server/recordings/<room>-<timestamp>.webm`.
 If you paste a YouTube RTMP URL (or stream key) in the studio, those same chunks
 are also piped through `ffmpeg` to YouTube Live (transcoded to H.264 + AAC).
 
-## Prerequisites
+## Run locally
 
-- Node.js 20+
-- PostgreSQL 16+ (local install, or `cd server && docker compose up -d` when Docker is available)
+### Prerequisites
+
+- Node.js 22+
+- Docker (for Postgres)
 - macOS/Linux with build basics (mediasoup ships prebuilt workers for common platforms)
 - `ffmpeg` on `PATH` (required only for YouTube Live) — e.g. `brew install ffmpeg`
 
-## Setup
+### One command
 
 ```bash
-# Postgres
-cd server && docker compose up -d
-
-# Shared join-token + API
-cd server && npm install
-cp .env.example .env   # DATABASE_URL, JWT_SECRET, SFU_JOIN_SECRET
-npm run migration:run
-npx puppeteer browsers install chrome   # one-time Chrome download for the recorder
-
-# SFU (same SFU_JOIN_SECRET as server/.env)
-cd ../sfu && npm install
-cp .env.example .env
-
-# Web + root concurrently
-cd ../web && npm install
-cd .. && npm install
+npm run setup
 ```
 
-## Run
+This copies `server/.env` / `sfu/.env` from examples if missing, starts Postgres,
+installs dependencies, runs migrations, installs Puppeteer Chrome, then starts
+API (`:3000`), SFU (`:3001`), and web (`:5173` HTTPS via mkcert).
 
-From the repo root (API `:3000`, SFU `:3001`, web `:5173`):
+After the first setup, day-to-day:
 
 ```bash
 npm run dev
@@ -66,9 +55,9 @@ npm run dev
 
 Or three terminals: `npm run dev:api`, `npm run dev:sfu`, `npm run dev:web`.
 
-Register / log in in the studio, then join a room. Recording and signaling require auth (Bearer JWT + room join token).
+Ensure `SFU_JOIN_SECRET` matches in `server/.env` and `sfu/.env`.
 
-## Try it
+### Try it
 
 1. Open https://localhost:5173, register an account, join room `main`.
 2. Open a second browser/profile, register another user, join the same room.
@@ -89,10 +78,7 @@ Register / log in in the studio, then join a room. Recording and signaling requi
 
 Speakers should re-join after this change so cameras publish at higher WebRTC bitrate.
 
-The studio's "Program preview" canvas runs the same compositing code as the
-recorder, so what you see is what gets recorded / streamed.
-
-## Compositor playground (no stack required)
+### Compositor playground (no stack required)
 
 Open https://localhost:5173/compositor-dev while the Vite web app is running.
 It feeds the compositor with synthetic canvas/oscillator peers so you can
@@ -101,9 +87,9 @@ iterate on layout without mediasoup or the Nest server.
 - `?peers=4` — start with N fake speakers (default 2)
 - `?audio=0` — skip oscillator tracks on new peers
 
-## Environment variables
+### Local environment variables
 
-### server
+**server** (`server/.env`)
 
 - `PORT` — HTTP/WS port (default `3000`)
 - `WEB_ORIGIN` — where the compositor page is served (default `https://localhost:5173`)
@@ -113,103 +99,100 @@ iterate on layout without mediasoup or the Nest server.
 - `SFU_PUBLIC_WS_URL` — optional direct signaling URL; leave unset for same-origin `/ws/signaling`
 - `FFMPEG_PATH` — optional path to the ffmpeg binary (default `ffmpeg` on `PATH`)
 
-### sfu
+**sfu** (`sfu/.env`)
 
 - `PORT` — signaling HTTP/WS port (default `3001`)
 - `SFU_JOIN_SECRET` — same secret as server
 - `MEDIASOUP_LISTEN_IP` / `MEDIASOUP_ANNOUNCED_IP` — set for LAN/internet use (defaults target localhost)
 - `MEDIASOUP_RTC_MIN_PORT` / `MEDIASOUP_RTC_MAX_PORT` — WebRTC port range (default `40000–40100`)
 
-## Deploy to EC2 (Docker Compose)
+## Deploy on EC2 (Docker Compose)
 
-Stack: `postgres` + `server` (API + recording) + `web` (nginx + TLS). SFU is opt-in (`--profile sfu`: `sfu` + `sfu-nginx` + `sfu-certbot`) so it can run on a separate instance.
+Split stack by default:
+
+- **API box:** `postgres` + `server` + `web` (nginx TLS) + `monitor`
+- **SFU box:** `sfu` + `sfu-nginx` (WSS) via `--profile sfu`
+
+TLS terminates **inside Compose**. Do not run host nginx on 80/443.
+
+Domains:
+
+| Host | Role |
+|------|------|
+| `streaming.kaapa.pl` | API + studio UI |
+| `sfu.kaapa.pl` | SFU signaling (WSS) |
 
 ### Instance
 
 - **AMI:** Ubuntu 24.04 LTS
 - **Size:** `t3.medium` minimum (2 vCPU / 4 GB); `c5.xlarge` if recordings feel sluggish
 - **Elastic IP:** attach; set `MEDIASOUP_ANNOUNCED_IP` to the **SFU** box EIP
+- **DNS:** A record `streaming.kaapa.pl` → API EIP; A record `sfu.kaapa.pl` → SFU EIP
 
 ### Security group
 
 | Port | Protocol | Purpose | Where |
 |------|----------|---------|-------|
 | 22 | tcp | SSH (restrict to your IP) | both |
-| 80 | tcp | HTTP (ACME + redirect to HTTPS) | both |
+| 80 | tcp | HTTP → HTTPS redirect | both |
 | 443 | tcp | HTTPS / WSS | both |
 | 40000-40100 | udp + tcp | WebRTC (mediasoup SFU) | SFU |
 
-TLS terminates **inside Compose** (`web` on the API box, `sfu-nginx` on the SFU box). Do not run host nginx on 80/443.
-
-### HTTPS without a domain (sslip.io)
-
-Browsers require HTTPS for camera/mic, and an HTTPS page cannot open plain `ws://` signaling (mixed content). Let's Encrypt won't issue for a bare IP, but it will for an sslip.io hostname:
-
-```
-EIP 203.0.113.42  →  https://203-0-113-42.sslip.io
-```
-
-No DNS setup or sslip.io signup required — the hostname resolves automatically.
-
-When API and SFU are on separate instances, each EIP gets its **own** sslip hostname:
-- API: `SERVER_NAME` / `PUBLIC_ORIGIN=https://<api-eip-dashes>.sslip.io`
-- SFU: `SFU_SERVER_NAME` / `SFU_PUBLIC_WS_URL=wss://<sfu-eip-dashes>.sslip.io/ws/signaling`
-
-### Deploy
+### First-time setup (once per box)
 
 ```bash
-# Docker (Amazon Linux example)
-sudo dnf install -y docker
-# Install compose plugin or use docker-compose binary — see troubleshooting if needed
-sudo systemctl enable --now docker
-sudo usermod -aG docker $USER   # then log out / back in
+# Docker on Ubuntu 24.04 — install Docker Engine + Compose plugin, then:
+sudo usermod -aG docker $USER   # log out / back in
 
-# App
 git clone <repo> streaming && cd streaming
-cp .env.prod.example .env.prod
-# Edit .env.prod:
+cp .env.example .env
+# Edit .env:
 #   POSTGRES_PASSWORD, JWT_SECRET, SFU_JOIN_SECRET (openssl rand -hex 32)
-#   CERTBOT_EMAIL, SERVER_NAME, PUBLIC_ORIGIN  (API EIP → sslip)
-#   Split SFU: SFU_SERVER_NAME, SFU_PUBLIC_WS_URL, MEDIASOUP_ANNOUNCED_IP=<sfu-eip>
-#              (same SFU_JOIN_SECRET on both boxes)
-
-# API box (does NOT start sfu / sfu-nginx)
-docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
-./scripts/issue-cert.sh web
-
-# SFU box only (explicit services — avoids starting postgres/server/web)
-docker compose -f docker-compose.prod.yml --env-file .env.prod --profile sfu \
-  up -d --build sfu sfu-nginx sfu-certbot
-./scripts/issue-cert.sh sfu
+#   CERTBOT_EMAIL
+#   SERVER_NAME=streaming.kaapa.pl
+#   SFU_SERVER_NAME=sfu.kaapa.pl
+#   SFU_PUBLIC_WS_URL=wss://sfu.kaapa.pl/ws/signaling
+#   MEDIASOUP_ANNOUNCED_IP=<sfu-eip>
+# Same SFU_JOIN_SECRET on both boxes.
 ```
 
-Redeploy API code only: `docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build --no-deps server`
+### One-command deploy / rebuild
 
-### TLS (nginx in Docker + certbot)
-
-Each edge ships its own nginx image:
-- `web/Dockerfile` — SPA + API/recording proxy + TLS
-- `sfu/nginx/Dockerfile` — WSS → `sfu:3001` + TLS
-
-Certificates use **manual DNS-01**: `./scripts/issue-cert.sh` runs certbot interactively — it prints the `_acme-challenge` TXT name/value, waits while you create the record in DigitalOcean DNS, then continues after you press Enter. Manual certs do **not** auto-renew; re-run the script before expiry (~60 days).
+Includes `git pull`, cert issue if missing (interactive DNS-01), and compose `--build`:
 
 ```bash
-./scripts/issue-cert.sh web   # API box
-./scripts/issue-cert.sh sfu sfu/.env   # SFU box
+# API box
+./scripts/deploy.sh api
+
+# SFU box
+./scripts/deploy.sh sfu
 ```
 
-Until then nginx serves a temporary self-signed cert so the container can listen on 443. Share **`https://<api-eip-dashes>.sslip.io`** with testers.
+Share **https://streaming.kaapa.pl** with testers.
+
+### TLS (manual DNS-01)
+
+`./scripts/issue-cert.sh` runs certbot interactively: it prints the `_acme-challenge`
+TXT name/value, waits while you create the record in DigitalOcean DNS, then continues
+after you press Enter. Manual certs do **not** auto-renew — re-run before expiry (~60 days):
+
+```bash
+./scripts/issue-cert.sh web   # API box → streaming.kaapa.pl
+./scripts/issue-cert.sh sfu   # SFU box → sfu.kaapa.pl
+```
+
+Routine `./scripts/deploy.sh` skips cert issue when the cert already exists in the volume.
 
 Internal compositor traffic stays on `http://web` (no TLS redirect for that Host).
 
 ### Verify
 
 ```bash
-docker compose -f docker-compose.prod.yml ps
+docker compose --env-file .env ps
 docker stats   # during a test recording
 
 # Two browsers → register → join same room → Start recording → Stop recording
-docker compose -f docker-compose.prod.yml exec server ls /app/server/recordings
+docker compose --env-file .env exec server ls /app/server/recordings
 ```
 
 **Cellular ICE test:** one tester on a mobile hotspot confirms `MEDIASOUP_ANNOUNCED_IP` and SG `40000-40100/udp` are correct.
@@ -221,7 +204,6 @@ Every recording/live session always writes a `*.session.log` next to the `.webm`
 After a live:
 
 ```bash
-chmod +x scripts/collect-logs.sh
 ./scripts/collect-logs.sh
 # → diagnostics-<utc>.tar.gz  (session logs + container logs + host stats)
 ```
@@ -230,10 +212,11 @@ What to look for: `speed=` below `1.0`, rising `loadavg`, `codec=vp8/vp9` with `
 
 ### Troubleshooting
 
-- **ICE fails for external users:** SG allows `40000-40100/udp`, `MEDIASOUP_ANNOUNCED_IP` equals the Elastic IP, `docker logs sfu` shows `[mediasoup] worker started`
+- **ICE fails for external users:** SG allows `40000-40100/udp`, `MEDIASOUP_ANNOUNCED_IP` equals the SFU Elastic IP, `docker logs sfu` shows `[mediasoup] worker started`
 - **Recording fails / Chrome crash:** check `shm_size` in compose, `docker logs server`
 - **Compositor can't connect:** `WEB_ORIGIN` must stay `http://web` in compose (internal Docker URL, not the public HTTPS URL)
-- **Signaling fails from HTTPS UI / mixed content:** use `wss://…sslip.io/ws/signaling` (`sfu-nginx` + `./scripts/issue-cert.sh sfu`), not `ws://…:3001`
-- **SFU WSS 502:** `sfu-nginx` proxies to `http://sfu:3001`; check `docker compose … --profile sfu ps`
-- **ACME / cert issue fails:** TXT `_acme-challenge.<name>` matches what certbot printed and has propagated (`dig TXT _acme-challenge.sfu.kaapa.pl`); press Enter only after it resolves; re-run `./scripts/issue-cert.sh` before expiry (manual DNS does not auto-renew)
+- **Signaling fails from HTTPS UI / mixed content:** use `wss://sfu.kaapa.pl/ws/signaling`, not `ws://…:3001`
+- **SFU WSS 502:** `sfu-nginx` proxies to `http://sfu:3001`; check `docker compose --env-file .env --profile sfu ps`
+- **ACME / cert issue fails:** TXT `_acme-challenge.streaming.kaapa.pl` / `_acme-challenge.sfu.kaapa.pl` matches what certbot printed and has propagated (`dig TXT _acme-challenge.sfu.kaapa.pl`); press Enter only after it resolves; re-run `./scripts/issue-cert.sh` before expiry
+- **Nginx won't start (missing cert):** run `./scripts/issue-cert.sh web|sfu` once, then `./scripts/deploy.sh api|sfu`
 - **Choppy YouTube A/V:** undersized instance (use ≥ `t3.medium`); pull a diagnostics bundle and check session + host-stats logs above
