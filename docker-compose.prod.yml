@@ -73,7 +73,8 @@ services:
       - |
         trap exit TERM
         while :; do
-          certbot renew --webroot -w /var/www/certbot || true
+          # Manual DNS certs do not auto-renew here — re-run ./scripts/issue-cert.sh web ~every 60d
+          certbot renew || true
           sleep 12h & wait $$!
         done
     volumes:
@@ -132,7 +133,8 @@ services:
       - |
         trap exit TERM
         while :; do
-          certbot renew --webroot -w /var/www/certbot || true
+          # Manual DNS certs do not auto-renew here — re-run ./scripts/issue-cert.sh sfu ~every 60d
+          certbot renew || true
           sleep 12h & wait $$!
         done
     volumes:

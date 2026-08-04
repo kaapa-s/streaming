@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Issue a Let's Encrypt cert (webroot) and reload the matching nginx service.
+# Issue a Let's Encrypt cert (manual DNS-01) and reload the matching nginx service.
+# Certbot prints the _acme-challenge TXT value, waits for you to create it, then continues.
 # Usage:
 #   ./scripts/issue-cert.sh web [env-file]   # API box — SERVER_NAME (default .env.prod)
 #   ./scripts/issue-cert.sh sfu [env-file]   # SFU box — SFU_SERVER_NAME (default .env.prod)
 # Examples:
-#   ./scripts/issue-cert.sh sfu sfu/env
-#   ENV_FILE=sfu/env ./scripts/issue-cert.sh sfu
+#   ./scripts/issue-cert.sh sfu sfu/.env
+#   ENV_FILE=sfu/.env ./scripts/issue-cert.sh sfu
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -17,6 +18,11 @@ COMPOSE=(docker compose -f docker-compose.prod.yml --env-file "$ENV_FILE")
 
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "missing $ENV_FILE — pass the path: $0 $TARGET /path/to/env" >&2
+  exit 1
+fi
+
+if [[ ! -t 0 ]]; then
+  echo "this script needs an interactive terminal (certbot waits for you to create the TXT record)" >&2
   exit 1
 fi
 
@@ -48,13 +54,15 @@ case "$TARGET" in
     ;;
 esac
 
-echo "Issuing cert for ${DOMAIN} (${TARGET}) using ${ENV_FILE}…"
-"${COMPOSE[@]}" "${PROFILE_ARGS[@]}" run --rm --entrypoint certbot "$SERVICE" \
-  certonly --webroot -w /var/www/certbot \
+echo "Issuing cert for ${DOMAIN} (${TARGET}) via manual DNS using ${ENV_FILE}…"
+echo "When prompted: create the TXT record in DigitalOcean DNS, wait for it to resolve, then press Enter."
+# -it so certbot can print the challenge and wait for Enter after you add the TXT.
+"${COMPOSE[@]}" "${PROFILE_ARGS[@]}" run --rm -it --entrypoint certbot "$SERVICE" \
+  certonly --manual --preferred-challenges dns \
+  --manual-public-ip-logging-ok \
   -d "$DOMAIN" \
   --email "$CERTBOT_EMAIL" \
-  --agree-tos \
-  --non-interactive
+  --agree-tos
 
 echo "Linking certs + reloading ${RELOAD}…"
 "${COMPOSE[@]}" "${PROFILE_ARGS[@]}" exec -T "$RELOAD" /docker-entrypoint.d/40-selfsigned.sh

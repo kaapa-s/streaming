@@ -191,11 +191,11 @@ Each edge ships its own nginx image:
 - `web/Dockerfile` — SPA + API/recording proxy + TLS
 - `sfu/nginx/Dockerfile` — WSS → `sfu:3001` + TLS
 
-`certbot` / `sfu-certbot` renew on a 12h loop; nginx reloads twice a day to pick up new certs. First certificate:
+Certificates use **manual DNS-01**: `./scripts/issue-cert.sh` runs certbot interactively — it prints the `_acme-challenge` TXT name/value, waits while you create the record in DigitalOcean DNS, then continues after you press Enter. Manual certs do **not** auto-renew; re-run the script before expiry (~60 days).
 
 ```bash
 ./scripts/issue-cert.sh web   # API box
-./scripts/issue-cert.sh sfu   # SFU box
+./scripts/issue-cert.sh sfu sfu/.env   # SFU box
 ```
 
 Until then nginx serves a temporary self-signed cert so the container can listen on 443. Share **`https://<api-eip-dashes>.sslip.io`** with testers.
@@ -235,5 +235,5 @@ What to look for: `speed=` below `1.0`, rising `loadavg`, `codec=vp8/vp9` with `
 - **Compositor can't connect:** `WEB_ORIGIN` must stay `http://web` in compose (internal Docker URL, not the public HTTPS URL)
 - **Signaling fails from HTTPS UI / mixed content:** use `wss://…sslip.io/ws/signaling` (`sfu-nginx` + `./scripts/issue-cert.sh sfu`), not `ws://…:3001`
 - **SFU WSS 502:** `sfu-nginx` proxies to `http://sfu:3001`; check `docker compose … --profile sfu ps`
-- **ACME / cert issue fails:** SG allows 80 from the internet; `SERVER_NAME` / `SFU_SERVER_NAME` matches the box EIP sslip hostname; no host process bound to 80/443
+- **ACME / cert issue fails:** TXT `_acme-challenge.<name>` matches what certbot printed and has propagated (`dig TXT _acme-challenge.sfu.kaapa.pl`); press Enter only after it resolves; re-run `./scripts/issue-cert.sh` before expiry (manual DNS does not auto-renew)
 - **Choppy YouTube A/V:** undersized instance (use ≥ `t3.medium`); pull a diagnostics bundle and check session + host-stats logs above
