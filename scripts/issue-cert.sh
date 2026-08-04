@@ -65,6 +65,10 @@ echo "When prompted: create the TXT record in DigitalOcean DNS, wait for it to r
   --agree-tos
 
 echo "Linking certs + reloading ${RELOAD}…"
-"${COMPOSE[@]}" "${PROFILE_ARGS[@]}" exec -T "$RELOAD" /docker-entrypoint.d/40-selfsigned.sh
+# Pass DOMAIN explicitly — the container may still have a stale SERVER_NAME from an older compose up.
+"${COMPOSE[@]}" "${PROFILE_ARGS[@]}" exec -T -e SERVER_NAME="$DOMAIN" "$RELOAD" \
+  /docker-entrypoint.d/40-selfsigned.sh
 "${COMPOSE[@]}" "${PROFILE_ARGS[@]}" exec -T "$RELOAD" nginx -s reload
 echo "Done — https://${DOMAIN}"
+echo "If nginx still serves the wrong Host/cert, recreate the edge so SERVER_NAME is refreshed:"
+echo "  ${COMPOSE[*]} ${PROFILE_ARGS[*]} up -d ${RELOAD}"
