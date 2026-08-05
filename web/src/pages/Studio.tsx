@@ -19,6 +19,11 @@ const params = new URLSearchParams(location.search);
 const YT_RTMP_STORAGE_KEY = 'streaming-studio-yt-rtmp';
 const YT_RES_STORAGE_KEY = 'streaming-studio-resolution';
 
+type FinishedRecording = {
+  downloadUrl?: string;
+  file?: string;
+};
+
 /** Camera preview only — never attaches mic tracks (feedback). */
 function VideoTile({
   stream,
@@ -80,6 +85,7 @@ export function Studio() {
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [signupPassword, setSignupPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [room] = useState(params.get('room') ?? 'main');
   const [joined, setJoined] = useState(false);
@@ -91,6 +97,7 @@ export function Studio() {
   const [recording, setRecording] = useState(false);
   const [live, setLive] = useState(false);
   const [recordingInfo, setRecordingInfo] = useState('');
+  const [finishedRecording, setFinishedRecording] = useState<FinishedRecording | null>(null);
   const [rtmpUrl, setRtmpUrl] = useState(() => localStorage.getItem(YT_RTMP_STORAGE_KEY) ?? '');
   const [resolution, setResolution] = useState<StreamResolution>(() =>
     localStorage.getItem(YT_RES_STORAGE_KEY) === '1080p' ? '1080p' : '720p',
@@ -116,10 +123,11 @@ export function Studio() {
     try {
       const session =
         authMode === 'register'
-          ? await register(email.trim(), password, displayName.trim())
+          ? await register(email.trim(), password, displayName.trim(), signupPassword)
           : await login(email.trim(), password);
       setUser(session.user);
       setPassword('');
+      setSignupPassword('');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -340,11 +348,17 @@ export function Studio() {
       setRecording(nextRecording);
       setLive(nextRecording ? !!body.live : false);
       if (action === 'stop') {
-        if (body.downloadUrl) {
-          setRecordingInfo(`Uploaded — ${body.downloadUrl}`);
-        } else if (body.file) {
-          setRecordingInfo(`Saved: ${body.file}`);
+        const downloadUrl =
+          typeof body.downloadUrl === 'string' ? body.downloadUrl : undefined;
+        const file = typeof body.file === 'string' ? body.file : undefined;
+        if (downloadUrl || file) {
+          setFinishedRecording({
+            ...(downloadUrl ? { downloadUrl } : {}),
+            ...(file ? { file } : {}),
+          });
+          setRecordingInfo(downloadUrl ? 'Recording saved' : 'Recording saved on server');
         } else {
+          setFinishedRecording(null);
           setRecordingInfo('');
         }
       } else {
@@ -449,6 +463,17 @@ export function Studio() {
             required
             disabled={authPending}
           />
+          {authMode === 'register' && (
+            <input
+              type="password"
+              placeholder="Signup password"
+              value={signupPassword}
+              onChange={(e) => setSignupPassword(e.target.value)}
+              autoComplete="off"
+              required
+              disabled={authPending}
+            />
+          )}
           <Button type="submit" loading={authPending}>
             {authLabel}
           </Button>
@@ -564,6 +589,56 @@ export function Studio() {
         {error && <span className="error">{error}</span>}
         {recordingInfo && <span className="hint">{recordingInfo}</span>}
       </footer>
+
+      {finishedRecording && (
+        <div
+          className="modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="finished-recording-title"
+          onClick={() => setFinishedRecording(null)}
+        >
+          <div
+            className="modal"
+            onClick={(e) => {
+              e.stopPropagation();
+            }}
+          >
+            <h2 id="finished-recording-title">Recording finished</h2>
+            {finishedRecording.downloadUrl ? (
+              <p>Your stream has been uploaded and is ready to download.</p>
+            ) : (
+              <p>
+                Your recording was saved on the server
+                {finishedRecording.file ? ` (${finishedRecording.file})` : ''}. Download is only
+                available when cloud upload is configured.
+              </p>
+            )}
+            <div className="modal-actions">
+              {finishedRecording.downloadUrl && (
+                <Button
+                  variant="primary"
+                  onClick={() => {
+                    const url = finishedRecording.downloadUrl;
+                    if (!url) return;
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = '';
+                    a.rel = 'noopener';
+                    a.target = '_blank';
+                    a.click();
+                  }}
+                >
+                  Download
+                </Button>
+              )}
+              <Button type="button" onClick={() => setFinishedRecording(null)}>
+                Close
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

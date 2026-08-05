@@ -2,6 +2,7 @@ import {
   Injectable,
   UnauthorizedException,
   ConflictException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -29,7 +30,16 @@ export class AuthService {
     private readonly refreshTokens: Repository<RefreshToken>,
   ) {}
 
-  async register(email: string, password: string, name: string): Promise<AuthTokens> {
+  async register(
+    email: string,
+    password: string,
+    name: string,
+    signupPassword: string,
+  ): Promise<AuthTokens> {
+    const expected = process.env.SIGNUP_PASSWORD;
+    if (!expected || signupPassword !== expected) {
+      throw new ForbiddenException('invalid signup password');
+    }
     const existing = await this.users.findByEmail(email);
     if (existing) throw new ConflictException('email already registered');
     const passwordHash = await argon2.hash(password);

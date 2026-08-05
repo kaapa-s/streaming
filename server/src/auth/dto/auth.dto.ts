@@ -11,6 +11,10 @@ export class RegisterDto {
   @IsString()
   @MinLength(1)
   declare name: string;
+
+  @IsString()
+  @MinLength(1)
+  declare signupPassword: string;
 }
 
 export class LoginDto {

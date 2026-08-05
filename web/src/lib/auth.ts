@@ -54,11 +54,16 @@ async function parseError(res: Response): Promise<string> {
   }
 }
 
-export async function register(email: string, password: string, name: string): Promise<AuthSession> {
+export async function register(
+  email: string,
+  password: string,
+  name: string,
+  signupPassword: string,
+): Promise<AuthSession> {
   const res = await fetch('/api/auth/register', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password, name }),
+    body: JSON.stringify({ email, password, name, signupPassword }),
   });
   if (!res.ok) throw new Error(await parseError(res));
   const session = (await res.json()) as AuthSession;
