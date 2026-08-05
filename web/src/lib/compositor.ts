@@ -77,9 +77,13 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
   };
 
   const bindVideo = (video: HTMLVideoElement, stream: MediaStream): number => {
-    video.srcObject = stream;
+    // Video tracks only — never attach mic/audio here. Off-DOM <video> elements
+    // can still leak local mic to speakers if the full stream is bound.
+    // Audio mixing (recorder) uses Web Audio from peer.stream separately.
+    const videoTracks = stream.getVideoTracks();
+    video.srcObject = new MediaStream(videoTracks);
     void video.play().catch(() => undefined);
-    return stream.getVideoTracks().length;
+    return videoTracks.length;
   };
 
   const setPeers = (peers: CompositorPeer[]) => {
@@ -101,9 +105,11 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
         entry.videoTrackCount = bindVideo(entry.video, entry.stream);
       } else {
         entry.name = peer.name;
+        const streamChanged = entry.stream !== peer.stream;
         entry.stream = peer.stream;
         const videoCount = peer.stream.getVideoTracks().length;
-        if (entry.video.srcObject !== peer.stream || entry.videoTrackCount !== videoCount) {
+        // srcObject is a video-only clone, so never compare it to peer.stream.
+        if (streamChanged || entry.videoTrackCount !== videoCount) {
           entry.videoTrackCount = bindVideo(entry.video, peer.stream);
         }
       }

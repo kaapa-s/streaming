@@ -24,48 +24,61 @@ function VideoTile({
   sharing,
 }: {
   stream: MediaStream;
-  /** Local self-view: true (no playback). Remotes: false (hear their mic). */
+  /** Local self-view: true (no mic playback). Remotes: false (hear their mic). */
   muted: boolean;
   label: string;
   sharing?: boolean;
 }) {
-  const ref = useRef<HTMLVideoElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
+
+  // Video element is always muted + video-only — never a feedback path.
   useEffect(() => {
-    const video = ref.current;
+    const video = videoRef.current;
     if (!video) return;
 
-    const bind = () => {
-      if (muted) {
-        // Never attach local mic tracks — avoids feedback even if muted fails.
-        video.srcObject = new MediaStream(stream.getVideoTracks());
-        video.muted = true;
-        void video.play().catch(() => undefined);
-        return;
-      }
-      // Remotes: play() while muted (autoplay-safe), then unmute to hear them.
-      video.srcObject = stream;
+    const bindVideo = () => {
+      video.srcObject = new MediaStream(stream.getVideoTracks());
       video.muted = true;
-      void video
-        .play()
-        .then(() => {
-          video.muted = false;
-        })
-        .catch(() => undefined);
+      void video.play().catch(() => undefined);
     };
 
-    bind();
-    stream.addEventListener('addtrack', bind);
-    stream.addEventListener('removetrack', bind);
+    bindVideo();
+    stream.addEventListener('addtrack', bindVideo);
+    stream.addEventListener('removetrack', bindVideo);
     return () => {
-      stream.removeEventListener('addtrack', bind);
-      stream.removeEventListener('removetrack', bind);
+      stream.removeEventListener('addtrack', bindVideo);
+      stream.removeEventListener('removetrack', bindVideo);
       video.srcObject = null;
+    };
+  }, [stream]);
+
+  // Remote mic: dedicated <audio> (not the video tag). getUserMedia on join
+  // unlocks autoplay-with-sound in Chromium, so play() works without mute hacks.
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio || muted) return;
+
+    const bindAudio = () => {
+      const tracks = stream.getAudioTracks();
+      audio.srcObject = tracks.length > 0 ? new MediaStream(tracks) : null;
+      if (tracks.length > 0) void audio.play().catch(() => undefined);
+    };
+
+    bindAudio();
+    stream.addEventListener('addtrack', bindAudio);
+    stream.addEventListener('removetrack', bindAudio);
+    return () => {
+      stream.removeEventListener('addtrack', bindAudio);
+      stream.removeEventListener('removetrack', bindAudio);
+      audio.srcObject = null;
     };
   }, [stream, muted]);
 
   return (
     <div className="tile">
-      <video ref={ref} autoPlay playsInline muted={muted} />
+      <video ref={videoRef} autoPlay playsInline muted />
+      {!muted && <audio ref={audioRef} autoPlay />}
       <span className="tile-label">{label}</span>
       {sharing && <span className="tile-badge">Sharing</span>}
     </div>
