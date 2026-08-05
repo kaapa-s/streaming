@@ -136,9 +136,9 @@ services:
       # Public studio origin — Chromium loads /compositor from the API/web box.
       WEB_ORIGIN: ${COMPOSITOR_WEB_ORIGIN:-}
       SFU_PUBLIC_WS_URL: ${SFU_PUBLIC_WS_URL:-}
-      # Docker-internal MediaRecorder sink. Chromium loads HTTPS WEB_ORIGIN, so the
-      # pool launches with --allow-running-insecure-content for this ws:// URL.
-      RECORDING_SINK_URL: ws://compositor:3002/ws/recording
+      # Same-container MediaRecorder sink (Nest listens on PORT). Chromium loads
+      # HTTPS WEB_ORIGIN, so the pool allows mixed content + disables LNA checks.
+      RECORDING_SINK_URL: ws://127.0.0.1:3002/ws/recording
       PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
       PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "true"
     volumes:

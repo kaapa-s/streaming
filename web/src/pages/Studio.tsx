@@ -24,6 +24,7 @@ function VideoTile({
   sharing,
 }: {
   stream: MediaStream;
+  /** Local self-view: true (no playback). Remotes: false (hear their mic). */
   muted: boolean;
   label: string;
   sharing?: boolean;
@@ -32,12 +33,36 @@ function VideoTile({
   useEffect(() => {
     const video = ref.current;
     if (!video) return;
-    // React does not reliably sync the muted IDL property on <video>; set it
-    // imperatively so local mic preview never plays through speakers (feedback).
-    // https://github.com/facebook/react/issues/10389
-    if (video.srcObject !== stream) video.srcObject = stream;
-    video.muted = muted;
+
+    const bind = () => {
+      if (muted) {
+        // Never attach local mic tracks — avoids feedback even if muted fails.
+        video.srcObject = new MediaStream(stream.getVideoTracks());
+        video.muted = true;
+        void video.play().catch(() => undefined);
+        return;
+      }
+      // Remotes: play() while muted (autoplay-safe), then unmute to hear them.
+      video.srcObject = stream;
+      video.muted = true;
+      void video
+        .play()
+        .then(() => {
+          video.muted = false;
+        })
+        .catch(() => undefined);
+    };
+
+    bind();
+    stream.addEventListener('addtrack', bind);
+    stream.addEventListener('removetrack', bind);
+    return () => {
+      stream.removeEventListener('addtrack', bind);
+      stream.removeEventListener('removetrack', bind);
+      video.srcObject = null;
+    };
   }, [stream, muted]);
+
   return (
     <div className="tile">
       <video ref={ref} autoPlay playsInline muted={muted} />

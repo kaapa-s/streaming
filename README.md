@@ -21,7 +21,7 @@ recording calls the compositor to start capture (+ optional RTMP).
 
 Locally, Vite proxies `/ws/signaling` → SFU, `/api` → API, `/ws/recording` → compositor.
 In split prod, browsers use `SFU_PUBLIC_WS_URL`; headless Chromium loads the SPA from
-`COMPOSITOR_WEB_ORIGIN` and writes chunks to Docker-internal `RECORDING_SINK_URL`.
+`COMPOSITOR_WEB_ORIGIN` and writes chunks to loopback `RECORDING_SINK_URL` (`ws://127.0.0.1:3002`).
 
 ## Run locally
 
@@ -207,7 +207,7 @@ into `recordings/diagnostics/host-stats.log`.
 - **ICE fails for external users:** SG allows `40000-40100/udp`, `MEDIASOUP_ANNOUNCED_IP` equals the SFU Elastic IP
 - **Recording fails / Chrome crash:** check `shm_size` on compositor, `docker logs compositor`
 - **Warmup / go-live fails:** API `COMPOSITOR_URL` reachable; secrets match; `COMPOSITOR_WEB_ORIGIN` serves `/compositor`
-- **Go-live Mixed Content / insecure WebSocket:** headless Chromium loads HTTPS `COMPOSITOR_WEB_ORIGIN` but sinks to Docker-internal `ws://` (`RECORDING_SINK_URL`). Pool launches with `--allow-running-insecure-content`; rebuild/restart compositor if that flag is missing
+- **Go-live Mixed Content / LNA WebSocket block:** headless Chromium loads HTTPS `COMPOSITOR_WEB_ORIGIN` but sinks to loopback `ws://127.0.0.1:3002` (`RECORDING_SINK_URL`). Do not use `ws://compositor:…` (private Docker DNS). Pool needs `--allow-running-insecure-content` and `--disable-features=LocalNetworkAccessChecks`; rebuild/restart compositor if those are missing
 - **Signaling fails from HTTPS UI:** use `wss://sfu.kaapa.pl/ws/signaling`
 - **SFU WSS 502:** `sfu-nginx` proxies to `http://sfu:3001`
 - **ACME / cert issue fails:** TXT `_acme-challenge.<domain>` propagated before Enter
