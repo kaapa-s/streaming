@@ -1,5 +1,5 @@
 # Single build stage (not parallel deps+build+runtime apt). BuildKit otherwise
-# runs chromium/ffmpeg apt, npm ci, and tsc together and OOMs small EC2 boxes.
+# races chromium/ffmpeg apt with npm/tsc and OOMs small EC2 boxes.
 FROM node:22-slim AS build
 WORKDIR /app
 ENV PUPPETEER_SKIP_DOWNLOAD=true \
@@ -21,10 +21,8 @@ ENV NODE_ENV=production \
     PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
-# COPY before apt so Chromium/ffmpeg install cannot race the build stage.
-COPY --from=build /app/compositor/node_modules ./node_modules
-COPY --from=build /app/compositor/dist ./dist
-
+# Apt before COPY so unpacking chromium/ffmpeg does not share the writable
+# layer peak with node_modules (matters on small EC2 disks).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \
     ffmpeg \
@@ -35,7 +33,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl3 \
     libx11-xcb1 \
     libxss1 \
-  && rm -rf /var/lib/apt/lists/*
+  && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
+
+COPY --from=build /app/compositor/node_modules ./node_modules
+COPY --from=build /app/compositor/dist ./dist
 
 RUN mkdir -p /app/compositor/recordings
 VOLUME ["/app/compositor/recordings"]

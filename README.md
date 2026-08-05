@@ -211,3 +211,4 @@ into `recordings/diagnostics/host-stats.log`.
 - **Nginx won't start (missing cert):** `./scripts/issue-cert.sh web|sfu|compositor`, then deploy
 - **Choppy YouTube A/V:** undersized compositor instance; check session + host-stats logs
 - **Compositor `deploy.sh` hang / host freeze during build:** BuildKit was racing Chromium apt + npm; pull latest Dockerfile. If it still thrashs, check free RAM (`free -h`) — compositor box wants ≥4GB, and add swap if needed
+- **`No space left on device` during compositor build:** Chromium+ffmpeg image is large. On the box: `df -h`, then `docker builder prune -af && docker system prune -af`. Prefer ≥20GB disk; expand the EBS volume if still tight
