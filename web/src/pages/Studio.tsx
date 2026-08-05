@@ -274,6 +274,15 @@ export function Studio() {
         screen.getTracks().forEach((t) => t.stop());
         throw new Error('no screen video track');
       }
+      track.contentHint = 'detail';
+      try {
+        const constraints: MediaTrackConstraints & { resizeMode: 'none' } = {
+          resizeMode: 'none',
+        };
+        await track.applyConstraints(constraints);
+      } catch {
+        // resizeMode is not supported in every browser; keep native capture.
+      }
       track.addEventListener('ended', () => {
         void stopLocalScreen();
       });

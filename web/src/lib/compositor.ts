@@ -50,7 +50,7 @@ function videoTrackIds(stream: MediaStream): string {
     .join(',');
 }
 
-const SPEAKER_STRIP_RATIO = 0.22;
+const SPEAKER_STRIP_RATIO = 0.14;
 
 /**
  * Draws all peers into a single canvas (grid layout, cover-fit, name labels)
@@ -242,20 +242,6 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
     }
   };
 
-  const drawContain = (video: HTMLVideoElement, x: number, y: number, w: number, h: number) => {
-    ctx.fillStyle = '#0b0d10';
-    ctx.fillRect(x, y, w, h);
-
-    if (video.readyState >= 2 && video.videoWidth > 0) {
-      const scale = Math.min(w / video.videoWidth, h / video.videoHeight);
-      const dw = video.videoWidth * scale;
-      const dh = video.videoHeight * scale;
-      const dx = x + (w - dw) / 2;
-      const dy = y + (h - dh) / 2;
-      ctx.drawImage(video, dx, dy, dw, dh);
-    }
-  };
-
   const drawGrid = (list: TileEntry[]) => {
     const cols = list.length <= 2 ? list.length : Math.ceil(Math.sqrt(list.length));
     const rows = Math.ceil(list.length / cols);
@@ -285,7 +271,20 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
     const mainY = gap;
     const mainH = height - gap * 2;
 
-    drawContain(screen.video, mainX, mainY, mainW, mainH);
+    // Fill main area; then draw the largest AR-correct rect from the live
+    // capture size (videoWidth/Height update when the shared window resizes).
+    ctx.fillStyle = '#0b0d10';
+    ctx.fillRect(mainX, mainY, mainW, mainH);
+
+    const video = screen.video;
+    if (video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0) {
+      const scale = Math.min(mainW / video.videoWidth, mainH / video.videoHeight);
+      const dw = video.videoWidth * scale;
+      const dh = video.videoHeight * scale;
+      const dx = mainX + (mainW - dw) / 2;
+      const dy = mainY + (mainH - dh) / 2;
+      ctx.drawImage(video, dx, dy, dw, dh);
+    }
 
     if (speakers.length === 0) return;
 
