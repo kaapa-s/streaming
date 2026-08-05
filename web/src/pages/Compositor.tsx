@@ -68,6 +68,12 @@ export function CompositorPage() {
           ws.onerror = () => reject(new Error('recording sink connection failed'));
         });
 
+        await compositor.ensureAudio();
+        const audioTracks = compositor.stream.getAudioTracks();
+        if (audioTracks.length === 0) {
+          console.error('[compositor] output stream has no audio track — RTMP will be silent');
+        }
+
         recorder = new MediaRecorder(compositor.stream, {
           mimeType,
           videoBitsPerSecond: profile.recorderVideoBps,
@@ -80,7 +86,8 @@ export function CompositorPage() {
         setStatus(`recording room "${room}" @ ${resolution} (${mimeType})`);
         console.log(
           `[compositor] recording started for room ${room} @ ${resolution} ` +
-            `${profile.width}x${profile.height} ${mimeType} codec=${codec} video=${profile.recorderVideoBps}`,
+            `${profile.width}x${profile.height} ${mimeType} codec=${codec} ` +
+            `video=${profile.recorderVideoBps} audioTracks=${audioTracks.length}`,
         );
       };
 

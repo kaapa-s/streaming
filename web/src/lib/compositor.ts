@@ -11,6 +11,8 @@ export interface Compositor {
   /** Canvas video track, plus a mixed audio track when mixAudio is enabled. */
   stream: MediaStream;
   setPeers: (peers: CompositorPeer[]) => void;
+  /** Resume Web Audio so MediaRecorder gets a live mixed mic track (recorder only). */
+  ensureAudio: () => Promise<void>;
   stop: () => void;
 }
 
@@ -29,6 +31,8 @@ interface TileEntry {
   audioSource?: MediaStreamAudioSourceNode;
   /** Fingerprint of attached video track ids (not count — replacements keep count=1). */
   videoTrackIds: string;
+  /** Fingerprint of mic tracks wired into the mix (empty when mixAudio is off). */
+  audioTrackIds: string;
 }
 
 interface ScreenEntry {
@@ -41,6 +45,14 @@ interface ScreenEntry {
 function videoTrackIds(stream: MediaStream): string {
   return stream
     .getVideoTracks()
+    .filter((t) => t.readyState !== 'ended')
+    .map((t) => t.id)
+    .join(',');
+}
+
+function audioTrackIds(stream: MediaStream): string {
+  return stream
+    .getAudioTracks()
     .filter((t) => t.readyState !== 'ended')
     .map((t) => t.id)
     .join(',');
@@ -118,6 +130,7 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
           stream: peer.stream,
           video,
           videoTrackIds: '',
+          audioTrackIds: '',
         };
         entries.set(peer.id, entry);
         entry.videoTrackIds = bindVideo(entry.video, entry.stream);
@@ -134,10 +147,22 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
           void entry.video.play().catch(() => undefined);
         }
       }
-      // Tracks can arrive one at a time; hook up audio once it exists.
-      if (audioCtx && audioDestination && !entry.audioSource && peer.stream.getAudioTracks().length > 0) {
-        entry.audioSource = audioCtx.createMediaStreamSource(peer.stream);
-        entry.audioSource.connect(audioDestination);
+      // Mix peer mics via Web Audio (never via <video> — that causes studio feedback).
+      // Recreate the source when mic tracks appear or are replaced.
+      if (audioCtx && audioDestination) {
+        const ids = audioTrackIds(peer.stream);
+        if (entry.audioTrackIds !== ids) {
+          entry.audioSource?.disconnect();
+          entry.audioSource = undefined;
+          entry.audioTrackIds = ids;
+          if (ids) {
+            const micStream = new MediaStream(
+              peer.stream.getAudioTracks().filter((t) => t.readyState !== 'ended'),
+            );
+            entry.audioSource = audioCtx.createMediaStreamSource(micStream);
+            entry.audioSource.connect(audioDestination);
+          }
+        }
       }
 
       // First peer with a screenStream wins (deterministic peer order).
@@ -324,6 +349,19 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
     if (audioTrack) stream.addTrack(audioTrack);
   }
 
+  const ensureAudio = async () => {
+    if (!audioCtx) return;
+    if (audioCtx.state === 'suspended') {
+      await audioCtx.resume();
+    }
+    const track = audioDestination?.stream.getAudioTracks()[0];
+    console.log(
+      `[compositor] ensureAudio state=${audioCtx.state} ` +
+        `mixPeers=${[...entries.values()].filter((e) => e.audioSource).length} ` +
+        `outTrack=${track ? `${track.readyState}/${track.muted ? 'muted' : 'live'}` : 'none'}`,
+    );
+  };
+
   const stop = () => {
     window.clearInterval(timer);
     for (const entry of entries.values()) {
@@ -339,5 +377,5 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
     void audioCtx?.close();
   };
 
-  return { canvas, stream, setPeers, stop };
+  return { canvas, stream, setPeers, ensureAudio, stop };
 }

@@ -136,15 +136,38 @@ function buildFfmpegArgs(profile: StreamProfile, codec: string, rtmpUrl: string)
     '-i',
     'pipe:0',
   ];
-  const audio = ['-c:a', 'aac', '-b:a', profile.rtmpAudioBitrate, '-ar', '48000'];
+  const audio = [
+    '-c:a',
+    'aac',
+    '-b:a',
+    profile.rtmpAudioBitrate,
+    '-ar',
+    '48000',
+    '-ac',
+    '2',
+  ];
   const out = ['-f', 'flv', rtmpUrl];
 
   if (codec === 'h264') {
-    return [...commonHead, '-c:v', 'copy', ...audio, ...out];
+    return [
+      ...commonHead,
+      '-map',
+      '0:v:0',
+      '-map',
+      '0:a:0?',
+      '-c:v',
+      'copy',
+      ...audio,
+      ...out,
+    ];
   }
 
   return [
     ...commonHead,
+    '-map',
+    '0:v:0',
+    '-map',
+    '0:a:0?',
     '-c:v',
     'libx264',
     '-preset',

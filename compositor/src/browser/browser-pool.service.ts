@@ -63,6 +63,10 @@ export class BrowserPoolService implements OnModuleInit, OnModuleDestroy {
 
   private launchBrowser(): Promise<Browser> {
     return puppeteer.launch({
+      // Puppeteer adds --mute-audio by default. That zeroes the Web Audio graph
+      // the recorder mixes into MediaRecorder — YouTube/RTMP gets video, no audio.
+      // Studio feedback is unaffected (client-side video-only tiles).
+      ignoreDefaultArgs: ['--mute-audio'],
       args: [
         '--no-sandbox',
         '--autoplay-policy=no-user-gesture-required',
