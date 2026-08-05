@@ -28,6 +28,8 @@ interface TileEntry {
   name: string;
   stream: MediaStream;
   video: HTMLVideoElement;
+  /** Playing (muted) mic element — required so Chromium decodes remote WebRTC audio. */
+  audioEl?: HTMLAudioElement;
   audioSource?: MediaStreamAudioSourceNode;
   /** Fingerprint of attached video track ids (not count — replacements keep count=1). */
   videoTrackIds: string;
@@ -45,14 +47,6 @@ interface ScreenEntry {
 function videoTrackIds(stream: MediaStream): string {
   return stream
     .getVideoTracks()
-    .filter((t) => t.readyState !== 'ended')
-    .map((t) => t.id)
-    .join(',');
-}
-
-function audioTrackIds(stream: MediaStream): string {
-  return stream
-    .getAudioTracks()
     .filter((t) => t.readyState !== 'ended')
     .map((t) => t.id)
     .join(',');
@@ -101,6 +95,17 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
     return video;
   };
 
+  const detachPeerAudio = (entry: TileEntry) => {
+    entry.audioSource?.disconnect();
+    entry.audioSource = undefined;
+    if (entry.audioEl) {
+      entry.audioEl.pause();
+      entry.audioEl.srcObject = null;
+      entry.audioEl = undefined;
+    }
+    entry.audioTrackIds = '';
+  };
+
   const bindVideo = (video: HTMLVideoElement, stream: MediaStream): string => {
     // Video tracks only — never attach mic/audio here. Off-DOM <video> elements
     // can still leak local mic to speakers if the full stream is bound.
@@ -114,6 +119,45 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
       });
     }
     return ids;
+  };
+
+  /**
+   * Recorder-only audio path (studio uses mixAudio:false — never runs there).
+   *
+   * After the feedback fix, <video> only gets camera tracks. Chromium then stops
+   * decoding remote mic RTP for tracks that have no media-element consumer, so
+   * createMediaStreamSource alone produced a silent Opus track in the .webm.
+   * Play each mic through a muted <audio> (decode, no speakers) and tap the
+   * track into the mix with MediaStreamSource.
+   */
+  const bindPeerAudio = (entry: TileEntry, stream: MediaStream) => {
+    if (!audioCtx || !audioDestination) return;
+    const tracks = stream.getAudioTracks().filter((t) => t.readyState !== 'ended');
+    const ids = tracks.map((t) => t.id).join(',');
+    if (entry.audioTrackIds === ids) {
+      if (entry.audioEl && tracks.length > 0 && entry.audioEl.paused) {
+        void entry.audioEl.play().catch(() => undefined);
+      }
+      return;
+    }
+
+    detachPeerAudio(entry);
+    entry.audioTrackIds = ids;
+    if (!ids) return;
+
+    const micStream = new MediaStream(tracks);
+
+    const audioEl = new Audio();
+    audioEl.autoplay = true;
+    audioEl.muted = true;
+    audioEl.srcObject = micStream;
+    entry.audioEl = audioEl;
+    void audioEl.play().catch((err: unknown) => {
+      console.warn('[compositor] audio play failed', entry.name, err);
+    });
+
+    entry.audioSource = audioCtx.createMediaStreamSource(micStream);
+    entry.audioSource.connect(audioDestination);
   };
 
   const setPeers = (peers: CompositorPeer[]) => {
@@ -147,23 +191,8 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
           void entry.video.play().catch(() => undefined);
         }
       }
-      // Mix peer mics via Web Audio (never via <video> — that causes studio feedback).
-      // Recreate the source when mic tracks appear or are replaced.
-      if (audioCtx && audioDestination) {
-        const ids = audioTrackIds(peer.stream);
-        if (entry.audioTrackIds !== ids) {
-          entry.audioSource?.disconnect();
-          entry.audioSource = undefined;
-          entry.audioTrackIds = ids;
-          if (ids) {
-            const micStream = new MediaStream(
-              peer.stream.getAudioTracks().filter((t) => t.readyState !== 'ended'),
-            );
-            entry.audioSource = audioCtx.createMediaStreamSource(micStream);
-            entry.audioSource.connect(audioDestination);
-          }
-        }
-      }
+      // Mix peer mics via playing <audio> + Web Audio (never via <video>).
+      bindPeerAudio(entry, peer.stream);
 
       // First peer with a screenStream wins (deterministic peer order).
       if (!nextScreen && peer.screenStream && peer.screenStream.getVideoTracks().length > 0) {
@@ -173,7 +202,7 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
 
     for (const [id, entry] of entries) {
       if (!seen.has(id)) {
-        entry.audioSource?.disconnect();
+        detachPeerAudio(entry);
         entry.video.srcObject = null;
         entries.delete(id);
       }
@@ -318,9 +347,12 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
       for (const entry of list) {
         const v = entry.video;
         const tracks = entry.stream.getVideoTracks().map((t) => `${t.readyState}/${t.muted ? 'muted' : 'live'}`);
+        const aTracks = entry.stream.getAudioTracks().map((t) => `${t.readyState}/${t.muted ? 'muted' : 'live'}`);
         console.log(
           `[compositor] peer="${entry.name}" readyState=${v.readyState} ` +
-            `${v.videoWidth}x${v.videoHeight} paused=${v.paused} tracks=[${tracks.join(',')}]`,
+            `${v.videoWidth}x${v.videoHeight} paused=${v.paused} tracks=[${tracks.join(',')}] ` +
+            `audio=[${aTracks.join(',')}] mix=${entry.audioSource ? 'on' : 'off'} ` +
+            `audioEl=${entry.audioEl ? (entry.audioEl.paused ? 'paused' : 'playing') : 'none'}`,
         );
       }
       if (screenEntry) {
@@ -354,6 +386,11 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
     if (audioCtx.state === 'suspended') {
       await audioCtx.resume();
     }
+    for (const entry of entries.values()) {
+      if (entry.audioEl && entry.audioEl.paused) {
+        void entry.audioEl.play().catch(() => undefined);
+      }
+    }
     const track = audioDestination?.stream.getAudioTracks()[0];
     console.log(
       `[compositor] ensureAudio state=${audioCtx.state} ` +
@@ -365,7 +402,7 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
   const stop = () => {
     window.clearInterval(timer);
     for (const entry of entries.values()) {
-      entry.audioSource?.disconnect();
+      detachPeerAudio(entry);
       entry.video.srcObject = null;
     }
     entries.clear();
