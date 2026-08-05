@@ -57,6 +57,20 @@ cert_exists_in_volume() {
     >/dev/null 2>&1
 }
 
+# Stop the target stack, then reclaim build cache / unused images.
+# Intentionally omits `docker system prune --volumes` so named volumes
+# (letsencrypt, recordings, pg_data) survive across redeploys.
+stop_and_reclaim() {
+  local profile_args=("$@")
+  echo "==> stopping current stack"
+  "${COMPOSE[@]}" "${profile_args[@]}" down || true
+
+  echo "==> pruning Docker build cache and unused images"
+  docker builder prune -af || true
+  docker system prune -af || true
+  docker system df || true
+}
+
 echo "==> git pull"
 git pull
 
@@ -79,6 +93,7 @@ case "$TARGET" in
       echo "==> cert for ${DOMAIN} already present"
     fi
 
+    stop_and_reclaim
     echo "==> compose up (API box)"
     "${COMPOSE[@]}" up -d --build
     echo "Done — https://${DOMAIN}"
@@ -101,6 +116,7 @@ case "$TARGET" in
       echo "==> cert for ${DOMAIN} already present"
     fi
 
+    stop_and_reclaim --profile sfu
     echo "==> compose up (SFU box)"
     "${COMPOSE[@]}" --profile sfu up -d --build sfu sfu-nginx
     echo "Done — wss://${DOMAIN}/ws/signaling"
@@ -123,18 +139,14 @@ case "$TARGET" in
       echo "==> cert for ${DOMAIN} already present"
     fi
 
-    # Chromium+ffmpeg image needs several GB free; leftover BuildKit layers from
-    # failed builds are a common cause of "No space left" / host freezes.
+    # Stop first so RAM is free for the Chromium+ffmpeg image build; prune
+    # leftover BuildKit layers that commonly cause "No space left" / freezes.
+    stop_and_reclaim --profile compositor
+
     avail_kb="$(df -Pk "$ROOT" | awk 'NR==2 { print $4 }')"
-    if [[ -n "$avail_kb" && "$avail_kb" -lt 4000000 ]]; then
-      echo "==> low disk (${avail_kb}KB free) — pruning Docker build cache"
-      docker builder prune -af || true
-      docker system prune -af || true
-      avail_kb="$(df -Pk "$ROOT" | awk 'NR==2 { print $4 }')"
-      if [[ -n "$avail_kb" && "$avail_kb" -lt 3000000 ]]; then
-        echo "still only ${avail_kb}KB free after prune — expand the EBS volume (≥20GB)" >&2
-        exit 1
-      fi
+    if [[ -n "$avail_kb" && "$avail_kb" -lt 3000000 ]]; then
+      echo "only ${avail_kb}KB free after prune — expand the EBS volume (≥20GB)" >&2
+      exit 1
     fi
 
     echo "==> compose up (compositor box)"
