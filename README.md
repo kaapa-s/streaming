@@ -91,7 +91,7 @@ iterate on layout without mediasoup or the Nest server.
 - `COMPOSITOR_URL` — compositor base URL (default `http://localhost:3002`)
 - `COMPOSITOR_INTERNAL_SECRET` — shared secret for internal compositor API
 - `SFU_PUBLIC_WS_URL` — optional direct signaling URL
-- `AWS_REGION` / `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `S3_BUCKET` / `S3_PREFIX` — optional S3 upload
+- `AWS_REGION` / `S3_BUCKET` / `S3_PREFIX` — optional S3 upload; `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` only when not using an EC2 IAM role
 
 **compositor** (`compositor/.env`)
 
@@ -156,7 +156,7 @@ cp .env.example .env
 #   COMPOSITOR_URL=https://compositor.kaapa.pl
 #   COMPOSITOR_WEB_ORIGIN=https://streaming.kaapa.pl
 #   MEDIASOUP_ANNOUNCED_IP=<sfu-eip>
-#   Optional: AWS_* + S3_BUCKET for uploads
+#   Optional S3: AWS_REGION + S3_BUCKET (+ access keys locally; on EC2 prefer IAM role)
 # Same SFU_JOIN_SECRET and COMPOSITOR_INTERNAL_SECRET across boxes that need them.
 ```
 

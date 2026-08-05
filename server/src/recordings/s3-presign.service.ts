@@ -7,25 +7,27 @@ export class S3PresignService {
   private readonly logger = new Logger(S3PresignService.name);
 
   isConfigured(): boolean {
-    return !!(
-      process.env.S3_BUCKET?.trim() &&
-      process.env.AWS_REGION?.trim() &&
-      process.env.AWS_ACCESS_KEY_ID?.trim() &&
-      process.env.AWS_SECRET_ACCESS_KEY?.trim()
-    );
+    // Keys optional: on EC2, the SDK uses the instance IAM role via the default chain.
+    return !!(process.env.S3_BUCKET?.trim() && process.env.AWS_REGION?.trim());
   }
 
   private client(): S3Client {
     const region = process.env.AWS_REGION?.trim();
+    if (!region) {
+      throw new ServiceUnavailableException('AWS_REGION is not configured');
+    }
     const accessKeyId = process.env.AWS_ACCESS_KEY_ID?.trim();
     const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY?.trim();
-    if (!region || !accessKeyId || !secretAccessKey) {
-      throw new ServiceUnavailableException('AWS credentials / region are not configured');
+    if (accessKeyId && secretAccessKey) {
+      return new S3Client({
+        region,
+        credentials: { accessKeyId, secretAccessKey },
+      });
     }
-    return new S3Client({
-      region,
-      credentials: { accessKeyId, secretAccessKey },
-    });
+    // Compose may inject empty AWS_* strings; strip so the default chain can use the EC2 role.
+    delete process.env.AWS_ACCESS_KEY_ID;
+    delete process.env.AWS_SECRET_ACCESS_KEY;
+    return new S3Client({ region });
   }
 
   private bucket(): string {

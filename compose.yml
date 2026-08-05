@@ -41,6 +41,8 @@ services:
       COMPOSITOR_URL: ${COMPOSITOR_URL:-}
       COMPOSITOR_INTERNAL_SECRET: ${COMPOSITOR_INTERNAL_SECRET:-}
       AWS_REGION: ${AWS_REGION:-}
+      # Optional — omit for EC2 instance role (default credential chain).
+      # Empty values must not be set; only pass when present in .env.
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       S3_BUCKET: ${S3_BUCKET:-}
