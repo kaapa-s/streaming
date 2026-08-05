@@ -67,6 +67,8 @@ export class BrowserPoolService implements OnModuleInit, OnModuleDestroy {
         '--no-sandbox',
         '--autoplay-policy=no-user-gesture-required',
         '--use-fake-ui-for-media-stream',
+        // WEB_ORIGIN is HTTPS; RECORDING_SINK_URL is Docker-internal ws:// — allow that mixed content.
+        '--allow-running-insecure-content',
         ...(process.env.NODE_ENV !== 'production'
           ? ['--ignore-certificate-errors']
           : []),

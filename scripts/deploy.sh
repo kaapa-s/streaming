@@ -123,6 +123,20 @@ case "$TARGET" in
       echo "==> cert for ${DOMAIN} already present"
     fi
 
+    # Chromium+ffmpeg image needs several GB free; leftover BuildKit layers from
+    # failed builds are a common cause of "No space left" / host freezes.
+    avail_kb="$(df -Pk "$ROOT" | awk 'NR==2 { print $4 }')"
+    if [[ -n "$avail_kb" && "$avail_kb" -lt 4000000 ]]; then
+      echo "==> low disk (${avail_kb}KB free) — pruning Docker build cache"
+      docker builder prune -af || true
+      docker system prune -af || true
+      avail_kb="$(df -Pk "$ROOT" | awk 'NR==2 { print $4 }')"
+      if [[ -n "$avail_kb" && "$avail_kb" -lt 3000000 ]]; then
+        echo "still only ${avail_kb}KB free after prune — expand the EBS volume (≥20GB)" >&2
+        exit 1
+      fi
+    fi
+
     echo "==> compose up (compositor box)"
     "${COMPOSE[@]}" --profile compositor up -d --build compositor compositor-nginx monitor
     echo "Done — https://${DOMAIN}"

@@ -1,17 +1,14 @@
-# Single build stage (not parallel deps+build+runtime apt). BuildKit otherwise
-# races chromium/ffmpeg apt with npm/tsc and OOMs small EC2 boxes.
+# BuildKit parallelizes independent stages. On small EC2 boxes, racing
+# chromium/ffmpeg apt with npm (or a second apt) thrashing-hangs the host.
+# The sentinel COPY below forces the runtime apt to wait for `build`.
 FROM node:22-slim AS build
-WORKDIR /app
+WORKDIR /app/compositor
 ENV PUPPETEER_SKIP_DOWNLOAD=true \
     PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 make g++ \
-  && rm -rf /var/lib/apt/lists/*
-COPY compositor/package.json compositor/package-lock.json /app/compositor/
-WORKDIR /app/compositor
+COPY compositor/package.json compositor/package-lock.json ./
 RUN npm ci
-COPY compositor/tsconfig.json /app/compositor/
-COPY compositor/src /app/compositor/src
+COPY compositor/tsconfig.json ./
+COPY compositor/src ./src
 RUN npm run build && npm prune --omit=dev
 
 FROM node:22-slim
@@ -21,8 +18,9 @@ ENV NODE_ENV=production \
     PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
-# Apt before COPY so unpacking chromium/ffmpeg does not share the writable
-# layer peak with node_modules (matters on small EC2 disks).
+# Tiny COPY so BuildKit cannot start chromium apt until `build` finished.
+COPY --from=build /app/compositor/package.json /tmp/build-sentinel
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \
     ffmpeg \
@@ -33,7 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl3 \
     libx11-xcb1 \
     libxss1 \
-  && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
+  && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/build-sentinel
 
 COPY --from=build /app/compositor/node_modules ./node_modules
 COPY --from=build /app/compositor/dist ./dist

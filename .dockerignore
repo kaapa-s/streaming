@@ -1,0 +1,16 @@
+.git
+**/.env
+**/.env.*
+!**/.env.example
+**/node_modules
+**/dist
+**/build
+**/coverage
+**/.turbo
+web/dist
+server/dist
+sfu/dist
+compositor/recordings
+compositor/dist
+*.webm
+*.session.log

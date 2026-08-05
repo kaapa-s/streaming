@@ -205,10 +205,11 @@ into `recordings/diagnostics/host-stats.log`.
 - **ICE fails for external users:** SG allows `40000-40100/udp`, `MEDIASOUP_ANNOUNCED_IP` equals the SFU Elastic IP
 - **Recording fails / Chrome crash:** check `shm_size` on compositor, `docker logs compositor`
 - **Warmup / go-live fails:** API `COMPOSITOR_URL` reachable; secrets match; `COMPOSITOR_WEB_ORIGIN` serves `/compositor`
+- **Go-live Mixed Content / insecure WebSocket:** headless Chromium loads HTTPS `COMPOSITOR_WEB_ORIGIN` but sinks to Docker-internal `ws://` (`RECORDING_SINK_URL`). Pool launches with `--allow-running-insecure-content`; rebuild/restart compositor if that flag is missing
 - **Signaling fails from HTTPS UI:** use `wss://sfu.kaapa.pl/ws/signaling`
 - **SFU WSS 502:** `sfu-nginx` proxies to `http://sfu:3001`
 - **ACME / cert issue fails:** TXT `_acme-challenge.<domain>` propagated before Enter
 - **Nginx won't start (missing cert):** `./scripts/issue-cert.sh web|sfu|compositor`, then deploy
 - **Choppy YouTube A/V:** undersized compositor instance; check session + host-stats logs
-- **Compositor `deploy.sh` hang / host freeze during build:** BuildKit was racing Chromium apt + npm; pull latest Dockerfile. If it still thrashs, check free RAM (`free -h`) — compositor box wants ≥4GB, and add swap if needed
-- **`No space left on device` during compositor build:** Chromium+ffmpeg image is large. On the box: `df -h`, then `docker builder prune -af && docker system prune -af`. Prefer ≥20GB disk; expand the EBS volume if still tight
+- **Compositor `deploy.sh` hang / host freeze during build:** BuildKit was racing Chromium apt with the Node build stage; pull latest Dockerfile (sentinel serializes them). Check `free -h` / `df -h` — compositor wants ≥4GB RAM and ≥20GB disk
+- **`No space left on device` during compositor build:** Chromium+ffmpeg image is large. `deploy.sh` auto-prunes when disk is low; or manually: `docker builder prune -af && docker system prune -af`. Expand EBS if still tight
