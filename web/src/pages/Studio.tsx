@@ -30,10 +30,14 @@ function VideoTile({
 }) {
   const ref = useRef<HTMLVideoElement>(null);
   useEffect(() => {
-    if (ref.current && ref.current.srcObject !== stream) {
-      ref.current.srcObject = stream;
-    }
-  }, [stream]);
+    const video = ref.current;
+    if (!video) return;
+    // React does not reliably sync the muted IDL property on <video>; set it
+    // imperatively so local mic preview never plays through speakers (feedback).
+    // https://github.com/facebook/react/issues/10389
+    if (video.srcObject !== stream) video.srcObject = stream;
+    video.muted = muted;
+  }, [stream, muted]);
   return (
     <div className="tile">
       <video ref={ref} autoPlay playsInline muted={muted} />
@@ -123,7 +127,11 @@ export function Studio() {
           height: { ideal: 1080 },
           frameRate: { ideal: 30 },
         },
-        audio: true,
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
       });
       setLocalStream(stream);
 

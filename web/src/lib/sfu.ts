@@ -255,6 +255,8 @@ export class SfuClient {
   }
 
   private async consumeProducer(info: ProducerInfo): Promise<void> {
+    // Never play our own published tracks back (would cause immediate feedback).
+    if (info.peerId === this.peerId) return;
     if (!this.recvTransport) throw new Error('recv transport missing');
     const source = resolveSource(info);
     const data = await this.request<ConsumeResult>('consume', {
