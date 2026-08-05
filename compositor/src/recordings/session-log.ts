@@ -2,10 +2,6 @@ import { createWriteStream, mkdirSync, type WriteStream } from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-/**
- * Append-only diagnostic log for one recording / live session.
- * Always created when a session starts; lives next to the .webm under recordings/.
- */
 export class SessionLog {
   readonly path: string;
   private readonly stream: WriteStream;
@@ -52,7 +48,6 @@ export class SessionLog {
   }
 }
 
-/** ISO stamp safe for filenames (matches recordings.service webm naming). */
 export function sessionStamp(date = new Date()): string {
   return date.toISOString().replace(/[:.]/g, '-');
 }

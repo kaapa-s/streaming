@@ -1,7 +1,6 @@
 export {};
 
 declare global {
-  /** Exposed by the compositor page so Puppeteer can control MediaRecorder. */
   var __startRecording: (() => Promise<void>) | undefined;
   var __stopRecording: (() => Promise<void>) | undefined;
 }

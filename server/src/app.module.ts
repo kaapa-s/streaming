@@ -9,9 +9,7 @@ import {
   RoomMember,
   User,
 } from './entities';
-import { RecordingGateway } from './recordings/recording.gateway';
-import { RecordingsController } from './recordings/recordings.controller';
-import { RecordingsService } from './recordings/recordings.service';
+import { RecordingsModule } from './recordings/recordings.module';
 import { RoomsModule } from './rooms/rooms.module';
 import { UsersModule } from './users/users.module';
 
@@ -30,12 +28,10 @@ import { UsersModule } from './users/users.module';
         migrations: [__dirname + '/migrations/*.{ts,js}'],
       }),
     }),
-    TypeOrmModule.forFeature([Recording]),
     UsersModule,
     AuthModule,
     RoomsModule,
+    RecordingsModule,
   ],
-  controllers: [RecordingsController],
-  providers: [RecordingGateway, RecordingsService],
 })
 export class AppModule {}

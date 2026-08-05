@@ -1,10 +1,12 @@
 node_modules/
 dist/
 server/recordings/
+compositor/recordings/
 server/.chrome-cache/
 /.env
 /.env.prod
 server/.env
 sfu/.env
+compositor/.env
 *.log
 .DS_Store

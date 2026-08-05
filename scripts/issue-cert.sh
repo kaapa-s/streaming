@@ -2,8 +2,9 @@
 # Issue a Let's Encrypt cert (manual DNS-01) and reload the matching nginx service.
 # Certbot prints the _acme-challenge TXT value, waits for you to create it, then continues.
 # Usage:
-#   ./scripts/issue-cert.sh web [env-file]   # API box — SERVER_NAME (default .env)
-#   ./scripts/issue-cert.sh sfu [env-file]   # SFU box — SFU_SERVER_NAME (default .env)
+#   ./scripts/issue-cert.sh web [env-file]         # API box — SERVER_NAME
+#   ./scripts/issue-cert.sh sfu [env-file]         # SFU box — SFU_SERVER_NAME
+#   ./scripts/issue-cert.sh compositor [env-file]  # compositor box — COMPOSITOR_SERVER_NAME
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -46,8 +47,15 @@ case "$TARGET" in
     RELOAD=sfu-nginx
     PROFILE_ARGS=(--profile tools --profile sfu)
     ;;
+  compositor)
+    : "${COMPOSITOR_SERVER_NAME:?set COMPOSITOR_SERVER_NAME in $ENV_FILE}"
+    DOMAIN="$COMPOSITOR_SERVER_NAME"
+    SERVICE=compositor-certbot
+    RELOAD=compositor-nginx
+    PROFILE_ARGS=(--profile tools --profile compositor)
+    ;;
   *)
-    echo "usage: $0 web|sfu [env-file]" >&2
+    echo "usage: $0 web|sfu|compositor [env-file]" >&2
     exit 1
     ;;
 esac

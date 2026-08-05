@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Bundle session diagnostics + container logs for post-live analysis.
-# Run on the EC2 host from the repo root (where compose.yml lives).
+# Run on the compositor (or API) EC2 host from the repo root.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -13,22 +13,22 @@ mkdir -p "$OUT_DIR"
 echo "==> writing bundle to $OUT_DIR"
 
 echo "==> compose ps"
-"${COMPOSE[@]}" --profile sfu ps >"$OUT_DIR/compose-ps.txt" 2>&1 || true
+"${COMPOSE[@]}" --profile sfu --profile compositor ps >"$OUT_DIR/compose-ps.txt" 2>&1 || true
 
 echo "==> docker stats (snapshot)"
 docker stats --no-stream >"$OUT_DIR/docker-stats.txt" 2>&1 || true
 
 echo "==> container logs (last 6h / 10k lines each)"
-for svc in server web postgres monitor certbot sfu sfu-nginx sfu-certbot; do
-  "${COMPOSE[@]}" --profile sfu --profile tools logs --no-color --since 6h --tail 10000 "$svc" \
+for svc in server web postgres monitor certbot sfu sfu-nginx sfu-certbot compositor compositor-nginx compositor-certbot; do
+  "${COMPOSE[@]}" --profile sfu --profile compositor --profile tools logs --no-color --since 6h --tail 10000 "$svc" \
     >"$OUT_DIR/docker-$svc.log" 2>&1 || true
 done
 
 echo "==> session + host diagnostic files from recordings volume"
-"${COMPOSE[@]}" exec -T server sh -c '
+"${COMPOSE[@]}" --profile compositor exec -T compositor sh -c '
   mkdir -p /tmp/diag-export
-  cp -a /app/server/recordings/*.session.log /tmp/diag-export/ 2>/dev/null || true
-  cp -a /app/server/recordings/diagnostics /tmp/diag-export/ 2>/dev/null || true
+  cp -a /app/compositor/recordings/*.session.log /tmp/diag-export/ 2>/dev/null || true
+  cp -a /app/compositor/recordings/diagnostics /tmp/diag-export/ 2>/dev/null || true
   cd /tmp/diag-export && tar cf - .
 ' >"$OUT_DIR/recordings-diags.tar" 2>/dev/null || true
 
@@ -46,7 +46,8 @@ fi
   echo "## What to look for"
   echo "- *.session.log: codec/mode, ffmpeg speed=, loadavg, ingress kbps, backpressure"
   echo "- diagnostics/host-stats.log: docker CPU/RAM every 15s (t3 credit / OOM)"
-  echo "- docker-server.log: compositor / nest API stdout"
+  echo "- docker-compositor.log: Chromium pool / recording sink / ffmpeg"
+  echo "- docker-server.log: nest API stdout"
   echo "- docker-sfu.log: mediasoup / signaling stdout"
   echo "- ffmpeg speed= < 1.0 or rising loadavg → undersized instance"
   echo "- codec=vp8/vp9 + libx264/medium → heavy re-encode path"

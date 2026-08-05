@@ -3,9 +3,10 @@
   "private": true,
   "scripts": {
     "setup": "./scripts/setup-local.sh",
-    "dev": "concurrently -n api,sfu,web -c blue,magenta,green \"npm run dev --prefix server\" \"npm run dev --prefix sfu\" \"npm run dev --prefix web\"",
+    "dev": "concurrently -n api,sfu,compositor,web -c blue,magenta,yellow,green \"npm run dev --prefix server\" \"npm run dev --prefix sfu\" \"npm run dev --prefix compositor\" \"npm run dev --prefix web\"",
     "dev:api": "npm run dev --prefix server",
     "dev:sfu": "npm run dev --prefix sfu",
+    "dev:compositor": "npm run dev --prefix compositor",
     "dev:web": "npm run dev --prefix web"
   },
   "devDependencies": {

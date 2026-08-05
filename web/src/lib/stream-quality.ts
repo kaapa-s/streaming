@@ -14,7 +14,7 @@ export interface RecorderFormat {
   codec: RecorderVideoCodec;
 }
 
-/** Keep recorder bitrates in sync with server/src/recordings/stream-quality.ts. */
+/** Keep recorder bitrates in sync with compositor/src/recordings/stream-quality.ts. */
 export const STREAM_PROFILES: Record<StreamResolution, StreamProfile> = {
   '720p': {
     width: 1280,

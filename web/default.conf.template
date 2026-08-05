@@ -2,7 +2,7 @@
 # Nginx vars like $host are left alone (not in the envsubst allowlist).
 
 # Redirect public hostname HTTP → HTTPS.
-# Internal clients (Host: web) keep plain HTTP for WEB_ORIGIN=http://web.
+# Host `web` keeps plain HTTP (optional same-network access to the SPA).
 server {
     listen 80;
     server_name ${SERVER_NAME};

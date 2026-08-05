@@ -9,7 +9,12 @@ import {
 } from 'typeorm';
 import { Room } from './room.entity';
 
-export type RecordingStatus = 'starting' | 'recording' | 'stopped' | 'failed';
+export type RecordingStatus =
+  | 'starting'
+  | 'recording'
+  | 'uploading'
+  | 'stopped'
+  | 'failed';
 
 @Entity('recordings')
 export class Recording {
@@ -29,6 +34,9 @@ export class Recording {
 
   @Column({ type: 'varchar', nullable: true })
   declare filePath: string | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  declare s3Key: string | null;
 
   @Column({ type: 'varchar', default: '720p' })
   declare resolution: string;

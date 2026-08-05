@@ -5,11 +5,18 @@
  *  - a recording is started and stopped through the API,
  *  - the resulting .webm must exist and be reasonably sized.
  *
- * Prereqs: server (npm run dev) and web (npm run dev) both running.
+ * Prereqs: API, SFU, compositor, and web all running (`npm run dev`).
  * Run: node e2e.mjs
  */
+import { createRequire } from 'module';
 import { statSync } from 'fs';
-import puppeteer from 'puppeteer';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
+
+const require = createRequire(import.meta.url);
+const puppeteer = require(
+  join(dirname(fileURLToPath(import.meta.url)), '../compositor/node_modules/puppeteer'),
+);
 
 const WEB = process.env.WEB_ORIGIN ?? 'https://localhost:5173';
 const API = 'http://localhost:3000/api';

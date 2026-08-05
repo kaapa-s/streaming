@@ -4,11 +4,11 @@ import { SfuClient } from '../lib/sfu';
 import { parseResolution, pickRecorderFormat, STREAM_PROFILES } from '../lib/stream-quality';
 
 /**
- * Hidden recorder page, loaded by the server's headless Chromium at
- * /compositor?room=X&resolution=720p|1080p. Joins the room subscribe-only,
- * composites all speakers, records the composite with MediaRecorder and
- * streams webm chunks to the server over /ws/recording.
- * The server stops it via window.__stopRecording().
+ * Hidden recorder page, loaded by the compositor service's headless Chromium.
+ * Query: room, resolution, token, mode=idle|record, sinkUrl, sfuUrl?
+ *
+ * Idle (warmup): joins SFU + renders; exposes __startRecording / __stopRecording.
+ * Recording starts only when the service calls __startRecording().
  */
 export function CompositorPage() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -26,6 +26,7 @@ export function CompositorPage() {
       const token = params.get('token');
       if (!token) throw new Error('missing join token');
       const sfuUrl = params.get('sfuUrl') ?? undefined;
+      const sinkUrlParam = params.get('sinkUrl');
       const resolution = parseResolution(params.get('resolution'));
       const profile = STREAM_PROFILES[resolution];
 
@@ -40,49 +41,73 @@ export function CompositorPage() {
 
       const sfu = new SfuClient({ onPeersChanged: (peers) => compositor.setPeers(peers) });
       await sfu.join(room, 'Recorder', 'compositor', token, sfuUrl);
-      setStatus(`joined room "${room}" (${resolution}), connecting recorder…`);
+      setStatus(`warmed room "${room}" (${resolution}) — waiting for go-live`);
 
-      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const { mimeType, codec } = pickRecorderFormat();
-      const ws = new WebSocket(
-        `${proto}//${location.host}/ws/recording` +
-          `?room=${encodeURIComponent(room)}&codec=${encodeURIComponent(codec)}`,
-      );
-      await new Promise<void>((resolve, reject) => {
-        ws.onopen = () => resolve();
-        ws.onerror = () => reject(new Error('recording sink connection failed'));
-      });
+      let recorder: MediaRecorder | undefined;
+      let ws: WebSocket | undefined;
 
-      const recorder = new MediaRecorder(compositor.stream, {
-        mimeType,
-        videoBitsPerSecond: profile.recorderVideoBps,
-        audioBitsPerSecond: profile.recorderAudioBps,
-      });
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) ws.send(e.data);
+      window.__startRecording = async () => {
+        if (recorder && recorder.state !== 'inactive') {
+          throw new Error('already recording');
+        }
+        const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const sinkUrl =
+          sinkUrlParam ??
+          `${proto}//${location.host}/ws/recording` +
+            `?room=${encodeURIComponent(room)}`;
+
+        const { mimeType, codec } = pickRecorderFormat();
+        const sinkWithCodec = sinkUrl.includes('?')
+          ? `${sinkUrl}&codec=${encodeURIComponent(codec)}`
+          : `${sinkUrl}?room=${encodeURIComponent(room)}&codec=${encodeURIComponent(codec)}`;
+
+        ws = new WebSocket(sinkWithCodec);
+        await new Promise<void>((resolve, reject) => {
+          if (!ws) return reject(new Error('ws missing'));
+          ws.onopen = () => resolve();
+          ws.onerror = () => reject(new Error('recording sink connection failed'));
+        });
+
+        recorder = new MediaRecorder(compositor.stream, {
+          mimeType,
+          videoBitsPerSecond: profile.recorderVideoBps,
+          audioBitsPerSecond: profile.recorderAudioBps,
+        });
+        recorder.ondataavailable = (e) => {
+          if (e.data.size > 0 && ws?.readyState === WebSocket.OPEN) ws.send(e.data);
+        };
+        recorder.start(500);
+        setStatus(`recording room "${room}" @ ${resolution} (${mimeType})`);
+        console.log(
+          `[compositor] recording started for room ${room} @ ${resolution} ` +
+            `${profile.width}x${profile.height} ${mimeType} codec=${codec} video=${profile.recorderVideoBps}`,
+        );
       };
-      // 500ms chunks: slightly smoother for ffmpeg than 1s, still low overhead.
-      recorder.start(500);
-      setStatus(`recording room "${room}" @ ${resolution} (${mimeType})`);
-      console.log(
-        `[compositor] recording started for room ${room} @ ${resolution} ` +
-          `${profile.width}x${profile.height} ${mimeType} codec=${codec} video=${profile.recorderVideoBps}`,
-      );
 
       window.__stopRecording = () =>
         new Promise<void>((resolve) => {
-          recorder.onstop = () => {
-            // Give the final ondataavailable chunk a moment to be sent,
-            // then close the socket so the server finalizes the file.
+          const finish = () => {
             setTimeout(() => {
-              ws.close();
+              ws?.close();
+              ws = undefined;
               sfu.close();
               compositor.stop();
+              recorder = undefined;
               resolve();
             }, 300);
           };
+          if (!recorder || recorder.state === 'inactive') {
+            finish();
+            return;
+          }
+          recorder.onstop = () => finish();
           recorder.stop();
         });
+
+      // Legacy: mode=record starts immediately (e2e / old callers).
+      if (params.get('mode') === 'record') {
+        await window.__startRecording();
+      }
     };
 
     run().catch((err) => {

@@ -4,6 +4,7 @@
 # Usage:
 #   ./scripts/deploy.sh api
 #   ./scripts/deploy.sh sfu
+#   ./scripts/deploy.sh compositor
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -14,12 +15,12 @@ ENV_FILE="${ENV_FILE:-.env}"
 COMPOSE=(docker compose -f compose.yml --env-file "$ENV_FILE")
 
 usage() {
-  echo "usage: $0 api|sfu" >&2
+  echo "usage: $0 api|sfu|compositor" >&2
   exit 1
 }
 
 case "$TARGET" in
-  api|sfu) ;;
+  api|sfu|compositor) ;;
   *) usage ;;
 esac
 
@@ -61,7 +62,7 @@ git pull
 
 case "$TARGET" in
   api)
-    require_vars POSTGRES_PASSWORD JWT_SECRET SFU_JOIN_SECRET SERVER_NAME CERTBOT_EMAIL SFU_PUBLIC_WS_URL
+    require_vars POSTGRES_PASSWORD JWT_SECRET SFU_JOIN_SECRET SERVER_NAME CERTBOT_EMAIL SFU_PUBLIC_WS_URL COMPOSITOR_URL COMPOSITOR_INTERNAL_SECRET
     DOMAIN="$SERVER_NAME"
     CERT_SERVICE=certbot
     PROFILE_ARGS=(--profile tools)
@@ -103,5 +104,27 @@ case "$TARGET" in
     echo "==> compose up (SFU box)"
     "${COMPOSE[@]}" --profile sfu up -d --build sfu sfu-nginx
     echo "Done — wss://${DOMAIN}/ws/signaling"
+    ;;
+  compositor)
+    require_vars COMPOSITOR_SERVER_NAME COMPOSITOR_INTERNAL_SECRET COMPOSITOR_WEB_ORIGIN SFU_PUBLIC_WS_URL CERTBOT_EMAIL
+    DOMAIN="$COMPOSITOR_SERVER_NAME"
+    CERT_SERVICE=compositor-certbot
+    PROFILE_ARGS=(--profile tools)
+
+    if ! cert_exists_in_volume "$CERT_SERVICE" "$DOMAIN" "${PROFILE_ARGS[@]}"; then
+      if [[ -t 0 ]]; then
+        echo "==> no cert for ${DOMAIN} — running issue-cert (DNS-01)"
+        ./scripts/issue-cert.sh compositor "$ENV_FILE"
+      else
+        echo "no cert for ${DOMAIN} and no TTY — run: ./scripts/issue-cert.sh compositor" >&2
+        exit 1
+      fi
+    else
+      echo "==> cert for ${DOMAIN} already present"
+    fi
+
+    echo "==> compose up (compositor box)"
+    "${COMPOSE[@]}" --profile compositor up -d --build compositor compositor-nginx monitor
+    echo "Done — https://${DOMAIN}"
     ;;
 esac

@@ -1,14 +1,19 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Inject, Param, Post, UseGuards, forwardRef } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/auth.guards';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { AuthUser } from '../auth/jwt.strategy';
+import { RecordingsService } from '../recordings/recordings.service';
 import { CreateRoomDto } from './dto/rooms.dto';
 import { RoomsService } from './rooms.service';
 
 @Controller('rooms')
 @UseGuards(JwtAuthGuard)
 export class RoomsController {
-  constructor(private readonly rooms: RoomsService) {}
+  constructor(
+    private readonly rooms: RoomsService,
+    @Inject(forwardRef(() => RecordingsService))
+    private readonly recordings: RecordingsService,
+  ) {}
 
   @Post()
   create(@Body() body: CreateRoomDto, @CurrentUser() user: AuthUser) {
@@ -21,10 +26,14 @@ export class RoomsController {
   }
 
   @Post(':id/join')
-  joinById(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+  async joinById(@Param('id') id: string, @CurrentUser() user: AuthUser) {
     // UUID → by id; otherwise treat as slug for studio UX (?room=main).
-    if (isUuid(id)) return this.rooms.joinById(id, user);
-    return this.rooms.joinBySlug(id, user);
+    const result = isUuid(id)
+      ? await this.rooms.joinById(id, user)
+      : await this.rooms.joinBySlug(id, user);
+    // Warm compositor Chromium for this room (idle SFU join, no recording yet).
+    this.recordings.warmupRoom(result.room.slug);
+    return result;
   }
 }
 

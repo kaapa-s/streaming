@@ -250,7 +250,13 @@ export function Studio() {
       setRecording(nextRecording);
       setLive(nextRecording ? !!body.live : false);
       if (action === 'stop') {
-        setRecordingInfo(body.file ? `Saved: ${body.file}` : '');
+        if (body.downloadUrl) {
+          setRecordingInfo(`Uploaded — ${body.downloadUrl}`);
+        } else if (body.file) {
+          setRecordingInfo(`Saved: ${body.file}`);
+        } else {
+          setRecordingInfo('');
+        }
       } else {
         const resLabel = body.resolution ?? resolution;
         setRecordingInfo(

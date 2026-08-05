@@ -38,13 +38,14 @@ services:
       SFU_JOIN_SECRET: ${SFU_JOIN_SECRET:-}
       # Required when SFU is on another host; omitted → clients use same-origin /ws/signaling
       SFU_PUBLIC_WS_URL: ${SFU_PUBLIC_WS_URL:-}
-      WEB_ORIGIN: http://web
-      PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
-      PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "true"
+      COMPOSITOR_URL: ${COMPOSITOR_URL:-}
+      COMPOSITOR_INTERNAL_SECRET: ${COMPOSITOR_INTERNAL_SECRET:-}
+      AWS_REGION: ${AWS_REGION:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_PREFIX: ${S3_PREFIX:-recordings}
       PORT: 3000
-    volumes:
-      - recordings:/app/server/recordings
-    shm_size: "512m"
 
   web:
     build:
@@ -116,9 +117,57 @@ services:
     volumes:
       - sfu_letsencrypt:/etc/letsencrypt
 
-  # Continuous host/container samples for post-live CPU/RAM diagnosis (t3 credit exhaustion, OOM).
-  # Writes to the shared recordings volume under diagnostics/host-stats.log
+  # Opt-in via --profile compositor. On the compositor box:
+  # --profile compositor up -d --build compositor compositor-nginx monitor
+  compositor:
+    profiles: ["compositor"]
+    build:
+      context: .
+      dockerfile: compositor/Dockerfile
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      NODE_ENV: production
+      PORT: 3002
+      COMPOSITOR_INTERNAL_SECRET: ${COMPOSITOR_INTERNAL_SECRET:-}
+      COMPOSITOR_POOL_SIZE: ${COMPOSITOR_POOL_SIZE:-2}
+      # Public studio origin — Chromium loads /compositor from the API/web box.
+      WEB_ORIGIN: ${COMPOSITOR_WEB_ORIGIN:-}
+      SFU_PUBLIC_WS_URL: ${SFU_PUBLIC_WS_URL:-}
+      RECORDING_SINK_URL: ws://compositor:3002/ws/recording
+      PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
+      PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "true"
+    volumes:
+      - recordings:/app/compositor/recordings
+    shm_size: "512m"
+
+  compositor-nginx:
+    profiles: ["compositor"]
+    build:
+      context: ./compositor/nginx
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      - compositor
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SERVER_NAME: ${COMPOSITOR_SERVER_NAME:-}
+    volumes:
+      - compositor_letsencrypt:/etc/letsencrypt
+
+  compositor-certbot:
+    profiles: ["tools"]
+    image: certbot/certbot:v2.11.0
+    volumes:
+      - compositor_letsencrypt:/etc/letsencrypt
+
+  # Continuous host/container samples for post-live CPU/RAM diagnosis.
+  # On the compositor box (where recordings live).
   monitor:
+    profiles: ["compositor"]
     image: docker:27-cli
     restart: unless-stopped
     logging: *default-logging
@@ -143,3 +192,4 @@ volumes:
   recordings:
   web_letsencrypt:
   sfu_letsencrypt:
+  compositor_letsencrypt:

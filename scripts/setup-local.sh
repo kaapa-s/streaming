@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-command local bootstrap + start (API + SFU + web via npm run dev).
+# One-command local bootstrap + start (API + SFU + compositor + web via npm run dev).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -31,6 +31,10 @@ if [[ ! -f sfu/.env ]]; then
   cp sfu/.env.example sfu/.env
   echo "    created sfu/.env"
 fi
+if [[ ! -f compositor/.env ]]; then
+  cp compositor/.env.example compositor/.env
+  echo "    created compositor/.env"
+fi
 
 echo "==> starting Postgres (server/docker-compose.yml)"
 docker compose -f server/docker-compose.yml up -d
@@ -40,6 +44,7 @@ npm install
 npm install --prefix shared/join-token
 npm install --prefix server
 npm install --prefix sfu
+PUPPETEER_SKIP_DOWNLOAD=true npm install --prefix compositor
 npm install --prefix web
 
 echo "==> waiting for Postgres"
@@ -53,11 +58,11 @@ done
 echo "==> running migrations"
 npm run migration:run --prefix server
 
-echo "==> ensuring Puppeteer Chrome"
+echo "==> ensuring Puppeteer Chrome (compositor)"
 (
-  cd server
+  cd compositor
   npx puppeteer browsers install chrome
 )
 
-echo "==> starting API + SFU + web"
+echo "==> starting API + SFU + compositor + web"
 exec npm run dev

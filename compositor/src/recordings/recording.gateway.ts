@@ -3,8 +3,9 @@ import { spawn, type ChildProcess } from 'child_process';
 import { createWriteStream } from 'fs';
 import type { IncomingMessage } from 'http';
 import type { WebSocket } from 'ws';
-import { RecordingsService } from './recordings.service';
+import { SessionsService } from '../sessions/sessions.service';
 import type { SessionLog } from './session-log';
+import { redactRtmp } from './rtmp';
 import { parseRecorderCodec, STREAM_PROFILES, type StreamProfile } from './stream-quality';
 
 /**
@@ -13,13 +14,23 @@ import { parseRecorderCodec, STREAM_PROFILES, type StreamProfile } from './strea
  */
 @WebSocketGateway({ path: '/ws/recording' })
 export class RecordingGateway implements OnGatewayConnection {
-  constructor(private readonly recordings: RecordingsService) {}
+  constructor(private readonly sessions: SessionsService) {}
 
   handleConnection(socket: WebSocket, request: IncomingMessage): void {
     const url = new URL(request.url ?? '/', 'http://localhost');
     const room = url.searchParams.get('room') ?? 'main';
     const codec = parseRecorderCodec(url.searchParams.get('codec'));
-    const { file, rtmpUrl, resolution, sessionLog } = this.recordings.getSink(room);
+
+    let sink;
+    try {
+      sink = this.sessions.getSink(room);
+    } catch (err) {
+      console.error(`[recording] reject sink for room ${room}:`, err);
+      socket.close();
+      return;
+    }
+
+    const { file, rtmpUrl, resolution, sessionLog } = sink;
     const profile = STREAM_PROFILES[resolution];
     const out = createWriteStream(file);
     let bytesIn = 0;
@@ -36,7 +47,7 @@ export class RecordingGateway implements OnGatewayConnection {
       const bin = process.env.FFMPEG_PATH ?? 'ffmpeg';
       const args = buildFfmpegArgs(profile, codec, rtmpUrl);
       ffmpeg = spawn(bin, args, { stdio: ['pipe', 'ignore', 'pipe'] });
-      this.recordings.attachFfmpeg(room, ffmpeg);
+      this.sessions.attachFfmpeg(room, ffmpeg);
       attachFfmpegLogging(room, ffmpeg, sessionLog);
       const mode = codec === 'h264' ? 'copy+aac' : `libx264/${profile.ffmpegPreset}`;
       const banner =
@@ -45,7 +56,7 @@ export class RecordingGateway implements OnGatewayConnection {
       console.log(`[recording] ${banner}`);
       sessionLog?.write(banner);
       sessionLog?.write(
-        `ffmpeg args: ${args.map((a) => (/^rtmps?:\/\//i.test(a) ? redactRtmpArg(a) : a)).join(' ')}`,
+        `ffmpeg args: ${args.map((a) => (/^rtmps?:\/\//i.test(a) ? redactRtmp(a) : a)).join(' ')}`,
       );
     }
 
@@ -100,7 +111,6 @@ function attachFfmpegLogging(
       const trimmed = line.trim();
       if (!trimmed) continue;
       sessionLog?.write(`ffmpeg: ${trimmed}`);
-      // Console: keep noise down — stats / errors only.
       if (/error|warn|speed=|drop|fail|queue|delay|past duration/i.test(trimmed)) {
         console.log(`[ffmpeg:${room}] ${trimmed}`);
       }
@@ -115,7 +125,6 @@ function attachFfmpegLogging(
 }
 
 function buildFfmpegArgs(profile: StreamProfile, codec: string, rtmpUrl: string): string[] {
-  // info: capture encode speed=/frame= lines for post-live diagnosis; session log keeps full stream.
   const commonHead = [
     '-hide_banner',
     '-loglevel',
@@ -130,12 +139,10 @@ function buildFfmpegArgs(profile: StreamProfile, codec: string, rtmpUrl: string)
   const audio = ['-c:a', 'aac', '-b:a', profile.rtmpAudioBitrate, '-ar', '48000'];
   const out = ['-f', 'flv', rtmpUrl];
 
-  // H.264 from MediaRecorder: copy video, only transcode Opus → AAC for FLV/YouTube.
   if (codec === 'h264') {
     return [...commonHead, '-c:v', 'copy', ...audio, ...out];
   }
 
-  // VP8/VP9 → H.264. medium preset + higher bitrate than the earlier "fast" path.
   return [
     ...commonHead,
     '-c:v',
@@ -161,16 +168,4 @@ function buildFfmpegArgs(profile: StreamProfile, codec: string, rtmpUrl: string)
     ...audio,
     ...out,
   ];
-}
-
-function redactRtmpArg(url: string): string {
-  try {
-    const u = new URL(url);
-    const parts = u.pathname.split('/');
-    if (parts.length > 0) parts[parts.length - 1] = '***';
-    u.pathname = parts.join('/');
-    return u.toString();
-  } catch {
-    return 'rtmp://***';
-  }
 }

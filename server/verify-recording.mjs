@@ -2,12 +2,21 @@
  * Loads a recorded .webm into headless Chrome and reports duration,
  * resolution and whether audio bytes were decoded; saves a mid-video frame
  * to recordings/verify-frame.png. Usage: node verify-recording.mjs <file>
+ *
+ * Prefer running from compositor/: node ../server/verify-recording.mjs <file>
+ * or pass an absolute path under compositor/recordings/.
  */
+import { createRequire } from 'module';
 import { readdirSync } from 'fs';
 import * as path from 'path';
-import puppeteer from 'puppeteer';
+import { fileURLToPath } from 'url';
 
-const dir = path.resolve('recordings');
+const require = createRequire(import.meta.url);
+const puppeteer = require(
+  path.join(path.dirname(fileURLToPath(import.meta.url)), '../compositor/node_modules/puppeteer'),
+);
+
+const dir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../compositor/recordings');
 const file =
   process.argv[2] ??
   path.join(dir, readdirSync(dir).filter((f) => f.endsWith('.webm')).sort().at(-1));
@@ -23,7 +32,6 @@ try {
     const video = document.querySelector('video');
     video.muted = true;
     await video.play();
-    // seek to the middle so the screenshot shows real content
     await new Promise((r) => setTimeout(r, 500));
     if (Number.isFinite(video.duration)) video.currentTime = video.duration / 2;
     await new Promise((r) => setTimeout(r, 1000));
@@ -38,8 +46,9 @@ try {
   });
   console.log(file);
   console.log(info);
-  await page.screenshot({ path: 'recordings/verify-frame.png' });
-  console.log('frame saved to recordings/verify-frame.png');
+  const out = path.join(dir, 'verify-frame.png');
+  await page.screenshot({ path: out });
+  console.log(`frame saved to ${out}`);
 } finally {
   await browser.close();
 }
