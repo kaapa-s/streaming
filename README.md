@@ -210,3 +210,4 @@ into `recordings/diagnostics/host-stats.log`.
 - **ACME / cert issue fails:** TXT `_acme-challenge.<domain>` propagated before Enter
 - **Nginx won't start (missing cert):** `./scripts/issue-cert.sh web|sfu|compositor`, then deploy
 - **Choppy YouTube A/V:** undersized compositor instance; check session + host-stats logs
+- **Compositor `deploy.sh` hang / host freeze during build:** BuildKit was racing Chromium apt + npm; pull latest Dockerfile. If it still thrashs, check free RAM (`free -h`) — compositor box wants ≥4GB, and add swap if needed
