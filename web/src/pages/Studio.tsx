@@ -10,6 +10,7 @@ import {
   type AuthUser,
 } from '../lib/auth';
 import { createCompositor, type Compositor } from '../lib/compositor';
+import { createRemoteAudioPlayer, type RemoteAudioPlayer } from '../lib/remoteAudio';
 import { SfuClient, type RemotePeer } from '../lib/sfu';
 import type { StreamResolution } from '../lib/stream-quality';
 
@@ -17,22 +18,18 @@ const params = new URLSearchParams(location.search);
 const YT_RTMP_STORAGE_KEY = 'streaming-studio-yt-rtmp';
 const YT_RES_STORAGE_KEY = 'streaming-studio-resolution';
 
+/** Camera preview only — never attaches mic tracks (feedback). */
 function VideoTile({
   stream,
-  muted,
   label,
   sharing,
 }: {
   stream: MediaStream;
-  /** Local self-view: true (no mic playback). Remotes: false (hear their mic). */
-  muted: boolean;
   label: string;
   sharing?: boolean;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const audioRef = useRef<HTMLAudioElement>(null);
 
-  // Video element is always muted + video-only — never a feedback path.
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -40,6 +37,8 @@ function VideoTile({
     const bindVideo = () => {
       video.srcObject = new MediaStream(stream.getVideoTracks());
       video.muted = true;
+      video.defaultMuted = true;
+      video.volume = 0;
       void video.play().catch(() => undefined);
     };
 
@@ -53,32 +52,9 @@ function VideoTile({
     };
   }, [stream]);
 
-  // Remote mic: dedicated <audio> (not the video tag). getUserMedia on join
-  // unlocks autoplay-with-sound in Chromium, so play() works without mute hacks.
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio || muted) return;
-
-    const bindAudio = () => {
-      const tracks = stream.getAudioTracks();
-      audio.srcObject = tracks.length > 0 ? new MediaStream(tracks) : null;
-      if (tracks.length > 0) void audio.play().catch(() => undefined);
-    };
-
-    bindAudio();
-    stream.addEventListener('addtrack', bindAudio);
-    stream.addEventListener('removetrack', bindAudio);
-    return () => {
-      stream.removeEventListener('addtrack', bindAudio);
-      stream.removeEventListener('removetrack', bindAudio);
-      audio.srcObject = null;
-    };
-  }, [stream, muted]);
-
   return (
     <div className="tile">
       <video ref={videoRef} autoPlay playsInline muted />
-      {!muted && <audio ref={audioRef} autoPlay />}
       <span className="tile-label">{label}</span>
       {sharing && <span className="tile-badge">Sharing</span>}
     </div>
@@ -108,6 +84,7 @@ export function Studio() {
   const sfuRef = useRef<SfuClient | null>(null);
   const joiningRef = useRef(false);
   const compositorRef = useRef<Compositor | null>(null);
+  const remoteAudioRef = useRef<RemoteAudioPlayer | null>(null);
   const previewRef = useRef<HTMLDivElement>(null);
 
   const name = user?.name ?? '';
@@ -137,6 +114,7 @@ export function Studio() {
 
   const onLogout = async () => {
     await stopLocalScreen();
+    remoteAudioRef.current?.stop();
     sfuRef.current?.close();
     sfuRef.current = null;
     localStream?.getTracks().forEach((t) => t.stop());
@@ -208,6 +186,25 @@ export function Studio() {
       compositorRef.current = null;
     };
   }, [joined]);
+
+  // Remote mics only — never the local stream (that is the feedback loop).
+  useEffect(() => {
+    if (!joined) {
+      remoteAudioRef.current?.stop();
+      remoteAudioRef.current = null;
+      return;
+    }
+    const player = remoteAudioRef.current ?? createRemoteAudioPlayer();
+    remoteAudioRef.current = player;
+    player.setPeers(remotePeers);
+  }, [joined, remotePeers]);
+
+  useEffect(() => {
+    return () => {
+      remoteAudioRef.current?.stop();
+      remoteAudioRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     if (!compositorRef.current || !localStream) return;
@@ -454,7 +451,6 @@ export function Studio() {
             {localStream && (
               <VideoTile
                 stream={localStream}
-                muted
                 label={`${name} (you)`}
                 sharing={!!localScreenStream}
               />
@@ -463,7 +459,6 @@ export function Studio() {
               <VideoTile
                 key={peer.id}
                 stream={peer.stream}
-                muted={false}
                 label={peer.name}
                 sharing={!!peer.screenStream}
               />

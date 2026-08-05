@@ -290,7 +290,10 @@ export class SfuClient {
       source,
     });
 
+    // Server consumer starts paused (mediasoup race avoidance). Resume both
+    // sides so RTP flows and the local track stays enabled.
     await this.request('resumeConsumer', { consumerId: data.id });
+    consumer.resume();
     this.emitPeers();
   }
 

@@ -70,7 +70,11 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
 
   const createVideoEl = () => {
     const video = document.createElement('video');
+    // Belt-and-suspenders: these elements must never contribute to speakers.
+    // Audio for recording goes through Web Audio (mixAudio), not <video>.
     video.muted = true;
+    video.defaultMuted = true;
+    video.volume = 0;
     video.playsInline = true;
     video.autoplay = true;
     return video;
