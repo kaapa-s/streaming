@@ -27,14 +27,23 @@ interface TileEntry {
   stream: MediaStream;
   video: HTMLVideoElement;
   audioSource?: MediaStreamAudioSourceNode;
-  videoTrackCount: number;
+  /** Fingerprint of attached video track ids (not count — replacements keep count=1). */
+  videoTrackIds: string;
 }
 
 interface ScreenEntry {
   peerId: string;
   stream: MediaStream;
   video: HTMLVideoElement;
-  videoTrackCount: number;
+  videoTrackIds: string;
+}
+
+function videoTrackIds(stream: MediaStream): string {
+  return stream
+    .getVideoTracks()
+    .filter((t) => t.readyState !== 'ended')
+    .map((t) => t.id)
+    .join(',');
 }
 
 const SPEAKER_STRIP_RATIO = 0.22;
@@ -80,14 +89,19 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
     return video;
   };
 
-  const bindVideo = (video: HTMLVideoElement, stream: MediaStream): number => {
+  const bindVideo = (video: HTMLVideoElement, stream: MediaStream): string => {
     // Video tracks only — never attach mic/audio here. Off-DOM <video> elements
     // can still leak local mic to speakers if the full stream is bound.
     // Audio mixing (recorder) uses Web Audio from peer.stream separately.
-    const videoTracks = stream.getVideoTracks();
-    video.srcObject = new MediaStream(videoTracks);
-    void video.play().catch(() => undefined);
-    return videoTracks.length;
+    const tracks = stream.getVideoTracks().filter((t) => t.readyState !== 'ended');
+    const ids = tracks.map((t) => t.id).join(',');
+    video.srcObject = tracks.length > 0 ? new MediaStream(tracks) : null;
+    if (tracks.length > 0) {
+      void video.play().catch((err: unknown) => {
+        console.warn('[compositor] video play failed', err);
+      });
+    }
+    return ids;
   };
 
   const setPeers = (peers: CompositorPeer[]) => {
@@ -103,18 +117,21 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
           name: peer.name,
           stream: peer.stream,
           video,
-          videoTrackCount: -1,
+          videoTrackIds: '',
         };
         entries.set(peer.id, entry);
-        entry.videoTrackCount = bindVideo(entry.video, entry.stream);
+        entry.videoTrackIds = bindVideo(entry.video, entry.stream);
       } else {
         entry.name = peer.name;
         const streamChanged = entry.stream !== peer.stream;
         entry.stream = peer.stream;
-        const videoCount = peer.stream.getVideoTracks().length;
+        const ids = videoTrackIds(peer.stream);
         // srcObject is a video-only clone, so never compare it to peer.stream.
-        if (streamChanged || entry.videoTrackCount !== videoCount) {
-          entry.videoTrackCount = bindVideo(entry.video, peer.stream);
+        // Only rebind when video track identity changes (mic addtrack is a no-op).
+        if (streamChanged || entry.videoTrackIds !== ids) {
+          entry.videoTrackIds = bindVideo(entry.video, peer.stream);
+        } else if (ids && entry.video.paused) {
+          void entry.video.play().catch(() => undefined);
         }
       }
       // Tracks can arrive one at a time; hook up audio once it exists.
@@ -149,12 +166,14 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
           peerId: nextScreen.peerId,
           stream: nextScreen.stream,
           video,
-          videoTrackCount: bindVideo(video, nextScreen.stream),
+          videoTrackIds: bindVideo(video, nextScreen.stream),
         };
       } else {
-        const videoCount = nextScreen.stream.getVideoTracks().length;
-        if (screenEntry.videoTrackCount !== videoCount) {
-          screenEntry.videoTrackCount = bindVideo(screenEntry.video, nextScreen.stream);
+        const ids = videoTrackIds(nextScreen.stream);
+        if (screenEntry.videoTrackIds !== ids) {
+          screenEntry.videoTrackIds = bindVideo(screenEntry.video, nextScreen.stream);
+        } else if (ids && screenEntry.video.paused) {
+          void screenEntry.video.play().catch(() => undefined);
         }
       }
     } else if (screenEntry) {

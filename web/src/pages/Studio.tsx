@@ -34,12 +34,25 @@ function VideoTile({
     const video = videoRef.current;
     if (!video) return;
 
+    // Rebind only when *video* tracks change. Mic addtrack used to replace
+    // srcObject and abort play(), leaving a black tile while audio still worked.
+    let attachedIds = '';
+
     const bindVideo = () => {
-      video.srcObject = new MediaStream(stream.getVideoTracks());
+      const videoTracks = stream.getVideoTracks().filter((t) => t.readyState !== 'ended');
+      const ids = videoTracks.map((t) => t.id).join(',');
+      if (ids === attachedIds && video.srcObject) return;
+      attachedIds = ids;
+
       video.muted = true;
       video.defaultMuted = true;
       video.volume = 0;
-      void video.play().catch(() => undefined);
+      video.srcObject = videoTracks.length > 0 ? new MediaStream(videoTracks) : null;
+      if (videoTracks.length > 0) {
+        void video.play().catch((err: unknown) => {
+          console.warn('[VideoTile] play failed', label, err);
+        });
+      }
     };
 
     bindVideo();
@@ -50,7 +63,7 @@ function VideoTile({
       stream.removeEventListener('removetrack', bindVideo);
       video.srcObject = null;
     };
-  }, [stream]);
+  }, [stream, label]);
 
   return (
     <div className="tile">
