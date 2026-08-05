@@ -24,6 +24,10 @@ h2 {
 }
 
 button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   font: inherit;
   font-weight: 600;
   padding: 10px 18px;
@@ -35,7 +39,7 @@ button {
   transition: filter 120ms;
 }
 
-button:hover {
+button:hover:not(:disabled) {
   filter: brightness(1.15);
 }
 
@@ -50,6 +54,22 @@ button.primary {
 
 button.danger {
   background: #d64545;
+}
+
+.button-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: button-spin 0.6s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes button-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 input {

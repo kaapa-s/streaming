@@ -28,8 +28,6 @@ interface TileEntry {
   name: string;
   stream: MediaStream;
   video: HTMLVideoElement;
-  /** Playing (muted) mic element — required so Chromium decodes remote WebRTC audio. */
-  audioEl?: HTMLAudioElement;
   audioSource?: MediaStreamAudioSourceNode;
   /** Fingerprint of attached video track ids (not count — replacements keep count=1). */
   videoTrackIds: string;
@@ -98,22 +96,23 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
   const detachPeerAudio = (entry: TileEntry) => {
     entry.audioSource?.disconnect();
     entry.audioSource = undefined;
-    if (entry.audioEl) {
-      entry.audioEl.pause();
-      entry.audioEl.srcObject = null;
-      entry.audioEl = undefined;
-    }
     entry.audioTrackIds = '';
   };
 
   const bindVideo = (video: HTMLVideoElement, stream: MediaStream): string => {
-    // Video tracks only — never attach mic/audio here. Off-DOM <video> elements
-    // can still leak local mic to speakers if the full stream is bound.
-    // Audio mixing (recorder) uses Web Audio from peer.stream separately.
-    const tracks = stream.getVideoTracks().filter((t) => t.readyState !== 'ended');
-    const ids = tracks.map((t) => t.id).join(',');
-    video.srcObject = tracks.length > 0 ? new MediaStream(tracks) : null;
-    if (tracks.length > 0) {
+    const ids = videoTrackIds(stream);
+    if (mixAudio) {
+      // Headless recorder only: bind the live peer stream (cam+mic). Chromium
+      // won't decode remote mic RTP into MediaStreamSource unless a media
+      // element is playing that stream — this is what made 09:33 recordings
+      // have real audio. Element stays muted; page is never shown to speakers.
+      video.srcObject = stream;
+    } else {
+      // Studio preview: camera frames only — never attach mic (feedback).
+      const tracks = stream.getVideoTracks().filter((t) => t.readyState !== 'ended');
+      video.srcObject = tracks.length > 0 ? new MediaStream(tracks) : null;
+    }
+    if (ids) {
       void video.play().catch((err: unknown) => {
         console.warn('[compositor] video play failed', err);
       });
@@ -121,42 +120,19 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
     return ids;
   };
 
-  /**
-   * Recorder-only audio path (studio uses mixAudio:false — never runs there).
-   *
-   * After the feedback fix, <video> only gets camera tracks. Chromium then stops
-   * decoding remote mic RTP for tracks that have no media-element consumer, so
-   * createMediaStreamSource alone produced a silent Opus track in the .webm.
-   * Play each mic through a muted <audio> (decode, no speakers) and tap the
-   * track into the mix with MediaStreamSource.
-   */
+  /** Recorder-only: tap peer mic into the MediaRecorder mix via Web Audio. */
   const bindPeerAudio = (entry: TileEntry, stream: MediaStream) => {
     if (!audioCtx || !audioDestination) return;
     const tracks = stream.getAudioTracks().filter((t) => t.readyState !== 'ended');
     const ids = tracks.map((t) => t.id).join(',');
-    if (entry.audioTrackIds === ids) {
-      if (entry.audioEl && tracks.length > 0 && entry.audioEl.paused) {
-        void entry.audioEl.play().catch(() => undefined);
-      }
-      return;
-    }
+    if (entry.audioTrackIds === ids) return;
 
     detachPeerAudio(entry);
     entry.audioTrackIds = ids;
     if (!ids) return;
 
-    const micStream = new MediaStream(tracks);
-
-    const audioEl = new Audio();
-    audioEl.autoplay = true;
-    audioEl.muted = true;
-    audioEl.srcObject = micStream;
-    entry.audioEl = audioEl;
-    void audioEl.play().catch((err: unknown) => {
-      console.warn('[compositor] audio play failed', entry.name, err);
-    });
-
-    entry.audioSource = audioCtx.createMediaStreamSource(micStream);
+    // Use the live peer stream (same object bound to <video> when mixAudio).
+    entry.audioSource = audioCtx.createMediaStreamSource(stream);
     entry.audioSource.connect(audioDestination);
   };
 
@@ -191,7 +167,7 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
           void entry.video.play().catch(() => undefined);
         }
       }
-      // Mix peer mics via playing <audio> + Web Audio (never via <video>).
+      // Mix peer mics via Web Audio (recorder). No-op when mixAudio is false.
       bindPeerAudio(entry, peer.stream);
 
       // First peer with a screenStream wins (deterministic peer order).
@@ -351,8 +327,7 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
         console.log(
           `[compositor] peer="${entry.name}" readyState=${v.readyState} ` +
             `${v.videoWidth}x${v.videoHeight} paused=${v.paused} tracks=[${tracks.join(',')}] ` +
-            `audio=[${aTracks.join(',')}] mix=${entry.audioSource ? 'on' : 'off'} ` +
-            `audioEl=${entry.audioEl ? (entry.audioEl.paused ? 'paused' : 'playing') : 'none'}`,
+            `audio=[${aTracks.join(',')}] mix=${entry.audioSource ? 'on' : 'off'}`,
         );
       }
       if (screenEntry) {
@@ -385,11 +360,6 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
     if (!audioCtx) return;
     if (audioCtx.state === 'suspended') {
       await audioCtx.resume();
-    }
-    for (const entry of entries.values()) {
-      if (entry.audioEl && entry.audioEl.paused) {
-        void entry.audioEl.play().catch(() => undefined);
-      }
     }
     const track = audioDestination?.stream.getAudioTracks()[0];
     console.log(

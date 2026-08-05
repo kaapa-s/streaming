@@ -168,7 +168,7 @@ cp .env.example .env
 ./scripts/deploy.sh compositor
 ```
 
-Each run stops the current stack, prunes unused Docker build cache/images (volumes kept), then `up --build`.
+Each run prunes unused Docker build cache/images (volumes kept), builds new images while the stack stays up, then recreates containers from those images and prunes the previous generation.
 
 Share **https://streaming.kaapa.pl** with testers.
 
@@ -214,4 +214,4 @@ into `recordings/diagnostics/host-stats.log`.
 - **Nginx won't start (missing cert):** `./scripts/issue-cert.sh web|sfu|compositor`, then deploy
 - **Choppy YouTube A/V:** undersized compositor instance; check session + host-stats logs
 - **Compositor `deploy.sh` hang / host freeze during build:** BuildKit was racing Chromium apt with the Node build stage; pull latest Dockerfile (sentinel serializes them). Check `free -h` / `df -h` — compositor wants ≥4GB RAM and ≥20GB disk
-- **`No space left on device` during compositor build:** Chromium+ffmpeg image is large. `deploy.sh` always stops the stack and runs `docker builder prune` / `docker system prune` (without `--volumes`, so certs/recordings survive) before rebuild. Expand EBS if still tight (≥20GB)
+- **`No space left on device` during compositor build:** Chromium+ffmpeg image is large. `deploy.sh` prunes build cache / unused images (without `--volumes`, so certs/recordings survive) before building while the old stack is still up, then swaps and prunes again. Expand EBS if still tight (≥20GB)

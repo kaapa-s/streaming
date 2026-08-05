@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Button } from '../components/Button';
 import {
   apiFetch,
   clearSession,
@@ -82,6 +83,7 @@ export function Studio() {
   const [displayName, setDisplayName] = useState('');
   const [room] = useState(params.get('room') ?? 'main');
   const [joined, setJoined] = useState(false);
+  const [joining, setJoining] = useState(false);
   const [error, setError] = useState('');
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [localScreenStream, setLocalScreenStream] = useState<MediaStream | null>(null);
@@ -93,6 +95,10 @@ export function Studio() {
   const [resolution, setResolution] = useState<StreamResolution>(() =>
     localStorage.getItem(YT_RES_STORAGE_KEY) === '1080p' ? '1080p' : '720p',
   );
+  const [authPending, setAuthPending] = useState(false);
+  const [logoutPending, setLogoutPending] = useState(false);
+  const [screenPending, setScreenPending] = useState(false);
+  const [recordingPending, setRecordingPending] = useState(false);
 
   const sfuRef = useRef<SfuClient | null>(null);
   const joiningRef = useRef(false);
@@ -104,6 +110,8 @@ export function Studio() {
 
   const onAuth = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (authPending) return;
+    setAuthPending(true);
     setError('');
     try {
       const session =
@@ -114,6 +122,8 @@ export function Studio() {
       setPassword('');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAuthPending(false);
     }
   };
 
@@ -126,22 +136,30 @@ export function Studio() {
   }, []);
 
   const onLogout = async () => {
-    await stopLocalScreen();
-    remoteAudioRef.current?.stop();
-    sfuRef.current?.close();
-    sfuRef.current = null;
-    localStream?.getTracks().forEach((t) => t.stop());
-    setLocalStream(null);
-    setRemotePeers([]);
-    setJoined(false);
-    joiningRef.current = false;
-    await logout();
-    setUser(null);
+    if (logoutPending) return;
+    setLogoutPending(true);
+    try {
+      await stopLocalScreen();
+      remoteAudioRef.current?.stop();
+      sfuRef.current?.close();
+      sfuRef.current = null;
+      localStream?.getTracks().forEach((t) => t.stop());
+      setLocalStream(null);
+      setRemotePeers([]);
+      setJoined(false);
+      joiningRef.current = false;
+      setJoining(false);
+      await logout();
+      setUser(null);
+    } finally {
+      setLogoutPending(false);
+    }
   };
 
   const join = useCallback(async () => {
     if (!user || joiningRef.current) return;
     joiningRef.current = true;
+    setJoining(true);
     setError('');
     try {
       if (!navigator.mediaDevices?.getUserMedia) {
@@ -173,6 +191,7 @@ export function Studio() {
       sfuRef.current?.close();
       sfuRef.current = null;
       joiningRef.current = false;
+      setJoining(false);
       if (String(err).includes('401') || String(err).toLowerCase().includes('unauthorized')) {
         clearSession();
         setUser(null);
@@ -233,12 +252,14 @@ export function Studio() {
   }, [joined, localStream, localScreenStream, remotePeers, name]);
 
   const toggleScreenShare = async () => {
+    if (screenPending) return;
+    setScreenPending(true);
     setError('');
-    if (localScreenStream) {
-      await stopLocalScreen();
-      return;
-    }
     try {
+      if (localScreenStream) {
+        await stopLocalScreen();
+        return;
+      }
       if (!navigator.mediaDevices?.getDisplayMedia) {
         throw new Error('Screen sharing is not supported in this browser');
       }
@@ -267,6 +288,8 @@ export function Studio() {
       // User cancelled the picker — not an error worth showing.
       if (err instanceof DOMException && err.name === 'NotAllowedError') return;
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setScreenPending(false);
     }
   };
 
@@ -281,6 +304,8 @@ export function Studio() {
   };
 
   const toggleRecording = async () => {
+    if (recordingPending) return;
+    setRecordingPending(true);
     setError('');
     try {
       const action = recording ? 'stop' : 'start';
@@ -323,28 +348,55 @@ export function Studio() {
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRecordingPending(false);
     }
   };
 
   const wantsLive = !!rtmpUrl.trim();
-  const actionLabel = recording
-    ? live
-      ? 'Stop live'
-      : 'Stop recording'
-    : wantsLive
-      ? 'Go live'
-      : 'Start recording';
+  const actionLabel = recordingPending
+    ? recording
+      ? 'Stopping…'
+      : wantsLive
+        ? 'Going live…'
+        : 'Starting…'
+    : recording
+      ? live
+        ? 'Stop live'
+        : 'Stop recording'
+      : wantsLive
+        ? 'Go live'
+        : 'Start recording';
+
+  const authLabel = authPending
+    ? authMode === 'register'
+      ? 'Creating account…'
+      : 'Signing in…'
+    : authMode === 'register'
+      ? 'Create account'
+      : 'Log in';
+
+  const screenLabel = screenPending
+    ? localScreenStream
+      ? 'Stopping share…'
+      : 'Starting share…'
+    : localScreenStream
+      ? 'Stop sharing'
+      : 'Share screen';
 
   if (!user) {
     return (
       <div className="lobby">
         <h1>Streaming Studio</h1>
-        <p className="hint">Sign in to join room <strong>{room}</strong></p>
+        <p className="hint">
+          Sign in to join room <strong>{room}</strong>
+        </p>
         <div className="auth-tabs">
           <button
             type="button"
             className={authMode === 'login' ? 'primary' : undefined}
             onClick={() => setAuthMode('login')}
+            disabled={authPending}
           >
             Log in
           </button>
@@ -352,6 +404,7 @@ export function Studio() {
             type="button"
             className={authMode === 'register' ? 'primary' : undefined}
             onClick={() => setAuthMode('register')}
+            disabled={authPending}
           >
             Register
           </button>
@@ -364,6 +417,7 @@ export function Studio() {
               onChange={(e) => setDisplayName(e.target.value)}
               autoComplete="nickname"
               required
+              disabled={authPending}
             />
           )}
           <input
@@ -374,6 +428,7 @@ export function Studio() {
             autoComplete="email"
             autoFocus
             required
+            disabled={authPending}
           />
           <input
             type="password"
@@ -383,8 +438,11 @@ export function Studio() {
             autoComplete={authMode === 'register' ? 'new-password' : 'current-password'}
             minLength={8}
             required
+            disabled={authPending}
           />
-          <button type="submit">{authMode === 'register' ? 'Create account' : 'Log in'}</button>
+          <Button type="submit" loading={authPending}>
+            {authLabel}
+          </Button>
         </form>
         {error && <p className="error">{error}</p>}
       </div>
@@ -405,15 +463,24 @@ export function Studio() {
             void join();
           }}
         >
-          <button type="submit">Join studio</button>
-          <button type="button" className="danger" onClick={() => void onLogout()}>
-            Log out
-          </button>
+          <Button type="submit" loading={joining}>
+            {joining ? 'Joining…' : 'Join studio'}
+          </Button>
+          <Button
+            type="button"
+            variant="danger"
+            loading={logoutPending}
+            onClick={() => void onLogout()}
+          >
+            {logoutPending ? 'Logging out…' : 'Log out'}
+          </Button>
         </form>
         {error && <p className="error">{error}</p>}
       </div>
     );
   }
+
+  const streamControlsLocked = recording || recordingPending;
 
   return (
     <div className="studio">
@@ -425,7 +492,7 @@ export function Studio() {
             className="resolution-select"
             value={resolution}
             onChange={(e) => onResolutionChange(e.target.value as StreamResolution)}
-            disabled={recording}
+            disabled={streamControlsLocked}
             title="Output resolution for recording / YouTube"
           >
             <option value="720p">720p</option>
@@ -439,16 +506,20 @@ export function Studio() {
             placeholder="YouTube RTMP URL or stream key"
             value={rtmpUrl}
             onChange={(e) => onRtmpChange(e.target.value)}
-            disabled={recording}
+            disabled={streamControlsLocked}
             title="Paste rtmp://a.rtmp.youtube.com/live2/<key> or just the stream key"
           />
-          <button type="button" onClick={() => void toggleScreenShare()}>
-            {localScreenStream ? 'Stop sharing' : 'Share screen'}
-          </button>
+          <Button type="button" loading={screenPending} onClick={() => void toggleScreenShare()}>
+            {screenLabel}
+          </Button>
           {recording && <span className="rec-dot">{live ? 'LIVE' : 'REC'}</span>}
-          <button className={recording ? 'danger' : 'primary'} onClick={() => void toggleRecording()}>
+          <Button
+            variant={recording ? 'danger' : 'primary'}
+            loading={recordingPending}
+            onClick={() => void toggleRecording()}
+          >
             {actionLabel}
-          </button>
+          </Button>
         </div>
       </header>
 

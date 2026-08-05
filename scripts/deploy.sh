@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-command deploy/rebuild on an EC2 box: git pull + compose up --build.
+# One-command deploy/rebuild on an EC2 box: prune → build → swap.
 # First time (no cert yet, interactive TTY): also runs issue-cert.sh.
 # Usage:
 #   ./scripts/deploy.sh api
@@ -57,16 +57,42 @@ cert_exists_in_volume() {
     >/dev/null 2>&1
 }
 
-# Stop the target stack, then reclaim build cache / unused images.
+# Reclaim build cache / unused images while the live stack keeps running.
 # Intentionally omits `docker system prune --volumes` so named volumes
 # (letsencrypt, recordings, pg_data) survive across redeploys.
-stop_and_reclaim() {
-  local profile_args=("$@")
-  echo "==> stopping current stack"
-  "${COMPOSE[@]}" "${profile_args[@]}" down || true
-
+reclaim_disk() {
   echo "==> pruning Docker build cache and unused images"
   docker builder prune -af || true
+  docker system prune -af || true
+  docker system df || true
+}
+
+# Build new images while the old stack is still up, then recreate containers
+# from those images (short outage), then prune the previous image generation.
+# Args: optional compose profile flags, then service names (empty = default project).
+build_and_swap() {
+  local profile_args=()
+  local services=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --profile)
+        profile_args+=("$1" "$2")
+        shift 2
+        ;;
+      *)
+        services+=("$@")
+        break
+        ;;
+    esac
+  done
+
+  echo "==> building images"
+  "${COMPOSE[@]}" "${profile_args[@]}" build "${services[@]}"
+
+  echo "==> swapping containers"
+  "${COMPOSE[@]}" "${profile_args[@]}" up -d --no-build "${services[@]}"
+
+  echo "==> pruning previous image generation"
   docker system prune -af || true
   docker system df || true
 }
@@ -93,9 +119,9 @@ case "$TARGET" in
       echo "==> cert for ${DOMAIN} already present"
     fi
 
-    stop_and_reclaim
-    echo "==> compose up (API box)"
-    "${COMPOSE[@]}" up -d --build
+    reclaim_disk
+    echo "==> deploy (API box)"
+    build_and_swap
     echo "Done — https://${DOMAIN}"
     ;;
   sfu)
@@ -116,9 +142,9 @@ case "$TARGET" in
       echo "==> cert for ${DOMAIN} already present"
     fi
 
-    stop_and_reclaim --profile sfu
-    echo "==> compose up (SFU box)"
-    "${COMPOSE[@]}" --profile sfu up -d --build sfu sfu-nginx
+    reclaim_disk
+    echo "==> deploy (SFU box)"
+    build_and_swap --profile sfu sfu sfu-nginx
     echo "Done — wss://${DOMAIN}/ws/signaling"
     ;;
   compositor)
@@ -139,9 +165,7 @@ case "$TARGET" in
       echo "==> cert for ${DOMAIN} already present"
     fi
 
-    # Stop first so RAM is free for the Chromium+ffmpeg image build; prune
-    # leftover BuildKit layers that commonly cause "No space left" / freezes.
-    stop_and_reclaim --profile compositor
+    reclaim_disk
 
     avail_kb="$(df -Pk "$ROOT" | awk 'NR==2 { print $4 }')"
     if [[ -n "$avail_kb" && "$avail_kb" -lt 3000000 ]]; then
@@ -149,8 +173,8 @@ case "$TARGET" in
       exit 1
     fi
 
-    echo "==> compose up (compositor box)"
-    "${COMPOSE[@]}" --profile compositor up -d --build compositor compositor-nginx monitor
+    echo "==> deploy (compositor box)"
+    build_and_swap --profile compositor compositor compositor-nginx monitor
     echo "Done — https://${DOMAIN}"
     ;;
 esac
