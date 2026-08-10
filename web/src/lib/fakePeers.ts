@@ -1,4 +1,4 @@
-import type { CompositorPeer } from './compositor';
+import type { CompositorPeer } from '@streaming/canvas-compositor';
 
 export interface FakePeerHandle extends CompositorPeer {
   stop: () => void;

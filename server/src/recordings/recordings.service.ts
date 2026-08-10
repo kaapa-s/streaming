@@ -10,7 +10,7 @@ import { Recording, Room } from '../entities';
 import { RoomsService } from '../rooms/rooms.service';
 import { CompositorClient } from './compositor.client';
 import { S3PresignService } from './s3-presign.service';
-import { parseResolution, type StreamResolution } from './stream-quality';
+import { parseResolution, type StreamResolution } from '@streaming/stream-quality';
 
 @Injectable()
 export class RecordingsService {

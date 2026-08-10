@@ -6,7 +6,7 @@ import type { WebSocket } from 'ws';
 import { SessionsService } from '../sessions/sessions.service';
 import type { SessionLog } from './session-log';
 import { redactRtmp } from './rtmp';
-import { parseRecorderCodec, STREAM_PROFILES, type StreamProfile } from './stream-quality';
+import { parseRecorderCodec, STREAM_PROFILES, type StreamProfile } from '@streaming/stream-quality';
 
 /**
  * Binary sink on /ws/recording?room=X&codec=h264|vp9|vp8 — compositor streams

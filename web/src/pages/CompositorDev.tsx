@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { createCompositor, type Compositor } from '../lib/compositor';
+import { createCompositor, type Compositor } from '@streaming/canvas-compositor';
 import {
   createFakePeer,
   createFakeScreen,

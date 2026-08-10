@@ -9,7 +9,7 @@ Currently, two official plugins are available:
 
 ## React Compiler
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+Enabled via `@rolldown/plugin-babel` + `reactCompilerPreset()` in `vite.config.ts`. Prefer plain functions over hand-written `useMemo` / `useCallback` — the compiler memoizes them.
 
 ## Expanding the Oxlint configuration
 

@@ -9,10 +9,11 @@ finished files to S3.
 ## Architecture
 
 - `server/` — NestJS + Postgres/TypeORM auth, rooms API, recording orchestration, S3 presign
-- `compositor/` — warm Chromium pool, `/ws/recording` sink, ffmpeg → YouTube, S3 PUT
+- `compositor/` — warm Chromium pool, local `/compositor` recorder page, `/ws/recording` sink, ffmpeg → YouTube, S3 PUT
 - `sfu/` — mediasoup worker + `/ws/signaling` (join tokens only; no DB)
 - `shared/join-token/` — HMAC issue/verify used by API and SFU
-- `web/` — React (Vite) studio UI and compositor page
+- `shared/canvas-compositor/` / `shared/sfu-client/` / `shared/stream-quality/` — browser + stream profile libs shared by studio and recorder
+- `web/` — React (Vite) studio UI (+ `/compositor-dev` layout playground)
 
 Auth: register/login (JWT + refresh tokens). Speakers get a short-lived join token
 from `POST /api/rooms/:slug/join` before SFU signaling. Join also **warms** a
@@ -20,8 +21,9 @@ compositor tab (SFU subscribe + render, no MediaRecorder). Go live / Start
 recording calls the compositor to start capture (+ optional RTMP).
 
 Locally, Vite proxies `/ws/signaling` → SFU, `/api` → API, `/ws/recording` → compositor.
-In split prod, browsers use `SFU_PUBLIC_WS_URL`; headless Chromium loads the SPA from
-`COMPOSITOR_WEB_ORIGIN` and writes chunks to loopback `RECORDING_SINK_URL` (`ws://127.0.0.1:3002`).
+Headless Chromium loads the recorder from the compositor itself
+(`http://127.0.0.1:3002/compositor/`) and writes chunks to loopback
+`RECORDING_SINK_URL` (`ws://127.0.0.1:3002/ws/recording`).
 
 ## Run locally
 
@@ -98,9 +100,9 @@ iterate on layout without mediasoup or the Nest server.
 - `PORT` — default `3002`
 - `COMPOSITOR_INTERNAL_SECRET` — must match server
 - `COMPOSITOR_POOL_SIZE` — warm Chromium browsers (default `1`)
-- `WEB_ORIGIN` — where `/compositor` is served (local Vite `https://localhost:5173`)
+- `COMPOSITOR_PAGE_ORIGIN` — optional; default `http://127.0.0.1:$PORT` (Nest serves `/compositor`)
 - `RECORDING_SINK_URL` — MediaRecorder WebSocket (local `ws://127.0.0.1:3002/ws/recording`)
-- `SFU_PUBLIC_WS_URL` — optional; local Vite can proxy `/ws/signaling`
+- `SFU_PUBLIC_WS_URL` — SFU signaling for the headless page (local `ws://localhost:3001/ws/signaling`)
 - `FFMPEG_PATH` — optional
 
 **sfu** (`sfu/.env`)
@@ -154,7 +156,6 @@ cp .env.example .env
 #   COMPOSITOR_SERVER_NAME=compositor.kaapa.pl
 #   SFU_PUBLIC_WS_URL=wss://sfu.kaapa.pl/ws/signaling
 #   COMPOSITOR_URL=https://compositor.kaapa.pl
-#   COMPOSITOR_WEB_ORIGIN=https://streaming.kaapa.pl
 #   MEDIASOUP_ANNOUNCED_IP=<sfu-eip>
 #   Optional S3: AWS_REGION + S3_BUCKET (+ access keys locally; on EC2 prefer IAM role)
 # Same SFU_JOIN_SECRET and COMPOSITOR_INTERNAL_SECRET across boxes that need them.
@@ -206,8 +207,8 @@ into `recordings/diagnostics/host-stats.log`.
 
 - **ICE fails for external users:** SG allows `40000-40100/udp`, `MEDIASOUP_ANNOUNCED_IP` equals the SFU Elastic IP
 - **Recording fails / Chrome crash:** check `shm_size` on compositor, `docker logs compositor`
-- **Warmup / go-live fails:** API `COMPOSITOR_URL` reachable; secrets match; `COMPOSITOR_WEB_ORIGIN` serves `/compositor`
-- **Go-live Mixed Content / LNA WebSocket block:** headless Chromium loads HTTPS `COMPOSITOR_WEB_ORIGIN` but sinks to loopback `ws://127.0.0.1:3002` (`RECORDING_SINK_URL`). Do not use `ws://compositor:…` (private Docker DNS). Pool needs `--allow-running-insecure-content` and `--disable-features=LocalNetworkAccessChecks`; rebuild/restart compositor if those are missing
+- **Warmup / go-live fails:** API `COMPOSITOR_URL` reachable; secrets match; compositor image includes `page/dist`; `SFU_PUBLIC_WS_URL` reachable from Chromium
+- **Recording sink fails:** use loopback `ws://127.0.0.1:3002/ws/recording` (`RECORDING_SINK_URL`). Do not use `ws://compositor:…` (private Docker DNS)
 - **Signaling fails from HTTPS UI:** use `wss://sfu.kaapa.pl/ws/signaling`
 - **SFU WSS 502:** `sfu-nginx` proxies to `http://sfu:3001`
 - **ACME / cert issue fails:** TXT `_acme-challenge.<domain>` propagated before Enter

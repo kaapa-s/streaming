@@ -10,17 +10,19 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as CompositorRouteImport } from './routes/compositor'
+import { Route as StudioRouteImport } from './routes/_studio'
 import { Route as CompositorDevRouteImport } from './routes/compositor-dev'
+import { Route as StudioJoinRouteImport } from './routes/_studio/join'
+import { Route as StudioLiveRouteImport } from './routes/_studio/live'
+import { Route as StudioLoginRouteImport } from './routes/_studio/login'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const CompositorRoute = CompositorRouteImport.update({
-  id: '/compositor',
-  path: '/compositor',
+const StudioRoute = StudioRouteImport.update({
+  id: '/_studio',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CompositorDevRoute = CompositorDevRouteImport.update({
@@ -28,34 +30,63 @@ const CompositorDevRoute = CompositorDevRouteImport.update({
   path: '/compositor-dev',
   getParentRoute: () => rootRouteImport,
 } as any)
+const StudioJoinRoute = StudioJoinRouteImport.update({
+  id: '/join',
+  path: '/join',
+  getParentRoute: () => StudioRoute,
+} as any)
+const StudioLiveRoute = StudioLiveRouteImport.update({
+  id: '/live',
+  path: '/live',
+  getParentRoute: () => StudioRoute,
+} as any)
+const StudioLoginRoute = StudioLoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => StudioRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/compositor': typeof CompositorRoute
   '/compositor-dev': typeof CompositorDevRoute
+  '/join': typeof StudioJoinRoute
+  '/live': typeof StudioLiveRoute
+  '/login': typeof StudioLoginRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/compositor': typeof CompositorRoute
   '/compositor-dev': typeof CompositorDevRoute
+  '/join': typeof StudioJoinRoute
+  '/live': typeof StudioLiveRoute
+  '/login': typeof StudioLoginRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/compositor': typeof CompositorRoute
+  '/_studio': typeof StudioRouteWithChildren
   '/compositor-dev': typeof CompositorDevRoute
+  '/_studio/join': typeof StudioJoinRoute
+  '/_studio/live': typeof StudioLiveRoute
+  '/_studio/login': typeof StudioLoginRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/compositor' | '/compositor-dev'
+  fullPaths: '/' | '/compositor-dev' | '/join' | '/live' | '/login'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/compositor' | '/compositor-dev'
-  id: '__root__' | '/' | '/compositor' | '/compositor-dev'
+  to: '/' | '/compositor-dev' | '/join' | '/live' | '/login'
+  id:
+    | '__root__'
+    | '/'
+    | '/_studio'
+    | '/compositor-dev'
+    | '/_studio/join'
+    | '/_studio/live'
+    | '/_studio/login'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  CompositorRoute: typeof CompositorRoute
+  StudioRoute: typeof StudioRouteWithChildren
   CompositorDevRoute: typeof CompositorDevRoute
 }
 
@@ -68,11 +99,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/compositor': {
-      id: '/compositor'
-      path: '/compositor'
-      fullPath: '/compositor'
-      preLoaderRoute: typeof CompositorRouteImport
+    '/_studio': {
+      id: '/_studio'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof StudioRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/compositor-dev': {
@@ -82,12 +113,48 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CompositorDevRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_studio/join': {
+      id: '/_studio/join'
+      path: '/join'
+      fullPath: '/join'
+      preLoaderRoute: typeof StudioJoinRouteImport
+      parentRoute: typeof StudioRoute
+    }
+    '/_studio/live': {
+      id: '/_studio/live'
+      path: '/live'
+      fullPath: '/live'
+      preLoaderRoute: typeof StudioLiveRouteImport
+      parentRoute: typeof StudioRoute
+    }
+    '/_studio/login': {
+      id: '/_studio/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof StudioLoginRouteImport
+      parentRoute: typeof StudioRoute
+    }
   }
 }
 
+interface StudioRouteChildren {
+  StudioJoinRoute: typeof StudioJoinRoute
+  StudioLiveRoute: typeof StudioLiveRoute
+  StudioLoginRoute: typeof StudioLoginRoute
+}
+
+const StudioRouteChildren: StudioRouteChildren = {
+  StudioJoinRoute: StudioJoinRoute,
+  StudioLiveRoute: StudioLiveRoute,
+  StudioLoginRoute: StudioLoginRoute,
+}
+
+const StudioRouteWithChildren =
+  StudioRoute._addFileChildren(StudioRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  CompositorRoute: CompositorRoute,
+  StudioRoute: StudioRouteWithChildren,
   CompositorDevRoute: CompositorDevRoute,
 }
 export const routeTree = rootRouteImport

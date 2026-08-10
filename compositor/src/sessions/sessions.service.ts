@@ -15,7 +15,7 @@ import {
   parseResolution,
   STREAM_PROFILES,
   type StreamResolution,
-} from '../recordings/stream-quality';
+} from '@streaming/stream-quality';
 
 type SessionState = 'warm' | 'recording';
 
@@ -339,13 +339,15 @@ export class SessionsService {
     token: string,
     mode: 'idle' | 'record',
   ): string {
-    const webOrigin = process.env.WEB_ORIGIN ?? 'https://localhost:5173';
+    const port = process.env.PORT ?? 3002;
+    const pageOrigin =
+      process.env.COMPOSITOR_PAGE_ORIGIN?.trim() || `http://127.0.0.1:${port}`;
     const sinkUrl =
       process.env.RECORDING_SINK_URL?.trim() ||
-      `ws://127.0.0.1:${process.env.PORT ?? 3002}/ws/recording`;
+      `ws://127.0.0.1:${port}/ws/recording`;
     const sfuUrl = process.env.SFU_PUBLIC_WS_URL?.trim();
     return (
-      `${webOrigin}/compositor?room=${encodeURIComponent(room)}` +
+      `${pageOrigin}/compositor/?room=${encodeURIComponent(room)}` +
       `&resolution=${encodeURIComponent(resolution)}` +
       `&token=${encodeURIComponent(token)}` +
       `&mode=${encodeURIComponent(mode)}` +
@@ -354,3 +356,4 @@ export class SessionsService {
     );
   }
 }
+

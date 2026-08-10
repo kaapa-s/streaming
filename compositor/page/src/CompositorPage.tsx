@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { createCompositor } from '../lib/compositor';
-import { SfuClient } from '../lib/sfu';
-import { parseResolution, pickRecorderFormat, STREAM_PROFILES } from '../lib/stream-quality';
+import { createCompositor } from '@streaming/canvas-compositor';
+import { SfuClient } from '@streaming/sfu-client';
+import { parseResolution, pickRecorderFormat, STREAM_PROFILES } from '@streaming/stream-quality';
 
 /**
  * Hidden recorder page, loaded by the compositor service's headless Chromium.

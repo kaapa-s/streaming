@@ -3,8 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "ts-node --transpile-only src/main.ts",
-    "build": "tsc",
+    "dev": "npm run build --prefix page && concurrently -k -n page,api -c yellow,blue \"npm run dev --prefix page\" \"ts-node --transpile-only src/main.ts\"",
+    "build": "npm run build --prefix page && tsc",
+    "build:api": "tsc",
     "start": "node dist/main.js",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint src"
@@ -16,6 +17,7 @@
     "@nestjs/platform-express": "^11.1.28",
     "@nestjs/platform-ws": "^11.1.28",
     "@nestjs/websockets": "^11.1.28",
+    "@streaming/stream-quality": "file:../shared/stream-quality",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
     "dotenv": "^17.4.2",
@@ -27,6 +29,7 @@
   "devDependencies": {
     "@types/node": "^26.1.1",
     "@types/ws": "^8.18.1",
+    "concurrently": "^9.2.1",
     "oxlint": "^1.71.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"

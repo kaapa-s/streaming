@@ -17,6 +17,11 @@ export interface StreamProfile {
   ffmpegPreset: string;
 }
 
+export interface RecorderFormat {
+  mimeType: string;
+  codec: RecorderVideoCodec;
+}
+
 /**
  * High end of YouTube's live guidance for 30fps, with headroom for a second encode
  * when the compositor cannot emit H.264 directly.
@@ -56,4 +61,21 @@ export function parseResolution(value: unknown): StreamResolution {
 export function parseRecorderCodec(value: unknown): RecorderVideoCodec {
   if (value === 'h264' || value === 'vp9' || value === 'vp8') return value;
   return 'vp9';
+}
+
+/**
+ * Prefer H.264 when Chrome can MediaRecord it — then ffmpeg can copy video to
+ * RTMP and only transcode Opus → AAC (avoids the dirty VP9→H.264 hop).
+ */
+export function pickRecorderFormat(): RecorderFormat {
+  const candidates: RecorderFormat[] = [
+    { mimeType: 'video/webm;codecs=h264,opus', codec: 'h264' },
+    { mimeType: 'video/webm;codecs=avc1,opus', codec: 'h264' },
+    { mimeType: 'video/webm;codecs=vp9,opus', codec: 'vp9' },
+    { mimeType: 'video/webm;codecs=vp8,opus', codec: 'vp8' },
+  ];
+  const supported = candidates.find(
+    (c) => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(c.mimeType),
+  );
+  return supported ?? { mimeType: 'video/webm;codecs=vp8,opus', codec: 'vp8' };
 }

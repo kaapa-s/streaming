@@ -2,6 +2,24 @@
 # chromium/ffmpeg apt with npm (or a second apt) thrashing-hangs the host.
 # The sentinel COPY below forces the runtime apt to wait for `build`.
 FROM node:22-slim AS build
+WORKDIR /app
+
+# Shared packages the Nest API + recorder page need.
+COPY shared/stream-quality /app/shared/stream-quality
+COPY shared/canvas-compositor /app/shared/canvas-compositor
+COPY shared/sfu-client /app/shared/sfu-client
+RUN cd /app/shared/stream-quality && npm ci && npm run build \
+  && cd /app/shared/canvas-compositor && npm ci && npm run build \
+  && cd /app/shared/sfu-client && npm ci && npm run build
+
+# Recorder page (Vite) — served by Nest over loopback for Chromium.
+WORKDIR /app/compositor/page
+COPY compositor/page/package.json compositor/page/package-lock.json ./
+RUN npm ci
+COPY compositor/page ./
+RUN npm run build
+
+# Nest compositor service
 WORKDIR /app/compositor
 ENV PUPPETEER_SKIP_DOWNLOAD=true \
     PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
@@ -9,7 +27,7 @@ COPY compositor/package.json compositor/package-lock.json ./
 RUN npm ci
 COPY compositor/tsconfig.json ./
 COPY compositor/src ./src
-RUN npm run build && npm prune --omit=dev
+RUN npm run build:api && npm prune --omit=dev
 
 FROM node:22-slim
 WORKDIR /app/compositor
@@ -35,6 +53,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=build /app/compositor/node_modules ./node_modules
 COPY --from=build /app/compositor/dist ./dist
+COPY --from=build /app/compositor/page/dist ./page/dist
+COPY --from=build /app/shared/stream-quality /app/shared/stream-quality
 
 RUN mkdir -p /app/compositor/recordings
 VOLUME ["/app/compositor/recordings"]

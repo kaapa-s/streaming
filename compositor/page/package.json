@@ -1,0 +1,25 @@
+{
+  "name": "compositor-page",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite build --watch",
+    "build": "tsc -b && vite build",
+    "typecheck": "tsc -b --noEmit"
+  },
+  "dependencies": {
+    "@streaming/canvas-compositor": "file:../../shared/canvas-compositor",
+    "@streaming/sfu-client": "file:../../shared/sfu-client",
+    "@streaming/stream-quality": "file:../../shared/stream-quality",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
+    "typescript": "~6.0.2",
+    "vite": "^8.1.1"
+  }
+}

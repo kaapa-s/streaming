@@ -71,11 +71,7 @@ export class BrowserPoolService implements OnModuleInit, OnModuleDestroy {
         '--no-sandbox',
         '--autoplay-policy=no-user-gesture-required',
         '--use-fake-ui-for-media-stream',
-        // WEB_ORIGIN is HTTPS; RECORDING_SINK_URL is loopback ws:// in the same
-        // container. Allow mixed content, and disable Local Network Access checks
-        // (Chrome blocks public HTTPS → 127.0.0.1 / private hosts otherwise).
-        '--allow-running-insecure-content',
-        '--disable-features=LocalNetworkAccessChecks',
+        // Local SFU may use HTTPS/WSS with a self-signed or mkcert cert.
         ...(process.env.NODE_ENV !== 'production'
           ? ['--ignore-certificate-errors']
           : []),

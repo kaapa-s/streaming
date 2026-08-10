@@ -42,9 +42,13 @@ docker compose -f server/docker-compose.yml up -d
 echo "==> installing dependencies"
 npm install
 npm install --prefix shared/join-token
+npm install --prefix shared/stream-quality
+npm install --prefix shared/canvas-compositor
+npm install --prefix shared/sfu-client
 npm install --prefix server
 npm install --prefix sfu
 PUPPETEER_SKIP_DOWNLOAD=true npm install --prefix compositor
+npm install --prefix compositor/page
 npm install --prefix web
 
 echo "==> waiting for Postgres"

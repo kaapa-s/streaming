@@ -1,0 +1,24 @@
+{
+  "name": "@streaming/sfu-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepare": "npm run build"
+  },
+  "dependencies": {
+    "mediasoup-client": "^3.21.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

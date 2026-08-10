@@ -1,6 +1,14 @@
-import { createFileRoute } from '@tanstack/react-router';
-import { Studio } from '../pages/Studio';
+import { createFileRoute, redirect } from '@tanstack/react-router';
+import { getStoredUser } from '../lib/auth';
+import { keepStudioSearch, parseStudioSearch } from '../lib/studioSearch';
 
 export const Route = createFileRoute('/')({
-  component: Studio,
+  validateSearch: parseStudioSearch,
+  beforeLoad: () => {
+    const user = getStoredUser();
+    throw redirect({
+      to: user ? '/join' : '/login',
+      search: keepStudioSearch,
+    });
+  },
 });
