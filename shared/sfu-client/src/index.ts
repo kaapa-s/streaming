@@ -1,3 +1,4 @@
+import { STREAM_PROFILES } from '@streaming/stream-quality';
 import { Device, detectDevice } from 'mediasoup-client';
 import type {
   DtlsParameters,
@@ -167,21 +168,22 @@ export class SfuClient {
 
   /** Publish local camera/mic tracks (studio only; the compositor never calls this). */
   async publish(stream: MediaStream): Promise<void> {
+    const profile = STREAM_PROFILES['1080p'];
     this.sendTransport = await this.createTransport('send');
     for (const track of stream.getTracks()) {
       if (track.kind === 'video') {
-        // Moderate cap only — enough for 1080p into the compositor without the
-        // aggressive transport/simulcast tweaks that previously starved RTP.
         await this.sendTransport.produce({
           track,
-          encodings: [{ maxBitrate: 4_000_000 }],
-          codecOptions: { videoGoogleStartBitrate: 2000 },
+          encodings: [{ maxBitrate: profile.ingestVideoBps }],
+          codecOptions: {
+            videoGoogleStartBitrate: Math.round(profile.ingestVideoBps / 1000 / 2),
+          },
           appData: { source: 'camera' },
         });
       } else {
         await this.sendTransport.produce({
           track,
-          encodings: [{ maxBitrate: 128_000 }],
+          encodings: [{ maxBitrate: profile.ingestAudioBps }],
           appData: { source: 'camera' },
         });
       }
@@ -192,10 +194,13 @@ export class SfuClient {
   async publishScreen(track: MediaStreamTrack): Promise<void> {
     if (!this.sendTransport) throw new Error('publish camera/mic first');
     if (this.screenProducer) throw new Error('already sharing screen');
+    const profile = STREAM_PROFILES['1080p'];
     this.screenProducer = await this.sendTransport.produce({
       track,
-      encodings: [{ maxBitrate: 4_000_000 }],
-      codecOptions: { videoGoogleStartBitrate: 2000 },
+      encodings: [{ maxBitrate: profile.ingestVideoBps }],
+      codecOptions: {
+        videoGoogleStartBitrate: Math.round(profile.ingestVideoBps / 1000 / 2),
+      },
       appData: { source: 'screen' },
     });
   }

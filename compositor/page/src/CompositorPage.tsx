@@ -46,7 +46,7 @@ export function CompositorPage() {
       let recorder: MediaRecorder | undefined;
       let ws: WebSocket | undefined;
 
-      window.__startRecording = async () => {
+      window.__startRecording = async (opts?: { requireH264?: boolean }) => {
         if (recorder && recorder.state !== 'inactive') {
           throw new Error('already recording');
         }
@@ -56,7 +56,9 @@ export function CompositorPage() {
           `${proto}//${location.host}/ws/recording` +
             `?room=${encodeURIComponent(room)}`;
 
-        const { mimeType, codec } = pickRecorderFormat();
+        const { mimeType, codec } = pickRecorderFormat({
+          requireH264: opts?.requireH264,
+        });
         const sinkWithCodec = sinkUrl.includes('?')
           ? `${sinkUrl}&codec=${encodeURIComponent(codec)}`
           : `${sinkUrl}?room=${encodeURIComponent(room)}&codec=${encodeURIComponent(codec)}`;

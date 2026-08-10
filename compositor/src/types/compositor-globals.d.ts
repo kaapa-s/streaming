@@ -1,6 +1,6 @@
 export {};
 
 declare global {
-  var __startRecording: (() => Promise<void>) | undefined;
+  var __startRecording: ((opts?: { requireH264?: boolean }) => Promise<void>) | undefined;
   var __stopRecording: (() => Promise<void>) | undefined;
 }

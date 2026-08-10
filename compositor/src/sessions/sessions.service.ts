@@ -206,11 +206,11 @@ export class SessionsService {
     entry.file = undefined;
 
     try {
-      await entry.page.evaluate(async () => {
+      await entry.page.evaluate(async (requireH264: boolean) => {
         const start = globalThis.__startRecording;
         if (!start) throw new Error('__startRecording not available');
-        await start();
-      });
+        await start({ requireH264 });
+      }, !!normalized);
     } catch (err) {
       entry.state = 'warm';
       entry.rtmpUrl = undefined;

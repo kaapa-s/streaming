@@ -1,12 +1,10 @@
 import { useState } from 'react';
-import type { StreamResolution } from '@streaming/stream-quality';
 import { apiFetch } from '../lib/auth';
 import type { FinishedRecording } from '../components/studio/RecordingFinishedModal';
 import { useAsyncAction } from './useAsyncAction';
 import { useLocalStorageState } from './useLocalStorageState';
 
 const YT_RTMP_STORAGE_KEY = 'streaming-studio-yt-rtmp';
-const YT_RES_STORAGE_KEY = 'streaming-studio-resolution';
 
 export function useRecordingControls(room: string, setError: (message: string) => void) {
   const [recording, setRecording] = useState(false);
@@ -14,13 +12,7 @@ export function useRecordingControls(room: string, setError: (message: string) =
   const [recordingInfo, setRecordingInfo] = useState('');
   const [finishedRecording, setFinishedRecording] = useState<FinishedRecording | null>(null);
   const [rtmpUrl, setRtmpUrl] = useLocalStorageState(YT_RTMP_STORAGE_KEY, '');
-  const [resolutionRaw, setResolutionRaw] = useLocalStorageState(YT_RES_STORAGE_KEY, '720p');
-  const resolution: StreamResolution = resolutionRaw === '1080p' ? '1080p' : '720p';
   const { pending: recordingPending, run } = useAsyncAction();
-
-  const setResolution = (value: StreamResolution) => {
-    setResolutionRaw(value);
-  };
 
   const toggleRecording = () => {
     void run(async () => {
@@ -32,12 +24,7 @@ export function useRecordingControls(room: string, setError: (message: string) =
           method: 'POST',
           body: JSON.stringify({
             room,
-            ...(action === 'start'
-              ? {
-                  resolution,
-                  ...(trimmed ? { rtmpUrl: trimmed } : {}),
-                }
-              : {}),
+            ...(action === 'start' && trimmed ? { rtmpUrl: trimmed } : {}),
           }),
         });
         const body = await res.json();
@@ -63,11 +50,10 @@ export function useRecordingControls(room: string, setError: (message: string) =
             setRecordingInfo('');
           }
         } else {
-          const resLabel = body.resolution ?? resolution;
           setRecordingInfo(
             body.live
-              ? `Live on YouTube @ ${resLabel} (also recording locally)`
-              : `Recording @ ${resLabel}`,
+              ? 'Live on YouTube @ 1080p60 (also recording locally)'
+              : 'Recording @ 1080p60',
           );
         }
       } catch (err) {
@@ -99,8 +85,6 @@ export function useRecordingControls(room: string, setError: (message: string) =
     setFinishedRecording,
     rtmpUrl,
     setRtmpUrl,
-    resolution,
-    setResolution,
     recordingPending,
     toggleRecording,
     actionLabel,

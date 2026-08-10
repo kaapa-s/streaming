@@ -32,6 +32,17 @@ export class RecordingGateway implements OnGatewayConnection {
 
     const { file, rtmpUrl, resolution, sessionLog } = sink;
     const profile = STREAM_PROFILES[resolution];
+
+    if (rtmpUrl && codec !== 'h264') {
+      const msg =
+        `live RTMP requires H.264 recorder output (got ${codec}) — ` +
+        'refusing sink to avoid libx264 re-encode';
+      console.error(`[recording] ${msg} room=${room}`);
+      sessionLog?.write(msg);
+      socket.close();
+      return;
+    }
+
     const out = createWriteStream(file);
     let bytesIn = 0;
     let chunkCount = 0;

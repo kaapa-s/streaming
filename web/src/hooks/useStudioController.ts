@@ -62,8 +62,6 @@ export function useStudioController(room: string): StudioValue {
     setFinishedRecording: recording.setFinishedRecording,
     rtmpUrl: recording.rtmpUrl,
     setRtmpUrl: recording.setRtmpUrl,
-    resolution: recording.resolution,
-    setResolution: recording.setResolution,
     recordingPending: recording.recordingPending,
     toggleRecording: recording.toggleRecording,
     actionLabel: recording.actionLabel,

@@ -16,6 +16,7 @@
     "prepare": "npm run build"
   },
   "dependencies": {
+    "@streaming/stream-quality": "file:../stream-quality",
     "mediasoup-client": "^3.21.0"
   },
   "devDependencies": {

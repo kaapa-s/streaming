@@ -1,6 +1,5 @@
 import type { AuthMode } from '../components/studio/AuthLobby';
 import type { FinishedRecording } from '../components/studio/RecordingFinishedModal';
-import type { StreamResolution } from '@streaming/stream-quality';
 import type { RemotePeer } from '@streaming/sfu-client';
 import type { AuthUser } from '../lib/auth';
 
@@ -40,8 +39,6 @@ export type StudioValue = {
   setFinishedRecording: (value: FinishedRecording | null) => void;
   rtmpUrl: string;
   setRtmpUrl: (value: string) => void;
-  resolution: StreamResolution;
-  setResolution: (value: StreamResolution) => void;
   recordingPending: boolean;
   toggleRecording: () => void;
   actionLabel: string;

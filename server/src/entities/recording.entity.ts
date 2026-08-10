@@ -38,7 +38,7 @@ export class Recording {
   @Column({ type: 'varchar', nullable: true })
   declare s3Key: string | null;
 
-  @Column({ type: 'varchar', default: '720p' })
+  @Column({ type: 'varchar', default: '1080p' })
   declare resolution: string;
 
   @Column({ type: 'timestamptz', nullable: true })

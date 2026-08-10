@@ -20,8 +20,6 @@ function LivePage() {
     <div className="studio">
       <StudioHeader
         userName={s.user.name}
-        resolution={s.resolution}
-        onResolutionChange={s.setResolution}
         rtmpUrl={s.rtmpUrl}
         onRtmpChange={s.setRtmpUrl}
         streamControlsLocked={s.streamControlsLocked}

@@ -1,10 +1,7 @@
-import type { StreamResolution } from '@streaming/stream-quality';
 import { Button } from '../Button';
 
 type StudioHeaderProps = {
   userName: string;
-  resolution: StreamResolution;
-  onResolutionChange: (value: StreamResolution) => void;
   rtmpUrl: string;
   onRtmpChange: (value: string) => void;
   streamControlsLocked: boolean;
@@ -20,8 +17,6 @@ type StudioHeaderProps = {
 
 export function StudioHeader({
   userName,
-  resolution,
-  onResolutionChange,
   rtmpUrl,
   onRtmpChange,
   streamControlsLocked,
@@ -39,16 +34,7 @@ export function StudioHeader({
       <h1>Streaming Studio</h1>
       <div className="header-right">
         <span className="hint">{userName}</span>
-        <select
-          className="resolution-select"
-          value={resolution}
-          onChange={(e) => onResolutionChange(e.target.value as StreamResolution)}
-          disabled={streamControlsLocked}
-          title="Output resolution for recording / YouTube"
-        >
-          <option value="720p">720p</option>
-          <option value="1080p">1080p</option>
-        </select>
+        <span className="hint">1080p60</span>
         <input
           className="rtmp-input"
           type="text"
