@@ -39,6 +39,13 @@ export function CompositorPage() {
       compositor.canvas.style.width = '100%';
       container.appendChild(compositor.canvas);
 
+      window.__setOverlay = (overlay) => {
+        compositor.setOverlay(overlay);
+      };
+      window.__clearOverlay = () => {
+        compositor.setOverlay(null);
+      };
+
       const sfu = new SfuClient({ onPeersChanged: (peers) => compositor.setPeers(peers) });
       await sfu.join(room, 'Recorder', 'compositor', token, sfuUrl);
       setStatus(`warmed room "${room}" (${resolution}) — waiting for go-live`);

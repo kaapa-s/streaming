@@ -1,4 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router';
+import { CommentsPanel } from '../../components/studio/CommentsPanel';
 import { RecordingFinishedModal } from '../../components/studio/RecordingFinishedModal';
 import { SpeakersGrid } from '../../components/studio/SpeakersGrid';
 import { StudioHeader } from '../../components/studio/StudioHeader';
@@ -31,13 +32,40 @@ function LivePage() {
         recordingPending={s.recordingPending}
         actionLabel={s.actionLabel}
         onToggleRecording={s.toggleRecording}
+        youtubeConnected={s.youtubeConnected}
+        youtubeAccountLabel={s.youtubeAccountLabel}
+        youtubePending={s.youtubePending}
+        onConnectYoutube={s.connectYoutube}
+        onDisconnectYoutube={s.disconnectYoutube}
       />
 
       <main>
-        <section className="preview-section">
-          <h2>Program preview</h2>
-          <div className="preview" ref={s.previewRef} />
-        </section>
+        <div className="program-column">
+          <section className="preview-section">
+            <h2>Program preview</h2>
+            <div className="preview" ref={s.previewRef} />
+          </section>
+
+          <CommentsPanel
+            isOwner={s.isRoomOwner}
+            youtubeConnected={s.youtubeConnected}
+            live={s.live}
+            sessionActive={s.commentsSessionActive}
+            sessionTitle={s.commentsSessionTitle}
+            sessionPending={s.commentsSessionPending}
+            videoUrl={s.commentsVideoUrl}
+            onVideoUrlChange={s.setCommentsVideoUrl}
+            onStartSession={s.startCommentsSession}
+            comments={s.comments}
+            replyText={s.replyText}
+            onReplyTextChange={s.setReplyText}
+            replyPending={s.replyPending}
+            onSendReply={s.sendReply}
+            pinnedCommentId={s.pinnedCommentId}
+            onPin={s.pinComment}
+            onClearOverlay={s.clearOverlay}
+          />
+        </div>
 
         <SpeakersGrid
           localName={s.user.name}

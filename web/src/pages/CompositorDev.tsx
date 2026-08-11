@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createCompositor, type Compositor } from '@streaming/canvas-compositor';
+import { Button } from '../components/Button';
 import {
   createFakePeer,
   createFakeScreen,
@@ -174,6 +175,21 @@ export function CompositorDev() {
               />
               Fake screen share (presentation layout)
             </label>
+            <Button
+              type="button"
+              onClick={() => {
+                compositorRef.current?.setOverlay({
+                  author: 'Viewer123',
+                  text: 'This is a sample YouTube comment on the program feed!',
+                  until: Date.now() + 10_000,
+                });
+              }}
+            >
+              Show sample comment
+            </Button>
+            <Button type="button" onClick={() => compositorRef.current?.setOverlay(null)}>
+              Clear comment
+            </Button>
           </div>
           <p className="hint">
             Seed via URL: <code>?peers=4&amp;audio=0&amp;screen=1</code>. No server required.

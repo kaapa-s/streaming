@@ -132,7 +132,7 @@ export async function apiFetch(input: string, init: RequestInit = {}): Promise<R
 
 export async function joinRoom(slug: string): Promise<{
   room: { id: string; slug: string };
-  role: string;
+  role: 'owner' | 'speaker' | 'viewer';
   joinToken: string;
   sfuUrl?: string;
 }> {

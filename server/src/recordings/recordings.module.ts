@@ -11,6 +11,6 @@ import { S3PresignService } from './s3-presign.service';
   imports: [TypeOrmModule.forFeature([Recording]), forwardRef(() => RoomsModule)],
   controllers: [RecordingsController],
   providers: [RecordingsService, CompositorClient, S3PresignService],
-  exports: [RecordingsService],
+  exports: [RecordingsService, CompositorClient],
 })
 export class RecordingsModule {}

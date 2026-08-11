@@ -1,10 +1,11 @@
 import { useState } from 'react';
+import type { StudioValue } from '../studio/studioHandle';
+import { useLiveComments } from './useLiveComments';
 import { useProgramPreview } from './useProgramPreview';
 import { useRecordingControls } from './useRecordingControls';
 import { useRemoteAudio } from './useRemoteAudio';
 import { useStudioAuth } from './useStudioAuth';
 import { useStudioSession } from './useStudioSession';
-import type { StudioValue } from '../studio/studioHandle';
 
 export function useStudioController(room: string): StudioValue {
   const [error, setError] = useState('');
@@ -16,7 +17,7 @@ export function useStudioController(room: string): StudioValue {
     onUnauthorized: auth.clearUser,
   });
   const name = auth.user?.name ?? '';
-  const { previewRef } = useProgramPreview({
+  const { previewRef, setPreviewOverlay } = useProgramPreview({
     joined: session.joined,
     localStream: session.localStream,
     localScreenStream: session.localScreenStream,
@@ -25,6 +26,14 @@ export function useStudioController(room: string): StudioValue {
   });
   useRemoteAudio(session.joined, session.remotePeers);
   const recording = useRecordingControls(room, setError);
+  const isOwner = session.roomRole === 'owner';
+  const comments = useLiveComments({
+    room,
+    live: recording.live,
+    isOwner,
+    setError,
+    setPreviewOverlay,
+  });
 
   return {
     error,
@@ -48,6 +57,7 @@ export function useStudioController(room: string): StudioValue {
     joining: session.joining,
     join: session.join,
     leave: session.leave,
+    roomRole: session.roomRole,
     localStream: session.localStream,
     localScreenStream: session.localScreenStream,
     remotePeers: session.remotePeers,
@@ -66,5 +76,37 @@ export function useStudioController(room: string): StudioValue {
     toggleRecording: recording.toggleRecording,
     actionLabel: recording.actionLabel,
     streamControlsLocked: recording.streamControlsLocked,
+    youtubeConnected: comments.youtubeStatus.connected,
+    youtubeAccountLabel: comments.youtubeStatus.accountLabel,
+    youtubePending: comments.youtubePending,
+    connectYoutube: () => {
+      void comments.connectYoutube();
+    },
+    disconnectYoutube: () => {
+      void comments.disconnectYoutube();
+    },
+    comments: comments.comments,
+    commentsSessionActive: comments.sessionActive,
+    commentsSessionTitle: comments.sessionTitle,
+    commentsSessionPending: comments.sessionPending,
+    commentsVideoUrl: comments.videoUrl,
+    setCommentsVideoUrl: comments.setVideoUrl,
+    startCommentsSession: () => {
+      void comments.startSession();
+    },
+    replyText: comments.replyText,
+    setReplyText: comments.setReplyText,
+    replyPending: comments.replyPending,
+    sendReply: () => {
+      void comments.sendReply();
+    },
+    pinComment: (c) => {
+      void comments.pinComment(c);
+    },
+    clearOverlay: () => {
+      void comments.clearOverlay();
+    },
+    pinnedCommentId: comments.pinnedId,
+    isRoomOwner: isOwner,
   };
 }

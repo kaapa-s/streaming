@@ -1,5 +1,6 @@
 import type { AuthMode } from '../components/studio/AuthLobby';
 import type { FinishedRecording } from '../components/studio/RecordingFinishedModal';
+import type { LiveComment } from '../hooks/useLiveComments';
 import type { RemotePeer } from '@streaming/sfu-client';
 import type { AuthUser } from '../lib/auth';
 
@@ -25,6 +26,7 @@ export type StudioValue = {
   joining: boolean;
   join: () => Promise<void>;
   leave: () => Promise<void>;
+  roomRole: 'owner' | 'speaker' | 'viewer' | null;
   localStream: MediaStream | null;
   localScreenStream: MediaStream | null;
   remotePeers: RemotePeer[];
@@ -43,6 +45,26 @@ export type StudioValue = {
   toggleRecording: () => void;
   actionLabel: string;
   streamControlsLocked: boolean;
+  youtubeConnected: boolean;
+  youtubeAccountLabel?: string;
+  youtubePending: boolean;
+  connectYoutube: () => void;
+  disconnectYoutube: () => void;
+  comments: LiveComment[];
+  commentsSessionActive: boolean;
+  commentsSessionTitle?: string;
+  commentsSessionPending: boolean;
+  commentsVideoUrl: string;
+  setCommentsVideoUrl: (value: string) => void;
+  startCommentsSession: () => void;
+  replyText: string;
+  setReplyText: (value: string) => void;
+  replyPending: boolean;
+  sendReply: () => void;
+  pinComment: (comment: LiveComment) => void;
+  clearOverlay: () => void;
+  pinnedCommentId: string | null;
+  isRoomOwner: boolean;
 };
 
 export type StudioHandle = {

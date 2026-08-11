@@ -18,6 +18,7 @@ export function useStudioSession({
 }: UseStudioSessionArgs) {
   const [joined, setJoined] = useState(false);
   const [joining, setJoining] = useState(false);
+  const [roomRole, setRoomRole] = useState<'owner' | 'speaker' | 'viewer' | null>(null);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [localScreenStream, setLocalScreenStream] = useState<MediaStream | null>(null);
   const [remotePeers, setRemotePeers] = useState<RemotePeer[]>([]);
@@ -45,6 +46,7 @@ export function useStudioSession({
     setLocalStream(null);
     setRemotePeers([]);
     setJoined(false);
+    setRoomRole(null);
     joiningRef.current = false;
     setJoining(false);
   };
@@ -60,7 +62,8 @@ export function useStudioSession({
           'Camera/mic unavailable: this page must be served over HTTPS (or localhost). Open the https:// URL Vite prints.',
         );
       }
-      const { joinToken, room: joinedRoom, sfuUrl } = await joinRoom(room);
+      const { joinToken, room: joinedRoom, sfuUrl, role } = await joinRoom(room);
+      setRoomRole(role);
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           width: { ideal: 1920 },
@@ -154,6 +157,7 @@ export function useStudioSession({
   return {
     joined,
     joining,
+    roomRole,
     localStream,
     localScreenStream,
     remotePeers,

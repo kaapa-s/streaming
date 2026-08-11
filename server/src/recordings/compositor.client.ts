@@ -60,6 +60,15 @@ export class CompositorClient {
     return this.request('POST', `/internal/rooms/${encodeURIComponent(slug)}/upload`, { putUrl });
   }
 
+  async setOverlay(
+    slug: string,
+    overlay: { author: string; text: string; until: number } | null,
+  ): Promise<{ room: string; ok: boolean }> {
+    return this.request('POST', `/internal/rooms/${encodeURIComponent(slug)}/overlay`, {
+      overlay,
+    });
+  }
+
   async status(): Promise<unknown> {
     return this.request('GET', '/internal/status');
   }

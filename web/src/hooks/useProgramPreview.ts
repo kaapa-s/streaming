@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { createCompositor, type Compositor } from '@streaming/canvas-compositor';
+import {
+  createCompositor,
+  type CommentOverlay,
+  type Compositor,
+} from '@streaming/canvas-compositor';
 import type { RemotePeer } from '@streaming/sfu-client';
 
 type ProgramPreviewInput = {
@@ -53,5 +57,9 @@ export function useProgramPreview({
     ]);
   }, [container, joined, localStream, localScreenStream, remotePeers, name]);
 
-  return { previewRef };
+  const setPreviewOverlay = (overlay: CommentOverlay | null) => {
+    compositorRef.current?.setOverlay(overlay);
+  };
+
+  return { previewRef, setPreviewOverlay };
 }

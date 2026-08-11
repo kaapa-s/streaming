@@ -241,6 +241,14 @@ export class SessionsService {
     entry.sessionLog?.write('stop requested');
 
     try {
+      await entry.page.evaluate(() => {
+        globalThis.__clearOverlay?.();
+      });
+    } catch {
+      /* overlay clear is best-effort */
+    }
+
+    try {
       await entry.page.evaluate(async () => {
         await globalThis.__stopRecording?.();
       });
@@ -276,6 +284,25 @@ export class SessionsService {
 
     this.logger.log(`stopped room=${room} file=${file ?? 'none'}`);
     return { room, file, live: wasLive };
+  }
+
+  async setOverlay(
+    slug: string,
+    overlay: { author: string; text: string; until: number } | null,
+  ): Promise<{ room: string; ok: boolean }> {
+    const room = slug.trim().toLowerCase();
+    const entry = this.sessions.get(room);
+    if (!entry) throw new NotFoundException(`no active session for room "${room}"`);
+    await entry.page.evaluate((payload) => {
+      if (payload === null) {
+        globalThis.__clearOverlay?.();
+        return;
+      }
+      const set = globalThis.__setOverlay;
+      if (!set) throw new Error('__setOverlay not available');
+      set(payload);
+    }, overlay);
+    return { room, ok: true };
   }
 
   async upload(slug: string, putUrl: string): Promise<{ room: string; uploaded: boolean }> {

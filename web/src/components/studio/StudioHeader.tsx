@@ -13,6 +13,11 @@ type StudioHeaderProps = {
   recordingPending: boolean;
   actionLabel: string;
   onToggleRecording: () => void;
+  youtubeConnected: boolean;
+  youtubeAccountLabel?: string;
+  youtubePending: boolean;
+  onConnectYoutube: () => void;
+  onDisconnectYoutube: () => void;
 };
 
 export function StudioHeader({
@@ -28,6 +33,11 @@ export function StudioHeader({
   recordingPending,
   actionLabel,
   onToggleRecording,
+  youtubeConnected,
+  youtubeAccountLabel,
+  youtubePending,
+  onConnectYoutube,
+  onDisconnectYoutube,
 }: StudioHeaderProps) {
   return (
     <header>
@@ -35,6 +45,15 @@ export function StudioHeader({
       <div className="header-right">
         <span className="hint">{userName}</span>
         <span className="hint">1080p60</span>
+        {youtubeConnected ? (
+          <Button type="button" loading={youtubePending} onClick={onDisconnectYoutube}>
+            {youtubeAccountLabel ? `YT: ${youtubeAccountLabel}` : 'Disconnect YT'}
+          </Button>
+        ) : (
+          <Button type="button" loading={youtubePending} onClick={onConnectYoutube}>
+            Connect YouTube
+          </Button>
+        )}
         <input
           className="rtmp-input"
           type="text"

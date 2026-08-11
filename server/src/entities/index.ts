@@ -5,3 +5,5 @@ export { RoomMember } from './room-member.entity';
 export type { RoomRole } from './room-member.entity';
 export { Recording } from './recording.entity';
 export type { RecordingStatus } from './recording.entity';
+export { PlatformConnection } from './platform-connection.entity';
+export type { PlatformProvider } from './platform-connection.entity';

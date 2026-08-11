@@ -6,11 +6,20 @@ export interface CompositorPeer {
   screenStream?: MediaStream;
 }
 
+/** Host-curated lower-third shown on program output (studio + recorder). */
+export interface CommentOverlay {
+  author: string;
+  text: string;
+  /** Epoch ms; overlay clears itself after this time. */
+  until?: number;
+}
+
 export interface Compositor {
   canvas: HTMLCanvasElement;
   /** Canvas video track, plus a mixed audio track when mixAudio is enabled. */
   stream: MediaStream;
   setPeers: (peers: CompositorPeer[]) => void;
+  setOverlay: (overlay: CommentOverlay | null) => void;
   /** Resume Web Audio so MediaRecorder gets a live mixed mic track (recorder only). */
   ensureAudio: () => Promise<void>;
   stop: () => void;
@@ -79,6 +88,7 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
 
   const entries = new Map<string, TileEntry>();
   let screenEntry: ScreenEntry | undefined;
+  let commentOverlay: CommentOverlay | null = null;
   let diagAt = 0;
 
   const createVideoEl = () => {
@@ -302,6 +312,75 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
     }
   };
 
+  const setOverlay = (overlay: CommentOverlay | null) => {
+    commentOverlay = overlay;
+  };
+
+  const wrapText = (text: string, maxWidth: number, font: string): string[] => {
+    ctx.font = font;
+    const words = text.split(/\s+/).filter(Boolean);
+    if (words.length === 0) return [];
+    const lines: string[] = [];
+    let line = words[0] ?? '';
+    for (let i = 1; i < words.length; i++) {
+      const word = words[i] ?? '';
+      const next = `${line} ${word}`;
+      if (ctx.measureText(next).width <= maxWidth) {
+        line = next;
+      } else {
+        lines.push(line);
+        line = word;
+      }
+    }
+    lines.push(line);
+    return lines.slice(0, 3);
+  };
+
+  const drawCommentOverlay = () => {
+    if (!commentOverlay) return;
+    if (commentOverlay.until !== undefined && Date.now() >= commentOverlay.until) {
+      commentOverlay = null;
+      return;
+    }
+
+    const margin = Math.round(width * 0.04);
+    const cardW = Math.min(Math.round(width * 0.55), width - margin * 2);
+    const padX = 28;
+    const padY = 20;
+    const authorFont = `700 ${Math.max(18, Math.round(height * 0.028))}px system-ui, sans-serif`;
+    const bodyFont = `500 ${Math.max(20, Math.round(height * 0.032))}px system-ui, sans-serif`;
+    const maxTextW = cardW - padX * 2;
+    const lines = wrapText(commentOverlay.text, maxTextW, bodyFont);
+    const lineH = Math.max(26, Math.round(height * 0.038));
+    const authorH = Math.max(22, Math.round(height * 0.03));
+    const cardH = padY * 2 + authorH + 8 + lines.length * lineH;
+    const x = margin;
+    const y = height - margin - cardH;
+
+    ctx.fillStyle = 'rgba(10, 12, 16, 0.82)';
+    ctx.beginPath();
+    const r = 12;
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + cardW, y, x + cardW, y + cardH, r);
+    ctx.arcTo(x + cardW, y + cardH, x, y + cardH, r);
+    ctx.arcTo(x, y + cardH, x, y, r);
+    ctx.arcTo(x, y, x + cardW, y, r);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = '#7eb6ff';
+    ctx.font = authorFont;
+    ctx.fillText(commentOverlay.author, x + padX, y + padY + authorH - 4);
+
+    ctx.fillStyle = '#f2f4f8';
+    ctx.font = bodyFont;
+    let ty = y + padY + authorH + 8 + lineH - 6;
+    for (const line of lines) {
+      ctx.fillText(line, x + padX, ty);
+      ty += lineH;
+    }
+  };
+
   const draw = () => {
     ctx.fillStyle = '#0b0d10';
     ctx.fillRect(0, 0, width, height);
@@ -313,6 +392,7 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
       ctx.textAlign = 'center';
       ctx.fillText('Waiting for speakers…', width / 2, height / 2);
       ctx.textAlign = 'left';
+      drawCommentOverlay();
       return;
     }
 
@@ -343,6 +423,7 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
     } else {
       drawGrid(list);
     }
+    drawCommentOverlay();
   };
 
   // setInterval instead of requestAnimationFrame: keeps drawing in headless
@@ -383,5 +464,5 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
     void audioCtx?.close();
   };
 
-  return { canvas, stream, setPeers, ensureAudio, stop };
+  return { canvas, stream, setPeers, setOverlay, ensureAudio, stop };
 }

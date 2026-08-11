@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { InternalSecretGuard } from '../auth/internal-secret.guard';
-import { GoLiveDto, UploadDto, WarmupDto } from './dto';
+import { GoLiveDto, SetOverlayDto, UploadDto, WarmupDto } from './dto';
 import { SessionsService } from './sessions.service';
 
 @Controller('internal')
@@ -40,5 +40,10 @@ export class SessionsController {
   @Post('rooms/:slug/upload')
   upload(@Param('slug') slug: string, @Body() body: UploadDto) {
     return this.sessions.upload(slug, body.putUrl);
+  }
+
+  @Post('rooms/:slug/overlay')
+  setOverlay(@Param('slug') slug: string, @Body() body: SetOverlayDto) {
+    return this.sessions.setOverlay(slug, body.overlay);
   }
 }

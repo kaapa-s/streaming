@@ -8,7 +8,7 @@ finished files to S3.
 
 ## Architecture
 
-- `server/` — NestJS + Postgres/TypeORM auth, rooms API, recording orchestration, S3 presign
+- `server/` — NestJS + Postgres/TypeORM auth, rooms API, recording orchestration, S3 presign, YouTube OAuth + live comments
 - `compositor/` — warm Chromium pool, local `/compositor` recorder page, `/ws/recording` sink, ffmpeg → YouTube, S3 PUT
 - `sfu/` — mediasoup worker + `/ws/signaling` (join tokens only; no DB)
 - `shared/join-token/` — HMAC issue/verify used by API and SFU
@@ -68,10 +68,27 @@ Ensure `SFU_JOIN_SECRET` matches in `server/.env` and `sfu/.env`, and
 
 1. In [YouTube Studio](https://studio.youtube.com) → **Create** → **Go live**, create a stream
    and copy the **Stream key** (or the full RTMP URL + key).
-2. Pick **720p** or **1080p** in the studio header (output canvas + YouTube encode target).
-3. Paste the key into the RTMP field (`rtmp://a.rtmp.youtube.com/live2/<key>` or just the key).
-4. Click **Go live** — records locally and ffmpeg pushes to YouTube.
-5. Click **Stop live** when done.
+2. Paste the key into the RTMP field (`rtmp://a.rtmp.youtube.com/live2/<key>` or just the key).
+3. Click **Go live** — records locally and ffmpeg pushes to YouTube.
+4. Click **Stop live** when done.
+
+### YouTube live comments (optional)
+
+Comments need a Google OAuth connection (stream key alone cannot read/post chat).
+
+1. In [Google Cloud Console](https://console.cloud.google.com/), create an OAuth client (Web),
+   enable **YouTube Data API v3**, and add redirect URI
+   `http://localhost:3000/api/platforms/youtube/callback` (or your API URL + that path).
+2. Set in `server/.env`:
+   - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`
+   - `GOOGLE_OAUTH_REDIRECT_URI` (must match the console redirect)
+   - `TOKEN_ENCRYPTION_KEY` (passphrase or 64-char hex)
+   - `WEB_ORIGIN=https://localhost:5173` (studio origin for post-OAuth redirect)
+3. In the studio header, click **Connect YouTube** and approve access.
+4. Start the YouTube broadcast (same account), paste the RTMP key, click **Go live**.
+5. The comments panel binds to your active broadcast (or paste a live video URL and
+   **Start chat feed**). Reply from the panel; **On screen** pins a comment on the
+   program preview and compositor (YouTube viewers see it for ~10s).
 
 ### Compositor playground (no stack required)
 
@@ -92,6 +109,9 @@ iterate on layout without mediasoup or the Nest server.
 - `SFU_JOIN_SECRET` — HMAC secret for SFU join tokens (must match SFU)
 - `COMPOSITOR_URL` — compositor base URL (default `http://localhost:3002`)
 - `COMPOSITOR_INTERNAL_SECRET` — shared secret for internal compositor API
+- `WEB_ORIGIN` — studio origin for OAuth redirects (default `https://localhost:5173`)
+- `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_OAUTH_REDIRECT_URI` — YouTube Live Chat OAuth
+- `TOKEN_ENCRYPTION_KEY` — encrypts stored platform OAuth tokens
 - `SFU_PUBLIC_WS_URL` — optional direct signaling URL
 - `AWS_REGION` / `S3_BUCKET` / `S3_PREFIX` — optional S3 upload; `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` only when not using an EC2 IAM role
 
