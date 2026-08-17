@@ -21,6 +21,8 @@ type YoutubeStatus = {
 type UseLiveCommentsArgs = {
   room: string;
   live: boolean;
+  /** When false, do not auto-start the YouTube chat session on go-live. */
+  pullChat: boolean;
   isOwner: boolean;
   setError: (message: string) => void;
   setPreviewOverlay: (overlay: CommentOverlay | null) => void;
@@ -39,6 +41,7 @@ async function parseError(res: Response): Promise<string> {
 export function useLiveComments({
   room,
   live,
+  pullChat,
   isOwner,
   setError,
   setPreviewOverlay,
@@ -213,14 +216,21 @@ export function useLiveComments({
     }
   };
 
-  // Auto-start chat session when going live with YouTube connected (owner only).
+  // Auto-start chat when going live with pull-chat opted in (owner + YouTube connected).
   useEffect(() => {
-    if (!live || !isOwner || !youtubeStatus.connected || sessionActive || sessionPending) {
+    if (
+      !live ||
+      !pullChat ||
+      !isOwner ||
+      !youtubeStatus.connected ||
+      sessionActive ||
+      sessionPending
+    ) {
       return;
     }
     void startSession();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional trigger on live/connected
-  }, [live, isOwner, youtubeStatus.connected]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional trigger on live/connected/pullChat
+  }, [live, pullChat, isOwner, youtubeStatus.connected]);
 
   useEffect(() => {
     if (!live && sessionActive) {

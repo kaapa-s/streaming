@@ -20,6 +20,8 @@ export interface Compositor {
   stream: MediaStream;
   setPeers: (peers: CompositorPeer[]) => void;
   setOverlay: (overlay: CommentOverlay | null) => void;
+  /** Resize the output canvas (e.g. studio preview fitting its container). */
+  resize: (width: number, height: number) => void;
   /** Resume Web Audio so MediaRecorder gets a live mixed mic track (recorder only). */
   ensureAudio: () => Promise<void>;
   stop: () => void;
@@ -70,7 +72,9 @@ const SPEAKER_STRIP_RATIO = 0.14;
  * shrunk cameras stacked on the left, screen contain-fit on the right.
  */
 export function createCompositor(options: CompositorOptions = {}): Compositor {
-  const { width = 1280, height = 720, fps = 30, mixAudio = false } = options;
+  let width = options.width ?? 1280;
+  let height = options.height ?? 720;
+  const { fps = 30, mixAudio = false } = options;
 
   const canvas = document.createElement('canvas');
   canvas.width = width;
@@ -449,6 +453,16 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
     );
   };
 
+  const resize = (nextWidth: number, nextHeight: number) => {
+    const w = Math.max(2, Math.floor(nextWidth / 2) * 2);
+    const h = Math.max(2, Math.floor(nextHeight / 2) * 2);
+    if (w === width && h === height) return;
+    width = w;
+    height = h;
+    canvas.width = w;
+    canvas.height = h;
+  };
+
   const stop = () => {
     window.clearInterval(timer);
     for (const entry of entries.values()) {
@@ -464,5 +478,5 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
     void audioCtx?.close();
   };
 
-  return { canvas, stream, setPeers, setOverlay, ensureAudio, stop };
+  return { canvas, stream, setPeers, setOverlay, resize, ensureAudio, stop };
 }

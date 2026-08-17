@@ -48,10 +48,16 @@ export function VideoTile({
   }, [stream, label]);
 
   return (
-    <div className="tile">
-      <video ref={videoRef} autoPlay playsInline muted />
-      <span className="tile-label">{label}</span>
-      {sharing && <span className="tile-badge">Sharing</span>}
+    <div className="relative overflow-hidden rounded-lg bg-surface-muted aspect-video w-[140px]">
+      <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover block" />
+      <span className="absolute left-1.5 bottom-1.5 bg-black/60 text-white px-1.5 py-0.5 rounded text-[11px] font-semibold">
+        {label}
+      </span>
+      {sharing && (
+        <span className="absolute top-1.5 right-1.5 bg-accent text-white px-1.5 py-0.5 rounded text-[10px] font-bold tracking-wide uppercase">
+          Sharing
+        </span>
+      )}
     </div>
   );
 }

@@ -6,7 +6,7 @@ import {
   register,
   type AuthUser,
 } from '../lib/auth';
-import type { AuthMode } from '../components/studio/AuthLobby';
+import type { AuthMode } from '../lib/authMode';
 import { useAsyncAction } from './useAsyncAction';
 
 export function useStudioAuth(setError: (message: string) => void) {

@@ -84,7 +84,7 @@ export class YoutubeOAuthService {
   }
 
   async handleCallback(code: string | undefined, state: string | undefined): Promise<string> {
-    const studioUrl = `${this.webOrigin()}/live`;
+    const studioUrl = `${this.webOrigin()}/settings`;
     try {
       if (!code || !state) throw new BadRequestException('missing code or state');
       const userId = verifyOAuthState(state);

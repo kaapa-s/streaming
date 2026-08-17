@@ -40,27 +40,33 @@ export function CommentsPanel({
   onPin,
   onClearOverlay,
 }: CommentsPanelProps) {
+  if (!live) return null;
+
   if (!isOwner) {
     return (
-      <section className="comments-panel">
-        <h2>YouTube comments</h2>
-        <p className="hint">Only the room owner can manage live comments.</p>
+      <section className="flex flex-col gap-2.5 min-h-0 max-h-[min(70vh,640px)] rounded-xl border border-border bg-surface-raised p-3">
+        <h2 className="text-xs font-semibold tracking-[0.12em] uppercase text-ink-subtle">
+          YouTube chat
+        </h2>
+        <p className="text-sm text-ink-muted">Only the room owner can manage live comments.</p>
       </section>
     );
   }
 
   return (
-    <section className="comments-panel">
-      <h2>YouTube comments</h2>
+    <section className="flex flex-col gap-2.5 min-h-0 max-h-[min(70vh,640px)] rounded-xl border border-border bg-surface-raised p-3">
+      <h2 className="text-xs font-semibold tracking-[0.12em] uppercase text-ink-subtle">
+        YouTube chat
+      </h2>
+
       {!youtubeConnected && (
-        <p className="hint">Connect YouTube in the header to pull live chat.</p>
+        <p className="text-sm text-ink-muted">Connect YouTube in Settings to pull live chat.</p>
       )}
-      {youtubeConnected && !live && (
-        <p className="hint">Go live to start the YouTube comment feed.</p>
-      )}
-      {youtubeConnected && live && !sessionActive && (
-        <div className="comments-session">
+
+      {youtubeConnected && !sessionActive && (
+        <div className="flex flex-col gap-2">
           <input
+            className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-accent"
             type="text"
             autoComplete="off"
             spellCheck={false}
@@ -74,22 +80,31 @@ export function CommentsPanel({
           </Button>
         </div>
       )}
+
       {sessionActive && (
         <>
-          {sessionTitle && <p className="hint comments-title">{sessionTitle}</p>}
-          <div className="comments-list">
-            {comments.length === 0 && <p className="hint">Waiting for comments…</p>}
+          {sessionTitle && <p className="m-0 text-xs text-ink-muted">{sessionTitle}</p>}
+          <div className="flex-1 overflow-y-auto flex flex-col gap-2 min-h-[120px]">
+            {comments.length === 0 && (
+              <p className="text-sm text-ink-muted">Waiting for comments…</p>
+            )}
             {comments.map((c) => (
               <div
                 key={c.id}
-                className={`comment-row${pinnedCommentId === c.id ? ' pinned' : ''}`}
+                className={`flex flex-col gap-1 rounded-lg bg-surface-muted p-2 ${
+                  pinnedCommentId === c.id ? 'outline outline-1 outline-accent' : ''
+                }`}
               >
-                <div className="comment-body">
-                  <strong>{c.author}</strong>
+                <div className="flex flex-col gap-0.5 text-sm leading-snug">
+                  <strong className="text-xs text-accent">{c.author}</strong>
                   <span>{c.text}</span>
                 </div>
-                <div className="comment-actions">
-                  <button type="button" className="linkish" onClick={() => onPin(c)}>
+                <div>
+                  <button
+                    type="button"
+                    className="bg-transparent p-0 text-xs font-semibold text-accent hover:underline"
+                    onClick={() => onPin(c)}
+                  >
                     On screen
                   </button>
                 </div>
@@ -102,13 +117,14 @@ export function CommentsPanel({
             </Button>
           )}
           <form
-            className="comments-reply"
+            className="flex gap-2"
             onSubmit={(e) => {
               e.preventDefault();
               onSendReply();
             }}
           >
             <input
+              className="flex-1 min-w-0 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-accent"
               type="text"
               placeholder="Reply on YouTube…"
               value={replyText}

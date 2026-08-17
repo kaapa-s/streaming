@@ -12,14 +12,14 @@ export function useRecordingControls(room: string, setError: (message: string) =
   const [recordingInfo, setRecordingInfo] = useState('');
   const [finishedRecording, setFinishedRecording] = useState<FinishedRecording | null>(null);
   const [rtmpUrl, setRtmpUrl] = useLocalStorageState(YT_RTMP_STORAGE_KEY, '');
+  const [pullChatOnLive, setPullChatOnLive] = useState(false);
   const { pending: recordingPending, run } = useAsyncAction();
 
-  const toggleRecording = () => {
+  const runRecordingAction = (action: 'start' | 'stop', opts?: { rtmpUrl?: string }) => {
     void run(async () => {
       setError('');
       try {
-        const action = recording ? 'stop' : 'start';
-        const trimmed = rtmpUrl.trim();
+        const trimmed = opts?.rtmpUrl?.trim() ?? '';
         const res = await apiFetch(`/api/recordings/${action}`, {
           method: 'POST',
           body: JSON.stringify({
@@ -32,10 +32,11 @@ export function useRecordingControls(room: string, setError: (message: string) =
           const msg = Array.isArray(body.message) ? body.message.join(', ') : body.message;
           throw new Error(msg ?? 'request failed');
         }
-        const nextRecording = !recording;
+        const nextRecording = action === 'start';
         setRecording(nextRecording);
         setLive(nextRecording ? !!body.live : false);
         if (action === 'stop') {
+          setPullChatOnLive(false);
           const downloadUrl =
             typeof body.downloadUrl === 'string' ? body.downloadUrl : undefined;
           const file = typeof body.file === 'string' ? body.file : undefined;
@@ -50,11 +51,7 @@ export function useRecordingControls(room: string, setError: (message: string) =
             setRecordingInfo('');
           }
         } else {
-          setRecordingInfo(
-            body.live
-              ? 'Live on YouTube @ 1080p60 (also recording locally)'
-              : 'Recording @ 1080p60',
-          );
+          setRecordingInfo(body.live ? 'Live on YouTube @ 1080p60' : 'Recording @ 1080p60');
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
@@ -62,20 +59,30 @@ export function useRecordingControls(room: string, setError: (message: string) =
     });
   };
 
-  const wantsLive = !!rtmpUrl.trim();
-  const actionLabel = recordingPending
-    ? recording
-      ? 'Stopping…'
-      : wantsLive
-        ? 'Going live…'
-        : 'Starting…'
-    : recording
-      ? live
-        ? 'Stop live'
-        : 'Stop recording'
-      : wantsLive
-        ? 'Go live'
-        : 'Start recording';
+  const startRecording = () => {
+    if (recording || recordingPending) return;
+    runRecordingAction('start');
+  };
+
+  const goLive = (streamKey: string, pullChat: boolean) => {
+    if (recordingPending) return;
+    if (recording) {
+      setError('Stop recording before going live');
+      return;
+    }
+    setPullChatOnLive(pullChat);
+    runRecordingAction('start', { rtmpUrl: streamKey });
+  };
+
+  const stopRecording = () => {
+    if (!recording || recordingPending) return;
+    runRecordingAction('stop');
+  };
+
+  const toggleRecording = () => {
+    if (recording) stopRecording();
+    else startRecording();
+  };
 
   return {
     recording,
@@ -86,8 +93,11 @@ export function useRecordingControls(room: string, setError: (message: string) =
     rtmpUrl,
     setRtmpUrl,
     recordingPending,
+    startRecording,
+    goLive,
+    stopRecording,
     toggleRecording,
-    actionLabel,
+    pullChatOnLive,
     streamControlsLocked: recording || recordingPending,
   };
 }

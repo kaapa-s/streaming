@@ -5,18 +5,18 @@ import { keepStudioSearch } from '../../lib/studioSearch';
 import { ensureLoggedOut } from '../../studio/studioStage';
 import { useStudio } from '../../studio/useStudio';
 
-export const Route = createFileRoute('/_studio/login')({
+export const Route = createFileRoute('/_studio/signup')({
   beforeLoad: ({ context }) => {
     ensureLoggedOut(context.studioHandle);
   },
-  component: LoginPage,
+  component: SignupPage,
 });
 
-function LoginPage() {
+function SignupPage() {
   const s = useStudio();
 
   useEffect(() => {
-    s.setAuthMode('login');
+    s.setAuthMode('register');
   }, [s.setAuthMode]);
 
   return (
@@ -26,9 +26,21 @@ function LoginPage() {
       </p>
 
       <div className="w-full max-w-sm rounded-xl border border-border bg-surface-raised p-6 shadow-sm">
-        <h1 className="text-xl font-semibold text-ink">Welcome back</h1>
+        <h1 className="text-xl font-semibold text-ink">Create account</h1>
 
         <form onSubmit={s.onAuth} className="mt-6 flex flex-col gap-4">
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium text-ink">Display name</span>
+            <input
+              className="rounded-lg border border-border bg-surface px-3.5 py-2.5 text-ink outline-none focus:border-accent"
+              value={s.displayName}
+              onChange={(e) => s.setDisplayName(e.target.value)}
+              autoComplete="nickname"
+              required
+              disabled={s.authPending}
+            />
+          </label>
+
           <label className="flex flex-col gap-1.5">
             <span className="text-sm font-medium text-ink">Email</span>
             <input
@@ -37,7 +49,6 @@ function LoginPage() {
               value={s.email}
               onChange={(e) => s.setEmail(e.target.value)}
               autoComplete="email"
-              autoFocus
               required
               disabled={s.authPending}
             />
@@ -50,28 +61,40 @@ function LoginPage() {
               type="password"
               value={s.password}
               onChange={(e) => s.setPassword(e.target.value)}
-              autoComplete="current-password"
+              autoComplete="new-password"
               minLength={8}
               required
               disabled={s.authPending}
             />
           </label>
 
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium text-ink">Signup password</span>
+            <input
+              className="rounded-lg border border-border bg-surface px-3.5 py-2.5 text-ink outline-none focus:border-accent"
+              type="password"
+              value={s.signupPassword}
+              onChange={(e) => s.setSignupPassword(e.target.value)}
+              autoComplete="off"
+              required
+              disabled={s.authPending}
+            />
+          </label>
+
           <Button type="submit" variant="primary" loading={s.authPending}>
-            {s.authPending ? 'Signing in…' : 'Log in'}
+            {s.authPending ? 'Creating account…' : 'Create account'}
           </Button>
         </form>
 
         {s.error && <p className="mt-3 text-sm text-danger">{s.error}</p>}
 
         <p className="mt-5 text-sm text-ink-muted">
-          No account?{' '}
           <Link
-            to="/signup"
+            to="/login"
             search={keepStudioSearch}
             className="font-semibold text-accent hover:text-accent-hover"
           >
-            Sign up →
+            ← Already have an account
           </Link>
         </p>
       </div>

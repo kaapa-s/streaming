@@ -118,57 +118,62 @@ export function CompositorDev() {
   };
 
   return (
-    <div className="studio compositor-dev">
-      <header>
-        <h1>Compositor playground</h1>
-        <div className="header-right">
-          <span className="hint">
-            {peerCount} peer{peerCount === 1 ? '' : 's'}
-            {withScreen ? ' · screen' : ''}
-          </span>
-        </div>
+    <div className="min-h-screen flex flex-col bg-surface text-ink">
+      <header className="flex items-center justify-between px-6 py-3.5 border-b border-border bg-surface-raised">
+        <h1 className="text-lg font-semibold m-0">Compositor playground</h1>
+        <span className="text-sm text-ink-muted">
+          {peerCount} peer{peerCount === 1 ? '' : 's'}
+          {withScreen ? ' · screen' : ''}
+        </span>
       </header>
 
-      <main>
-        <section className="preview-section">
-          <h2>Program output</h2>
-          <div className="preview" ref={previewRef} />
+      <main className="flex-1 grid gap-6 p-6 lg:grid-cols-[1fr_280px] items-start">
+        <section>
+          <h2 className="text-xs font-semibold tracking-[0.12em] uppercase text-ink-subtle mb-2.5">
+            Program output
+          </h2>
+          <div className="preview rounded-xl overflow-hidden border border-border bg-black" ref={previewRef} />
         </section>
 
         <section>
-          <h2>Controls</h2>
-          <div className="dev-controls">
-            <button type="button" className="primary" onClick={addPeer}>
+          <h2 className="text-xs font-semibold tracking-[0.12em] uppercase text-ink-subtle mb-2.5">
+            Controls
+          </h2>
+          <div className="flex flex-col gap-2.5 items-start">
+            <Button variant="primary" onClick={addPeer}>
               Add peer
-            </button>
-            <button type="button" onClick={removePeer} disabled={peerCount === 0}>
+            </Button>
+            <Button onClick={removePeer} disabled={peerCount === 0}>
               Remove last
-            </button>
-            <button type="button" onClick={clearPeers} disabled={peerCount === 0}>
+            </Button>
+            <Button onClick={clearPeers} disabled={peerCount === 0}>
               Clear all
-            </button>
+            </Button>
 
-            <label className="dev-toggle">
+            <label className="flex items-center gap-2 text-sm text-ink cursor-pointer">
               <input
                 type="checkbox"
+                className="w-auto m-0"
                 checked={withAudio}
                 onChange={(e) => setWithAudio(e.target.checked)}
               />
               New peers include audio
             </label>
 
-            <label className="dev-toggle">
+            <label className="flex items-center gap-2 text-sm text-ink cursor-pointer">
               <input
                 type="checkbox"
+                className="w-auto m-0"
                 checked={mixAudio}
                 onChange={(e) => setMixAudio(e.target.checked)}
               />
               Mix audio into output
             </label>
 
-            <label className="dev-toggle">
+            <label className="flex items-center gap-2 text-sm text-ink cursor-pointer">
               <input
                 type="checkbox"
+                className="w-auto m-0"
                 checked={withScreen}
                 onChange={(e) => onScreenToggle(e.target.checked)}
                 disabled={peerCount === 0 && !withScreen}
@@ -191,8 +196,9 @@ export function CompositorDev() {
               Clear comment
             </Button>
           </div>
-          <p className="hint">
-            Seed via URL: <code>?peers=4&amp;audio=0&amp;screen=1</code>. No server required.
+          <p className="mt-3 text-sm text-ink-muted">
+            Seed via URL: <code className="text-xs">?peers=4&amp;audio=0&amp;screen=1</code>. No
+            server required.
           </p>
         </section>
       </main>

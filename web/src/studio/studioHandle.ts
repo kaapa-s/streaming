@@ -1,4 +1,4 @@
-import type { AuthMode } from '../components/studio/AuthLobby';
+import type { AuthMode } from '../lib/authMode';
 import type { FinishedRecording } from '../components/studio/RecordingFinishedModal';
 import type { LiveComment } from '../hooks/useLiveComments';
 import type { RemotePeer } from '@streaming/sfu-client';
@@ -42,8 +42,11 @@ export type StudioValue = {
   rtmpUrl: string;
   setRtmpUrl: (value: string) => void;
   recordingPending: boolean;
+  startRecording: () => void;
+  goLive: (streamKey: string, pullChat: boolean) => void;
+  stopRecording: () => void;
   toggleRecording: () => void;
-  actionLabel: string;
+  pullChatOnLive: boolean;
   streamControlsLocked: boolean;
   youtubeConnected: boolean;
   youtubeAccountLabel?: string;
