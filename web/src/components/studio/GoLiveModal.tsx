@@ -9,7 +9,7 @@ type GoLiveModalProps = {
   defaultStreamKey: string;
   pending: boolean;
   onClose: () => void;
-  onGoLive: (streamKey: string, pullChat: boolean) => void;
+  onGoLive: (streamKey: string) => void;
 };
 
 export function GoLiveModal({
@@ -21,7 +21,6 @@ export function GoLiveModal({
   onGoLive,
 }: GoLiveModalProps) {
   const [streamKey, setStreamKey] = useState(defaultStreamKey);
-  const [pullChat, setPullChat] = useState(false);
 
   return (
     <div
@@ -72,16 +71,6 @@ export function GoLiveModal({
               />
             </label>
 
-            <label className="flex items-center gap-2 text-sm text-ink">
-              <input
-                type="checkbox"
-                checked={pullChat}
-                onChange={(e) => setPullChat(e.target.checked)}
-                disabled={pending}
-              />
-              Pull live chat / comments
-            </label>
-
             <div className="flex gap-2 justify-end pt-1">
               <Button onClick={onClose} disabled={pending}>
                 Cancel
@@ -90,7 +79,7 @@ export function GoLiveModal({
                 variant="primary"
                 loading={pending}
                 disabled={!streamKey.trim()}
-                onClick={() => onGoLive(streamKey.trim(), pullChat)}
+                onClick={() => onGoLive(streamKey.trim())}
               >
                 Go live
               </Button>

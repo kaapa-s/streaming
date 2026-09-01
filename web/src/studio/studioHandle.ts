@@ -43,10 +43,9 @@ export type StudioValue = {
   setRtmpUrl: (value: string) => void;
   recordingPending: boolean;
   startRecording: () => void;
-  goLive: (streamKey: string, pullChat: boolean) => void;
+  goLive: (streamKey: string) => void;
   stopRecording: () => void;
   toggleRecording: () => void;
-  pullChatOnLive: boolean;
   streamControlsLocked: boolean;
   youtubeConnected: boolean;
   youtubeAccountLabel?: string;

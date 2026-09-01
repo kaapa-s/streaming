@@ -7,6 +7,7 @@ import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { WsAdapter } from '@nestjs/platform-ws';
 import { AppModule } from './app.module';
+import { resolveRecorderPageOrigin } from './recordings/page-origin';
 
 config();
 
@@ -49,8 +50,14 @@ async function bootstrap() {
 
   const port = Number(process.env.PORT ?? 3002);
   await app.listen(port);
+  const page = resolveRecorderPageOrigin();
   console.log(`[compositor] listening on http://localhost:${port}`);
-  console.log(`[compositor] recorder page at http://127.0.0.1:${port}/compositor/`);
+  console.log(`[compositor] recorder page at ${page.origin}/compositor/`);
+  if (page.ignored) {
+    console.warn(
+      `[compositor] ignoring COMPOSITOR_PAGE_ORIGIN=${page.ignored} (must be loopback)`,
+    );
+  }
 }
 
 void bootstrap();

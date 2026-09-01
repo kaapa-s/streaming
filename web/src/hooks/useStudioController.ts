@@ -30,7 +30,6 @@ export function useStudioController(room: string): StudioValue {
   const comments = useLiveComments({
     room,
     live: recording.live,
-    pullChat: recording.pullChatOnLive,
     isOwner,
     setError,
     setPreviewOverlay,
@@ -53,11 +52,18 @@ export function useStudioController(room: string): StudioValue {
     logoutPending: auth.logoutPending,
     authLabel: auth.authLabel,
     onAuth: auth.onAuth,
-    onLogout: () => auth.onLogout(session.leave),
+    onLogout: () =>
+      auth.onLogout(async () => {
+        recording.resetUi();
+        await session.leave();
+      }),
     joined: session.joined,
     joining: session.joining,
     join: session.join,
-    leave: session.leave,
+    leave: async () => {
+      recording.resetUi();
+      await session.leave();
+    },
     roomRole: session.roomRole,
     localStream: session.localStream,
     localScreenStream: session.localScreenStream,
@@ -78,7 +84,6 @@ export function useStudioController(room: string): StudioValue {
     goLive: recording.goLive,
     stopRecording: recording.stopRecording,
     toggleRecording: recording.toggleRecording,
-    pullChatOnLive: recording.pullChatOnLive,
     streamControlsLocked: recording.streamControlsLocked,
     youtubeConnected: comments.youtubeStatus.connected,
     youtubeAccountLabel: comments.youtubeStatus.accountLabel,

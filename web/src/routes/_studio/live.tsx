@@ -129,9 +129,9 @@ function LivePage() {
           defaultStreamKey={s.rtmpUrl}
           pending={s.recordingPending}
           onClose={() => setGoLiveOpen(false)}
-          onGoLive={(streamKey, pullChat) => {
+          onGoLive={(streamKey) => {
             s.setRtmpUrl(streamKey);
-            s.goLive(streamKey, pullChat);
+            s.goLive(streamKey);
             setGoLiveOpen(false);
           }}
         />

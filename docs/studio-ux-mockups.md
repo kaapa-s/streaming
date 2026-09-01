@@ -12,7 +12,7 @@ Stack notes for implementation:
 
 - Separate **YouTube streaming** from **local recording**
 - Connect YouTube channel in **Settings** (not in the live header by default)
-- Studio defaults to **recording**; Go live options (stream key, chat) are opt-in and not visible at start
+- Studio defaults to **recording**; Go live (stream key) is not visible at start. Chat auto-binds when live to YouTube.
 - Rename rooms/join flow toward **New recording**
 - Separate **Login** and **Sign up** pages (not tabs on one page)
 
@@ -226,8 +226,6 @@ Opens from **Go live ▾** (modal or dropdown). If YouTube not connected, nudge 
 │  ┌────────────────────────────────┐  │
 │  │  (prefilled from Settings)     │  │
 │  └────────────────────────────────┘  │
-│                                      │
-│  ☐ Pull live chat / comments         │
 │                                      │
 │  [ Cancel ]          [ Go live ]     │
 └──────────────────────────────────────┘

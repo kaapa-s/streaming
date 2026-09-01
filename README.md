@@ -72,9 +72,10 @@ Ensure `SFU_JOIN_SECRET` matches in `server/.env` and `sfu/.env`, and
 3. Click **Go live** — records locally and ffmpeg pushes to YouTube.
 4. Click **Stop live** when done.
 
-### YouTube live comments (optional)
+### YouTube live comments
 
 Comments need a Google OAuth connection (stream key alone cannot read/post chat).
+Going live auto-starts the comments panel against your active broadcast.
 
 1. In [Google Cloud Console](https://console.cloud.google.com/), create an OAuth client (Web),
    enable **YouTube Data API v3**, and add redirect URI
@@ -84,11 +85,12 @@ Comments need a Google OAuth connection (stream key alone cannot read/post chat)
    - `GOOGLE_OAUTH_REDIRECT_URI` (must match the console redirect)
    - `TOKEN_ENCRYPTION_KEY` (passphrase or 64-char hex)
    - `WEB_ORIGIN=https://localhost:5173` (studio origin for post-OAuth redirect)
-3. In the studio header, click **Connect YouTube** and approve access.
+3. In Settings, click **Connect YouTube** and approve access.
 4. Start the YouTube broadcast (same account), paste the RTMP key, click **Go live**.
-5. The comments panel binds to your active broadcast (or paste a live video URL and
-   **Start chat feed**). Reply from the panel; **On screen** pins a comment on the
-   program preview and compositor (YouTube viewers see it for ~10s).
+   The comments panel auto-binds. If YouTube has not marked the broadcast active yet,
+   paste a live video URL and click **Start chat feed**.
+5. Reply from the panel; **On screen** pins a comment on the program preview and
+   compositor (YouTube viewers see it for ~10s).
 
 ### Compositor playground (no stack required)
 
@@ -120,7 +122,7 @@ iterate on layout without mediasoup or the Nest server.
 - `PORT` — default `3002`
 - `COMPOSITOR_INTERNAL_SECRET` — must match server
 - `COMPOSITOR_POOL_SIZE` — warm Chromium browsers (default `1`)
-- `COMPOSITOR_PAGE_ORIGIN` — optional; default `http://127.0.0.1:$PORT` (Nest serves `/compositor`)
+- `COMPOSITOR_PAGE_ORIGIN` — must be loopback (`http://127.0.0.1:$PORT`). Chromium loads Nest's recorder page in the compositor container. A public studio URL (e.g. `https://streaming.kaapa.pl`) is ignored — that origin serves the SPA, which never defines `__startRecording`.
 - `RECORDING_SINK_URL` — MediaRecorder WebSocket (local `ws://127.0.0.1:3002/ws/recording`)
 - `SFU_PUBLIC_WS_URL` — SFU signaling for the headless page (local `ws://localhost:3001/ws/signaling`)
 - `FFMPEG_PATH` — optional
@@ -231,6 +233,7 @@ into `recordings/diagnostics/host-stats.log`.
 - **ICE fails for external users:** SG allows `40000-40100/udp`, `MEDIASOUP_ANNOUNCED_IP` equals the SFU Elastic IP
 - **Recording fails / Chrome crash:** check `shm_size` on compositor, `docker logs compositor`
 - **Warmup / go-live fails:** API `COMPOSITOR_URL` reachable; secrets match; compositor image includes `page/dist`; `SFU_PUBLIC_WS_URL` reachable from Chromium
+- **Go live 504 / `Waiting failed: 60000ms exceeded`:** Chromium loaded the studio SPA instead of the recorder. Confirm compositor logs show `warmup navigating … http://127.0.0.1:3002/compositor/` (not `https://streaming.kaapa.pl/compositor`). `COMPOSITOR_PAGE_ORIGIN` must be loopback.
 - **Recording sink fails:** use loopback `ws://127.0.0.1:3002/ws/recording` (`RECORDING_SINK_URL`). Do not use `ws://compositor:…` (private Docker DNS)
 - **Signaling fails from HTTPS UI:** use `wss://sfu.kaapa.pl/ws/signaling`
 - **SFU WSS 502:** `sfu-nginx` proxies to `http://sfu:3001`

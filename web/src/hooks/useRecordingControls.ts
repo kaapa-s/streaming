@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { apiFetch } from '../lib/auth';
 import type { FinishedRecording } from '../components/studio/RecordingFinishedModal';
 import { useAsyncAction } from './useAsyncAction';
@@ -12,8 +12,17 @@ export function useRecordingControls(room: string, setError: (message: string) =
   const [recordingInfo, setRecordingInfo] = useState('');
   const [finishedRecording, setFinishedRecording] = useState<FinishedRecording | null>(null);
   const [rtmpUrl, setRtmpUrl] = useLocalStorageState(YT_RTMP_STORAGE_KEY, '');
-  const [pullChatOnLive, setPullChatOnLive] = useState(false);
   const { pending: recordingPending, run } = useAsyncAction();
+
+  const resetUi = () => {
+    setRecording(false);
+    setLive(false);
+    setRecordingInfo('');
+  };
+
+  useEffect(() => {
+    resetUi();
+  }, [room]);
 
   const runRecordingAction = (action: 'start' | 'stop', opts?: { rtmpUrl?: string }) => {
     void run(async () => {
@@ -36,7 +45,6 @@ export function useRecordingControls(room: string, setError: (message: string) =
         setRecording(nextRecording);
         setLive(nextRecording ? !!body.live : false);
         if (action === 'stop') {
-          setPullChatOnLive(false);
           const downloadUrl =
             typeof body.downloadUrl === 'string' ? body.downloadUrl : undefined;
           const file = typeof body.file === 'string' ? body.file : undefined;
@@ -64,13 +72,12 @@ export function useRecordingControls(room: string, setError: (message: string) =
     runRecordingAction('start');
   };
 
-  const goLive = (streamKey: string, pullChat: boolean) => {
+  const goLive = (streamKey: string) => {
     if (recordingPending) return;
     if (recording) {
       setError('Stop recording before going live');
       return;
     }
-    setPullChatOnLive(pullChat);
     runRecordingAction('start', { rtmpUrl: streamKey });
   };
 
@@ -97,7 +104,7 @@ export function useRecordingControls(room: string, setError: (message: string) =
     goLive,
     stopRecording,
     toggleRecording,
-    pullChatOnLive,
+    resetUi,
     streamControlsLocked: recording || recordingPending,
   };
 }

@@ -10,6 +10,11 @@ import type { Browser, Page } from 'puppeteer';
 import type { ChildProcess } from 'child_process';
 import { BrowserPoolService } from '../browser/browser-pool.service';
 import { assertFfmpegAvailable, normalizeRtmpUrl, redactRtmp } from '../recordings/rtmp';
+import {
+  isLoopbackCompositorUrl,
+  redactCompositorUrl,
+  resolveRecorderPageOrigin,
+} from '../recordings/page-origin';
 import { SessionLog, sessionStamp, taggedRecordingPath } from '../recordings/session-log';
 import {
   parseResolution,
@@ -45,6 +50,11 @@ export class SessionsService {
   private readonly logger = new Logger(SessionsService.name);
   private readonly dir = path.resolve(process.cwd(), 'recordings');
   private readonly sessions = new Map<string, RoomSession>();
+  /** In-flight warmup per room — join + go-live must share one Chromium claim. */
+  private readonly warming = new Map<
+    string,
+    Promise<{ room: string; resolution: StreamResolution; state: 'warm' }>
+  >();
 
   constructor(private readonly pool: BrowserPoolService) {
     mkdirSync(this.dir, { recursive: true });
@@ -111,6 +121,28 @@ export class SessionsService {
       }
       return { room, resolution: existing.resolution, state: 'warm' };
     }
+    const inFlight = this.warming.get(room);
+    if (inFlight) return inFlight;
+
+    const task = this.warmupOnce(room, token, resolutionInput).finally(() => {
+      this.warming.delete(room);
+    });
+    this.warming.set(room, task);
+    return task;
+  }
+
+  private async warmupOnce(
+    room: string,
+    token: string,
+    resolutionInput?: string,
+  ): Promise<{ room: string; resolution: StreamResolution; state: 'warm' }> {
+    const already = this.sessions.get(room);
+    if (already) {
+      if (already.state === 'recording') {
+        throw new BadRequestException(`room "${room}" is already recording`);
+      }
+      return { room, resolution: already.resolution, state: 'warm' };
+    }
 
     const resolution = parseResolution(resolutionInput);
     const profile = STREAM_PROFILES[resolution];
@@ -131,7 +163,15 @@ export class SessionsService {
       });
 
       const url = this.buildCompositorUrl(room, resolution, token, 'idle');
+      this.logger.log(`warmup navigating room=${room} ${redactCompositorUrl(url)}`);
       await page.goto(url, { waitUntil: 'domcontentloaded' });
+      const landed = page.url();
+      if (!isLoopbackCompositorUrl(landed)) {
+        throw new Error(
+          `recorder page loaded ${redactCompositorUrl(landed)} instead of loopback /compositor/ ` +
+            `(Chromium must use http://127.0.0.1:${process.env.PORT ?? 3002}/compositor/)`,
+        );
+      }
       await page.waitForFunction(
         () => typeof globalThis.__startRecording === 'function',
         { timeout: 60_000 },
@@ -420,8 +460,12 @@ export class SessionsService {
     mode: 'idle' | 'record',
   ): string {
     const port = process.env.PORT ?? 3002;
-    const pageOrigin =
-      process.env.COMPOSITOR_PAGE_ORIGIN?.trim() || `http://127.0.0.1:${port}`;
+    const { origin: pageOrigin, ignored } = resolveRecorderPageOrigin();
+    if (ignored) {
+      this.logger.warn(
+        `COMPOSITOR_PAGE_ORIGIN=${ignored} is not loopback; using ${pageOrigin} so Chromium loads the recorder page in this container`,
+      );
+    }
     const sinkUrl =
       process.env.RECORDING_SINK_URL?.trim() ||
       `ws://127.0.0.1:${port}/ws/recording`;
