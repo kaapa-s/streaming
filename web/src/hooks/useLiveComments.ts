@@ -24,18 +24,36 @@ type UseLiveCommentsArgs = {
   room: string;
   live: boolean;
   isOwner: boolean;
+  signedIn: boolean;
   setError: (message: string) => void;
   setPreviewOverlay: (overlay: CommentOverlay | null) => void;
 };
 
 async function parseError(res: Response): Promise<string> {
+  let body: unknown;
   try {
-    const body = await res.json();
-    const msg = Array.isArray(body.message) ? body.message.join(', ') : body.message;
-    return msg ?? res.statusText;
+    body = await res.json();
   } catch {
-    return res.statusText || 'request failed';
+    const fallback = `${res.status} ${res.statusText || 'request failed'}`.trim();
+    console.error('[comments] non-JSON error response', res.status, res.statusText);
+    return fallback;
   }
+  const record = typeof body === 'object' && body !== null ? body : {};
+  const raw =
+    'message' in record
+      ? Array.isArray(record.message)
+        ? record.message.join(', ')
+        : record.message
+      : undefined;
+  const msg = typeof raw === 'string' && raw.trim() ? raw : `${res.status} ${res.statusText}`.trim();
+  console.error('[comments] API error', res.status, body);
+  return msg;
+}
+
+function reportCommentsError(context: string, err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  console.error(`[comments] ${context}`, err);
+  return message;
 }
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
@@ -60,6 +78,7 @@ export function useLiveComments({
   room,
   live,
   isOwner,
+  signedIn,
   setError,
   setPreviewOverlay,
 }: UseLiveCommentsArgs) {
@@ -77,15 +96,29 @@ export function useLiveComments({
   const clearPinTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const refreshYoutubeStatus = async () => {
-    const res = await apiFetch('/api/platforms/youtube/status');
-    if (!res.ok) return;
-    const body = (await res.json()) as YoutubeStatus;
-    setYoutubeStatus(body);
+    if (!signedIn || !getAccessToken()) return;
+    try {
+      const res = await apiFetch('/api/platforms/youtube/status');
+      if (!res.ok) {
+        setError(await parseError(res));
+        return;
+      }
+      const body = (await res.json()) as YoutubeStatus;
+      setYoutubeStatus(body);
+    } catch (err) {
+      setError(reportCommentsError('youtube status failed', err));
+    }
   };
 
   useEffect(() => {
+    if (!signedIn) {
+      setYoutubeStatus({ connected: false });
+      return;
+    }
     void refreshYoutubeStatus();
-  }, []);
+    // refreshYoutubeStatus closes over signedIn; re-run when auth changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signedIn]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -94,12 +127,16 @@ export function useLiveComments({
     if (yt === 'connected') {
       void refreshYoutubeStatus();
     } else if (yt === 'error') {
-      setError(params.get('message') || 'YouTube connect failed');
+      const message = params.get('message') || 'YouTube connect failed';
+      console.error('[comments] youtube oauth callback error', message);
+      setError(message);
     }
     params.delete('youtube');
     params.delete('message');
     const next = `${window.location.pathname}${params.toString() ? `?${params}` : ''}${window.location.hash}`;
     window.history.replaceState({}, '', next);
+    // refreshYoutubeStatus is recreated each render
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setError]);
 
   const connectYoutube = async () => {
@@ -111,7 +148,7 @@ export function useLiveComments({
       const body = (await res.json()) as { url: string };
       window.location.href = body.url;
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(reportCommentsError('youtube connect failed', err));
       setYoutubePending(false);
     }
   };
@@ -134,7 +171,7 @@ export function useLiveComments({
       setBindFailed(false);
       setComments([]);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(reportCommentsError('youtube disconnect failed', err));
     } finally {
       setYoutubePending(false);
     }
@@ -219,15 +256,17 @@ export function useLiveComments({
         }
       } else if (event === 'error') {
         const errPayload = payload as { message?: string };
-        if (errPayload.message) setError(errPayload.message);
+        console.error('[comments] youtube stream error', errPayload);
+        setError(
+          errPayload.message?.trim() ||
+            `YouTube comments error: ${JSON.stringify(errPayload)}`,
+        );
       }
     };
 
     const openStream = async () => {
-      const token = getAccessToken();
-      if (!token) throw new Error('not signed in');
-      const res = await fetch(`/api/rooms/${encodeURIComponent(room)}/comments/stream`, {
-        headers: { Authorization: `Bearer ${token}`, Accept: 'text/event-stream' },
+      const res = await apiFetch(`/api/rooms/${encodeURIComponent(room)}/comments/stream`, {
+        headers: { Accept: 'text/event-stream' },
         signal: ac.signal,
       });
       if (!res.ok || !res.body) {
@@ -256,7 +295,9 @@ export function useLiveComments({
             body: JSON.stringify({}),
           });
           if (ac.signal.aborted) return;
-          if (res.ok) {
+          if (!res.ok) {
+            setError(await parseError(res));
+          } else {
             const body = (await res.json()) as { status?: ChatBindStatus; title?: string };
             if (body.status) applyBindStatus(body.status, body.title);
           }
@@ -264,7 +305,7 @@ export function useLiveComments({
         } catch (err) {
           if (ac.signal.aborted) return;
           setSessionActive(false);
-          setError(err instanceof Error ? err.message : String(err));
+          setError(reportCommentsError('comments stream failed', err));
         }
         if (ac.signal.aborted) return;
         await sleep(2000, ac.signal);
@@ -294,7 +335,7 @@ export function useLiveComments({
       if (!res.ok) throw new Error(await parseError(res));
       setReplyText('');
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(reportCommentsError('youtube reply failed', err));
     } finally {
       setReplyPending(false);
     }
@@ -318,7 +359,7 @@ export function useLiveComments({
       });
       if (!res.ok) throw new Error(await parseError(res));
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(reportCommentsError('pin comment failed', err));
     }
   };
 

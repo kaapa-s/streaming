@@ -31,6 +31,7 @@ export function useStudioController(room: string): StudioValue {
     room,
     live: recording.live,
     isOwner,
+    signedIn: Boolean(auth.user),
     setError,
     setPreviewOverlay,
   });

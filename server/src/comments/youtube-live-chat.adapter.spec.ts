@@ -3,10 +3,11 @@ import { afterEach, describe, it } from 'node:test';
 import { BadRequestException } from '@nestjs/common';
 import { pickLiveBroadcast, YoutubeLiveChatAdapter } from './youtube-live-chat.adapter';
 
-function jsonResponse(data: unknown, ok = true): Response {
+function jsonResponse(data: unknown, ok = true, status?: number): Response {
   return {
     ok,
-    status: ok ? 200 : 400,
+    status: status ?? (ok ? 200 : 400),
+    statusText: ok ? 'OK' : 'Bad Request',
     json: async () => data,
     text: async () => JSON.stringify(data),
   } as Response;
@@ -187,7 +188,34 @@ describe('YoutubeLiveChatAdapter live chat messages', () => {
     await assert.rejects(
       () => adapter.postReply('t', 'chat-1', 'hi'),
       (err: unknown) =>
-        err instanceof BadRequestException && err.message.includes('404'),
+        err instanceof BadRequestException &&
+        err.message.includes('404') &&
+        err.message.includes('empty body'),
+    );
+  });
+
+  it('includes Google JSON error details when list fails', async () => {
+    globalThis.fetch = (async () =>
+      jsonResponse(
+        {
+          error: {
+            code: 403,
+            status: 'PERMISSION_DENIED',
+            message: 'The request cannot be completed because you have exceeded your quota.',
+            errors: [{ reason: 'quotaExceeded', message: '{0}' }],
+          },
+        },
+        false,
+        403,
+      )) as typeof fetch;
+
+    await assert.rejects(
+      () => adapter.pollComments('t', 'chat-1'),
+      (err: unknown) =>
+        err instanceof BadRequestException &&
+        err.message.includes('403') &&
+        err.message.includes('quotaExceeded') &&
+        err.message.includes('exceeded your quota'),
     );
   });
 });

@@ -353,11 +353,12 @@ export class CommentsService {
         this.stopSession(session.roomSlug);
         return;
       }
-      this.logger.warn(`poll failed room=${session.roomSlug}: ${String(err)}`);
+      this.logger.warn(`poll failed room=${session.roomSlug}: ${httpMessage(err)}`);
+      session.pageToken = undefined;
       this.broadcast(session, {
         type: 'error',
         data: JSON.stringify({
-          message: err instanceof Error ? err.message : String(err),
+          message: httpMessage(err),
         }),
       });
       nextDelay = 10_000;

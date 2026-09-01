@@ -94,27 +94,63 @@ export async function logout(): Promise<void> {
   }).catch(() => undefined);
 }
 
-async function refreshAccessToken(): Promise<string | null> {
-  const refreshToken = localStorage.getItem(REFRESH_KEY);
-  if (!refreshToken) return null;
-  const res = await fetch('/api/auth/refresh', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ refreshToken }),
-  });
-  if (!res.ok) {
-    clearSession();
-    return null;
+/** Access JWTs last 15m; refresh before expiry so Chrome does not log a 401. */
+const ACCESS_SKEW_MS = 30_000;
+
+function accessTokenExpiryMs(token: string): number | undefined {
+  const payloadPart = token.split('.')[1];
+  if (!payloadPart) return undefined;
+  try {
+    const json: unknown = JSON.parse(
+      atob(payloadPart.replace(/-/g, '+').replace(/_/g, '/')),
+    );
+    if (typeof json !== 'object' || json === null || !('exp' in json)) return undefined;
+    const exp = json.exp;
+    if (typeof exp !== 'number') return undefined;
+    return exp * 1000;
+  } catch {
+    return undefined;
   }
-  const session = (await res.json()) as AuthSession;
-  saveSession(session);
-  return session.accessToken;
 }
 
-/** Authenticated fetch; refreshes once on 401. */
+function isAccessTokenExpired(token: string): boolean {
+  const expiryMs = accessTokenExpiryMs(token);
+  if (expiryMs === undefined) return false;
+  return expiryMs - ACCESS_SKEW_MS <= Date.now();
+}
+
+let refreshInFlight: Promise<string | null> | null = null;
+
+async function refreshAccessToken(): Promise<string | null> {
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = (async () => {
+    const refreshToken = localStorage.getItem(REFRESH_KEY);
+    if (!refreshToken) return null;
+    const res = await fetch('/api/auth/refresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshToken }),
+    });
+    if (!res.ok) {
+      clearSession();
+      return null;
+    }
+    const session = (await res.json()) as AuthSession;
+    saveSession(session);
+    return session.accessToken;
+  })().finally(() => {
+    refreshInFlight = null;
+  });
+  return refreshInFlight;
+}
+
+/** Authenticated fetch; refreshes an expired JWT first, and once more on 401. */
 export async function apiFetch(input: string, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers);
-  const token = getAccessToken();
+  let token = getAccessToken();
+  if (token && isAccessTokenExpired(token)) {
+    token = await refreshAccessToken();
+  }
   if (token) headers.set('Authorization', `Bearer ${token}`);
   if (init.body && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');

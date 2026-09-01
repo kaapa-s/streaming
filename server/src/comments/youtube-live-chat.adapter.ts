@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import type {
   LiveChatAdapter,
   NormalizedComment,
@@ -59,15 +59,25 @@ const UPCOMING_CHAT_STATUSES = new Set(['live', 'testing']);
 function parseYoutubeErrorBody(body: string): string | undefined {
   try {
     const json = JSON.parse(body) as {
-      error?: { message?: string; errors?: Array<{ reason?: string; message?: string }> };
+      error?: {
+        code?: number;
+        status?: string;
+        message?: string;
+        errors?: Array<{ reason?: string; message?: string; domain?: string }>;
+      };
     };
-    const reason = json.error?.errors?.[0]?.reason;
-    const top = json.error?.message?.trim();
-    const nested = json.error?.errors?.[0]?.message?.trim();
+    const err = json.error;
+    const reason = err?.errors?.[0]?.reason;
+    const domain = err?.errors?.[0]?.domain;
+    const top = err?.message?.trim();
+    const nested = err?.errors?.[0]?.message?.trim();
     const parts = [
+      err?.status,
+      err?.code !== undefined ? String(err.code) : undefined,
+      domain,
       reason,
       top && top !== '{0}' ? top : undefined,
-      nested && nested !== '{0}' ? nested : undefined,
+      nested && nested !== '{0}' && nested !== top ? nested : undefined,
     ].filter((part, index, all) => Boolean(part) && all.indexOf(part) === index);
     return parts.length > 0 ? parts.join(': ') : undefined;
   } catch {
@@ -75,11 +85,12 @@ function parseYoutubeErrorBody(body: string): string | undefined {
   }
 }
 
-function youtubeHttpError(kind: string, res: Response, body: string): Error {
+function youtubeHttpError(kind: string, res: Response, body: string, url: string): Error {
   if (body.includes('liveChatEnded')) return new LiveChatEndedError();
+  const status = `${res.status}${res.statusText ? ` ${res.statusText}` : ''}`;
   const detail =
-    parseYoutubeErrorBody(body) || body.slice(0, 300) || res.statusText || 'empty body';
-  return new BadRequestException(`${kind} failed (${res.status}): ${detail}`);
+    parseYoutubeErrorBody(body) || body.slice(0, 500).trim() || 'empty body';
+  return new BadRequestException(`${kind} failed (${status}) ${url}: ${detail}`);
 }
 
 export function pickLiveBroadcast(
@@ -111,6 +122,8 @@ export function pickLiveBroadcast(
 
 @Injectable()
 export class YoutubeLiveChatAdapter implements LiveChatAdapter {
+  private readonly logger = new Logger(YoutubeLiveChatAdapter.name);
+
   async resolveChatSession(input: ResolveChatInput): Promise<ResolvedChatSession> {
     const [active, upcoming] = await Promise.all([
       this.listBroadcasts(input.accessToken, 'active'),
@@ -178,10 +191,12 @@ export class YoutubeLiveChatAdapter implements LiveChatAdapter {
     const trimmed = text.trim();
     if (!trimmed) throw new BadRequestException('reply text is required');
 
-    const res = await fetch(`${YT_API}/${LIVE_CHAT_MESSAGES_PATH}?part=snippet`, {
+    const url = `${YT_API}/${LIVE_CHAT_MESSAGES_PATH}?part=snippet`;
+    const res = await fetch(url, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${accessToken}`,
+        Accept: 'application/json',
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -193,8 +208,11 @@ export class YoutubeLiveChatAdapter implements LiveChatAdapter {
       }),
     });
     if (!res.ok) {
-      const errText = await res.text().catch(() => '');
-      throw youtubeHttpError('liveChatMessages.insert', res, errText);
+      const errText = await this.readErrorBody(res);
+      this.logger.warn(
+        `YouTube POST ${url} -> ${res.status} ${res.statusText} body=${errText}`,
+      );
+      throw youtubeHttpError('liveChatMessages.insert', res, errText, url);
     }
     const data = (await res.json()) as LiveChatInsertResponse;
     return {
@@ -219,19 +237,29 @@ export class YoutubeLiveChatAdapter implements LiveChatAdapter {
       part: 'snippet,status',
       broadcastStatus,
       broadcastType: 'all',
-      maxResults: '5',
+      maxResults: '50',
     });
     return this.ytGet<LiveBroadcastList>(accessToken, `liveBroadcasts?${params.toString()}`);
   }
 
   private async ytGet<T>(accessToken: string, pathAndQuery: string): Promise<T> {
-    const res = await fetch(`${YT_API}/${pathAndQuery}`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
+    const url = `${YT_API}/${pathAndQuery}`;
+    const res = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: 'application/json',
+      },
     });
     if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw youtubeHttpError('YouTube API', res, text);
+      const text = await this.readErrorBody(res);
+      this.logger.warn(`YouTube GET ${url} -> ${res.status} ${res.statusText} body=${text}`);
+      throw youtubeHttpError('YouTube API', res, text, url);
     }
     return (await res.json()) as T;
+  }
+
+  private async readErrorBody(res: Response): Promise<string> {
+    const text = await res.text().catch(() => '');
+    return text.slice(0, 2000);
   }
 }
