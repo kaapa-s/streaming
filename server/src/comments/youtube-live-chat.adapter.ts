@@ -51,7 +51,36 @@ interface LiveChatInsertResponse {
   };
 }
 
+const YT_API = 'https://www.googleapis.com/youtube/v3';
+/** REST path for liveChatMessages.list / insert — not the camelCase resource name. */
+const LIVE_CHAT_MESSAGES_PATH = 'liveChat/messages';
 const UPCOMING_CHAT_STATUSES = new Set(['live', 'testing']);
+
+function parseYoutubeErrorBody(body: string): string | undefined {
+  try {
+    const json = JSON.parse(body) as {
+      error?: { message?: string; errors?: Array<{ reason?: string; message?: string }> };
+    };
+    const reason = json.error?.errors?.[0]?.reason;
+    const top = json.error?.message?.trim();
+    const nested = json.error?.errors?.[0]?.message?.trim();
+    const parts = [
+      reason,
+      top && top !== '{0}' ? top : undefined,
+      nested && nested !== '{0}' ? nested : undefined,
+    ].filter((part, index, all) => Boolean(part) && all.indexOf(part) === index);
+    return parts.length > 0 ? parts.join(': ') : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function youtubeHttpError(kind: string, res: Response, body: string): Error {
+  if (body.includes('liveChatEnded')) return new LiveChatEndedError();
+  const detail =
+    parseYoutubeErrorBody(body) || body.slice(0, 300) || res.statusText || 'empty body';
+  return new BadRequestException(`${kind} failed (${res.status}): ${detail}`);
+}
 
 export function pickLiveBroadcast(
   activeItems: LiveBroadcastItem[] | undefined,
@@ -104,13 +133,13 @@ export class YoutubeLiveChatAdapter implements LiveChatAdapter {
     const params = new URLSearchParams({
       part: 'snippet,authorDetails',
       liveChatId: chatId,
-      maxResults: '50',
+      maxResults: '200',
     });
     if (pageToken) params.set('pageToken', pageToken);
 
     const data = await this.ytGet<LiveChatMessageList>(
       accessToken,
-      `liveChatMessages?${params.toString()}`,
+      `${LIVE_CHAT_MESSAGES_PATH}?${params.toString()}`,
     );
 
     const comments: NormalizedComment[] = [];
@@ -149,7 +178,7 @@ export class YoutubeLiveChatAdapter implements LiveChatAdapter {
     const trimmed = text.trim();
     if (!trimmed) throw new BadRequestException('reply text is required');
 
-    const res = await fetch('https://www.googleapis.com/youtube/v3/liveChatMessages?part=snippet', {
+    const res = await fetch(`${YT_API}/${LIVE_CHAT_MESSAGES_PATH}?part=snippet`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -165,7 +194,7 @@ export class YoutubeLiveChatAdapter implements LiveChatAdapter {
     });
     if (!res.ok) {
       const errText = await res.text().catch(() => '');
-      throw new BadRequestException(`liveChatMessages.insert failed: ${errText.slice(0, 300)}`);
+      throw youtubeHttpError('liveChatMessages.insert', res, errText);
     }
     const data = (await res.json()) as LiveChatInsertResponse;
     return {
@@ -196,15 +225,12 @@ export class YoutubeLiveChatAdapter implements LiveChatAdapter {
   }
 
   private async ytGet<T>(accessToken: string, pathAndQuery: string): Promise<T> {
-    const res = await fetch(`https://www.googleapis.com/youtube/v3/${pathAndQuery}`, {
+    const res = await fetch(`${YT_API}/${pathAndQuery}`, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      if (text.includes('liveChatEnded')) {
-        throw new LiveChatEndedError();
-      }
-      throw new BadRequestException(`YouTube API error: ${text.slice(0, 300)}`);
+      throw youtubeHttpError('YouTube API', res, text);
     }
     return (await res.json()) as T;
   }
