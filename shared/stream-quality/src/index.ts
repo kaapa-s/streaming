@@ -6,6 +6,7 @@ export type {
   PickRecorderFormatOptions,
 } from './types';
 
+export { AUDIO } from './audio';
 export { STREAM_PROFILES } from './profiles';
 export {
   H264_RECORDER_FORMATS,

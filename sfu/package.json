@@ -17,6 +17,7 @@
     "@nestjs/platform-ws": "^11.1.28",
     "@nestjs/websockets": "^11.1.28",
     "@streaming/join-token": "file:../shared/join-token",
+    "@streaming/stream-quality": "file:../shared/stream-quality",
     "dotenv": "^17.4.2",
     "mediasoup": "^3.22.0",
     "reflect-metadata": "^0.2.2",

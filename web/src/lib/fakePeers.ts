@@ -1,4 +1,5 @@
 import type { CompositorPeer } from '@streaming/canvas-compositor';
+import { AUDIO } from '@streaming/stream-quality';
 
 export interface FakePeerHandle extends CompositorPeer {
   stop: () => void;
@@ -51,7 +52,7 @@ export function createFakePeer(index: number, { audio = true } = {}): FakePeerHa
   let audioCtx: AudioContext | undefined;
 
   if (audio) {
-    audioCtx = new AudioContext();
+    audioCtx = new AudioContext({ sampleRate: AUDIO.sampleRate });
     const osc = audioCtx.createOscillator();
     const gain = audioCtx.createGain();
     const dest = audioCtx.createMediaStreamDestination();

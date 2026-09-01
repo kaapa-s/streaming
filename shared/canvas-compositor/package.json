@@ -15,6 +15,9 @@
     "build": "tsc",
     "prepare": "npm run build"
   },
+  "dependencies": {
+    "@streaming/stream-quality": "file:../stream-quality"
+  },
   "devDependencies": {
     "typescript": "^5.9.3"
   }

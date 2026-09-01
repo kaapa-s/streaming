@@ -71,6 +71,11 @@ export class BrowserPoolService implements OnModuleInit, OnModuleDestroy {
         '--no-sandbox',
         '--autoplay-policy=no-user-gesture-required',
         '--use-fake-ui-for-media-stream',
+        // Headless tabs are treated as backgrounded; throttling the compositor
+        // draw/audio graph produces the same crackles as a starved main thread.
+        '--disable-background-timer-throttling',
+        '--disable-renderer-backgrounding',
+        '--disable-backgrounding-occluded-windows',
         // Local SFU may use HTTPS/WSS with a self-signed or mkcert cert.
         ...(process.env.NODE_ENV !== 'production'
           ? ['--ignore-certificate-errors']

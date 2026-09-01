@@ -2,14 +2,15 @@ import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { networkInterfaces } from 'os';
 import * as mediasoup from 'mediasoup';
 import type { types } from 'mediasoup';
+import { AUDIO } from '@streaming/stream-quality';
 
 const MEDIA_CODECS: types.RtpCodecCapability[] = [
   {
     kind: 'audio',
     mimeType: 'audio/opus',
     preferredPayloadType: 111,
-    clockRate: 48000,
-    channels: 2,
+    clockRate: AUDIO.sampleRate,
+    channels: AUDIO.channels,
   },
   {
     kind: 'video',

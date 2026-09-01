@@ -3,6 +3,9 @@ import type { StreamProfile, StreamResolution } from './types';
 /**
  * 1080p60 profile — high end of YouTube live guidance with headroom for archival
  * when the compositor cannot emit H.264 directly.
+ *
+ * Audio clock is `AUDIO` in `./audio.ts`, not per-resolution — do not add a
+ * sampleRate field here or the mix / WebRTC / ffmpeg hops will drift again.
  * @see https://support.google.com/youtube/answer/2853702
  */
 export const STREAM_PROFILES: Record<StreamResolution, StreamProfile> = {

@@ -1,3 +1,5 @@
+import { AUDIO } from '@streaming/stream-quality';
+
 export interface CompositorPeer {
   id: string;
   name: string;
@@ -39,11 +41,21 @@ interface TileEntry {
   name: string;
   stream: MediaStream;
   video: HTMLVideoElement;
+  /** Hidden <audio> that keeps Chromium decoding remote mic RTP for the mix. */
+  audioEl?: HTMLAudioElement;
   audioSource?: MediaStreamAudioSourceNode;
   /** Fingerprint of attached video track ids (not count — replacements keep count=1). */
   videoTrackIds: string;
   /** Fingerprint of mic tracks wired into the mix (empty when mixAudio is off). */
   audioTrackIds: string;
+}
+
+function createMixAudioContext(): AudioContext {
+  try {
+    return new AudioContext({ sampleRate: AUDIO.sampleRate, latencyHint: 'interactive' });
+  } catch {
+    return new AudioContext({ latencyHint: 'interactive' });
+  }
 }
 
 interface ScreenEntry {
@@ -84,9 +96,28 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
 
   let audioCtx: AudioContext | undefined;
   let audioDestination: MediaStreamAudioDestinationNode | undefined;
+  let mixBus: GainNode | undefined;
+  let mixKeepAlive: ConstantSourceNode | undefined;
   if (mixAudio) {
-    audioCtx = new AudioContext();
+    audioCtx = createMixAudioContext();
     audioDestination = audioCtx.createMediaStreamDestination();
+    // Headroom + limiter: peer mics (and summed guests) otherwise hit 0 dBFS
+    // as single-sample spikes that decode as clicks.
+    const gain = audioCtx.createGain();
+    gain.gain.value = AUDIO.mixGain;
+    const limiter = audioCtx.createDynamicsCompressor();
+    limiter.threshold.value = -6;
+    limiter.knee.value = 4;
+    limiter.ratio.value = 12;
+    limiter.attack.value = 0.003;
+    limiter.release.value = 0.12;
+    gain.connect(limiter);
+    limiter.connect(audioDestination);
+    mixBus = gain;
+    mixKeepAlive = audioCtx.createConstantSource();
+    mixKeepAlive.offset.value = 0;
+    mixKeepAlive.connect(mixBus);
+    mixKeepAlive.start();
     void audioCtx.resume();
   }
 
@@ -110,22 +141,20 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
   const detachPeerAudio = (entry: TileEntry) => {
     entry.audioSource?.disconnect();
     entry.audioSource = undefined;
+    if (entry.audioEl) {
+      entry.audioEl.pause();
+      entry.audioEl.srcObject = null;
+      entry.audioEl = undefined;
+    }
     entry.audioTrackIds = '';
   };
 
   const bindVideo = (video: HTMLVideoElement, stream: MediaStream): string => {
     const ids = videoTrackIds(stream);
-    if (mixAudio) {
-      // Headless recorder only: bind the live peer stream (cam+mic). Chromium
-      // won't decode remote mic RTP into MediaStreamSource unless a media
-      // element is playing that stream — this is what made 09:33 recordings
-      // have real audio. Element stays muted; page is never shown to speakers.
-      video.srcObject = stream;
-    } else {
-      // Studio preview: camera frames only — never attach mic (feedback).
-      const tracks = stream.getVideoTracks().filter((t) => t.readyState !== 'ended');
-      video.srcObject = tracks.length > 0 ? new MediaStream(tracks) : null;
-    }
+    // Camera frames only on <video> — never attach mic here (feedback in studio,
+    // and a dual video+WebAudio consumer of the same stream crackles in Chrome).
+    const tracks = stream.getVideoTracks().filter((t) => t.readyState !== 'ended');
+    video.srcObject = tracks.length > 0 ? new MediaStream(tracks) : null;
     if (ids) {
       void video.play().catch((err: unknown) => {
         console.warn('[compositor] video play failed', err);
@@ -136,7 +165,7 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
 
   /** Recorder-only: tap peer mic into the MediaRecorder mix via Web Audio. */
   const bindPeerAudio = (entry: TileEntry, stream: MediaStream) => {
-    if (!audioCtx || !audioDestination) return;
+    if (!audioCtx || !mixBus) return;
     const tracks = stream.getAudioTracks().filter((t) => t.readyState !== 'ended');
     const ids = tracks.map((t) => t.id).join(',');
     if (entry.audioTrackIds === ids) return;
@@ -145,9 +174,22 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
     entry.audioTrackIds = ids;
     if (!ids) return;
 
-    // Use the live peer stream (same object bound to <video> when mixAudio).
-    entry.audioSource = audioCtx.createMediaStreamSource(stream);
-    entry.audioSource.connect(audioDestination);
+    // Chromium will not decode remote mic RTP into MediaStreamSource unless a
+    // media element is playing that audio. Use a dedicated muted <audio> — not
+    // the canvas <video> — so cam and mic are not dual-consumed on one stream.
+    const audioStream = new MediaStream(tracks);
+    const audioEl = document.createElement('audio');
+    audioEl.autoplay = true;
+    audioEl.muted = true;
+    audioEl.defaultMuted = true;
+    audioEl.volume = 0;
+    audioEl.srcObject = audioStream;
+    void audioEl.play().catch((err: unknown) => {
+      console.warn('[compositor] audio play failed', err);
+    });
+    entry.audioEl = audioEl;
+    entry.audioSource = audioCtx.createMediaStreamSource(audioStream);
+    entry.audioSource.connect(mixBus);
   };
 
   const setPeers = (peers: CompositorPeer[]) => {
@@ -430,9 +472,24 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
     drawCommentOverlay();
   };
 
-  // setInterval instead of requestAnimationFrame: keeps drawing in headless
-  // Chromium and when the tab is not focused.
-  const timer = window.setInterval(draw, 1000 / fps);
+  // Chained setTimeout (not setInterval / rAF): rAF does not fire in headless
+  // Chromium, and setInterval piles up callbacks when a 1080p60 draw overruns
+  // (~23 fps observed), starving the Web Audio / MediaRecorder thread and
+  // producing clicks. Scheduling the next frame after draw() yields a
+  // sustainable rate instead of a backlog.
+  let timer = 0;
+  let stopped = false;
+  const scheduleDraw = () => {
+    timer = window.setTimeout(() => {
+      if (stopped) return;
+      try {
+        draw();
+      } finally {
+        if (!stopped) scheduleDraw();
+      }
+    }, 1000 / fps);
+  };
+  scheduleDraw();
 
   const stream = canvas.captureStream(fps);
   if (audioDestination) {
@@ -445,9 +502,15 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
     if (audioCtx.state === 'suspended') {
       await audioCtx.resume();
     }
+    if (audioCtx.sampleRate !== AUDIO.sampleRate) {
+      throw new Error(
+        `AudioContext sampleRate is ${audioCtx.sampleRate}, need ${AUDIO.sampleRate}. ` +
+          'Recording would crackle (Web Audio / Opus clock mismatch).',
+      );
+    }
     const track = audioDestination?.stream.getAudioTracks()[0];
     console.log(
-      `[compositor] ensureAudio state=${audioCtx.state} ` +
+      `[compositor] ensureAudio state=${audioCtx.state} sampleRate=${audioCtx.sampleRate} ` +
         `mixPeers=${[...entries.values()].filter((e) => e.audioSource).length} ` +
         `outTrack=${track ? `${track.readyState}/${track.muted ? 'muted' : 'live'}` : 'none'}`,
     );
@@ -464,7 +527,8 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
   };
 
   const stop = () => {
-    window.clearInterval(timer);
+    stopped = true;
+    window.clearTimeout(timer);
     for (const entry of entries.values()) {
       detachPeerAudio(entry);
       entry.video.srcObject = null;
@@ -475,6 +539,13 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
       screenEntry = undefined;
     }
     for (const track of stream.getTracks()) track.stop();
+    try {
+      mixKeepAlive?.stop();
+    } catch {
+      // already stopped
+    }
+    mixKeepAlive?.disconnect();
+    mixKeepAlive = undefined;
     void audioCtx?.close();
   };
 

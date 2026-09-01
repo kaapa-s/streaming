@@ -6,7 +6,12 @@ import type { WebSocket } from 'ws';
 import { SessionsService } from '../sessions/sessions.service';
 import type { SessionLog } from './session-log';
 import { redactRtmp } from './rtmp';
-import { parseRecorderCodec, STREAM_PROFILES, type StreamProfile } from '@streaming/stream-quality';
+import {
+  AUDIO,
+  parseRecorderCodec,
+  STREAM_PROFILES,
+  type StreamProfile,
+} from '@streaming/stream-quality';
 
 /**
  * Binary sink on /ws/recording?room=X&codec=h264|vp9|vp8 — compositor streams
@@ -148,14 +153,16 @@ function buildFfmpegArgs(profile: StreamProfile, codec: string, rtmpUrl: string)
     'pipe:0',
   ];
   const audio = [
+    '-af',
+    AUDIO.ffmpegResampleFilter,
     '-c:a',
     'aac',
     '-b:a',
     profile.rtmpAudioBitrate,
     '-ar',
-    '48000',
+    String(AUDIO.sampleRate),
     '-ac',
-    '2',
+    String(AUDIO.channels),
   ];
   const out = ['-f', 'flv', rtmpUrl];
 
