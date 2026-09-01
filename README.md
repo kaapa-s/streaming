@@ -178,6 +178,8 @@ cp .env.example .env
 #   COMPOSITOR_URL=https://compositor.kaapa.pl
 #   MEDIASOUP_ANNOUNCED_IP=<sfu-eip>
 #   Optional S3: AWS_REGION + S3_BUCKET (+ access keys locally; on EC2 prefer IAM role)
+#   Optional YouTube chat: GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET /
+#     GOOGLE_OAUTH_REDIRECT_URI / WEB_ORIGIN / TOKEN_ENCRYPTION_KEY
 # Same SFU_JOIN_SECRET and COMPOSITOR_INTERNAL_SECRET across boxes that need them.
 ```
 

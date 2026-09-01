@@ -48,6 +48,13 @@ services:
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       S3_BUCKET: ${S3_BUCKET:-}
       S3_PREFIX: ${S3_PREFIX:-recordings}
+      # YouTube Live Chat OAuth (optional). Compose --env-file does not inject
+      # these unless listed here; a container restart also does not re-read .env.
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_OAUTH_REDIRECT_URI: ${GOOGLE_OAUTH_REDIRECT_URI:-}
+      WEB_ORIGIN: ${WEB_ORIGIN:-}
+      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:-}
       PORT: 3000
 
   web:
