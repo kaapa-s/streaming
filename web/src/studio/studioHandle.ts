@@ -56,9 +56,7 @@ export type StudioValue = {
   commentsSessionActive: boolean;
   commentsSessionTitle?: string;
   commentsSessionPending: boolean;
-  commentsVideoUrl: string;
-  setCommentsVideoUrl: (value: string) => void;
-  startCommentsSession: () => void;
+  commentsBindFailed: boolean;
   replyText: string;
   setReplyText: (value: string) => void;
   replyPending: boolean;

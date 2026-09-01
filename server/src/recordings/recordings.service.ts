@@ -1,11 +1,14 @@
 import {
   BadRequestException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { CommentsService } from '../comments/comments.service';
 import { Recording, Room } from '../entities';
 import { RoomsService } from '../rooms/rooms.service';
 import { CompositorClient } from './compositor.client';
@@ -24,6 +27,8 @@ export class RecordingsService {
     private readonly s3: S3PresignService,
     @InjectRepository(Recording)
     private readonly recordings: Repository<Recording>,
+    @Inject(forwardRef(() => CommentsService))
+    private readonly comments: CommentsService,
   ) {}
 
   async start(
@@ -59,6 +64,9 @@ export class RecordingsService {
         token,
       });
       await this.recordings.update(row.id, { status: 'recording' });
+      if (rtmpUrl) {
+        this.comments.bindForLiveRoom(slug, room.ownerId);
+      }
       return {
         room: result.room,
         live: result.live,
@@ -75,6 +83,7 @@ export class RecordingsService {
     room: Room,
   ): Promise<{ room: string; file?: string; live: boolean; downloadUrl?: string; s3Key?: string }> {
     const slug = room.slug;
+    this.comments.stopSession(slug);
     const recordingId = this.activeIds.get(slug);
     if (!recordingId) {
       // Still try compositor stop in case of desync.

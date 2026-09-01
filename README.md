@@ -87,8 +87,8 @@ Going live auto-starts the comments panel against your active broadcast.
    - `WEB_ORIGIN=https://localhost:5173` (studio origin for post-OAuth redirect)
 3. In Settings, click **Connect YouTube** and approve access.
 4. Start the YouTube broadcast (same account), paste the RTMP key, click **Go live**.
-   The comments panel auto-binds. If YouTube has not marked the broadcast active yet,
-   paste a live video URL and click **Start chat feed**.
+   The comments panel auto-binds once YouTube reports the broadcast (this can take a
+   short wait after RTMP starts). No live video URL is needed.
 5. Reply from the panel; **On screen** pins a comment on the program preview and
    compositor (YouTube viewers see it for ~10s).
 

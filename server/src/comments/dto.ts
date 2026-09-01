@@ -1,19 +1,11 @@
 import { Type } from 'class-transformer';
 import {
-  IsOptional,
   IsString,
   MaxLength,
   MinLength,
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
-
-export class StartCommentsSessionDto {
-  @IsOptional()
-  @IsString()
-  @MaxLength(500)
-  declare videoUrl?: string;
-}
 
 export class ReplyCommentDto {
   @IsString()

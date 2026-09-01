@@ -1,5 +1,7 @@
 export type PlatformId = 'youtube';
 
+export type ChatBindStatus = 'connecting' | 'active' | 'failed';
+
 export interface NormalizedComment {
   id: string;
   platform: PlatformId;
@@ -12,8 +14,6 @@ export interface NormalizedComment {
 
 export interface ResolveChatInput {
   accessToken: string;
-  /** Optional YouTube video / live URL or raw video id. */
-  videoUrl?: string;
 }
 
 export interface ResolvedChatSession {
@@ -47,4 +47,11 @@ export interface CommentOverlayPayload {
   text: string;
   /** Epoch ms when the overlay should auto-clear. */
   until: number;
+}
+
+export class LiveChatEndedError extends Error {
+  constructor() {
+    super('YouTube live chat has ended');
+    this.name = 'LiveChatEndedError';
+  }
 }

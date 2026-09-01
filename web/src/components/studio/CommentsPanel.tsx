@@ -7,10 +7,7 @@ type CommentsPanelProps = {
   live: boolean;
   sessionActive: boolean;
   sessionTitle?: string;
-  sessionPending: boolean;
-  videoUrl: string;
-  onVideoUrlChange: (value: string) => void;
-  onStartSession: () => void;
+  bindFailed: boolean;
   comments: LiveComment[];
   replyText: string;
   onReplyTextChange: (value: string) => void;
@@ -27,10 +24,7 @@ export function CommentsPanel({
   live,
   sessionActive,
   sessionTitle,
-  sessionPending,
-  videoUrl,
-  onVideoUrlChange,
-  onStartSession,
+  bindFailed,
   comments,
   replyText,
   onReplyTextChange,
@@ -64,21 +58,11 @@ export function CommentsPanel({
       )}
 
       {youtubeConnected && !sessionActive && (
-        <div className="flex flex-col gap-2">
-          <input
-            className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-accent"
-            type="text"
-            autoComplete="off"
-            spellCheck={false}
-            placeholder="Live video URL (optional)"
-            value={videoUrl}
-            onChange={(e) => onVideoUrlChange(e.target.value)}
-            title="Leave blank to use your active YouTube broadcast"
-          />
-          <Button type="button" loading={sessionPending} onClick={onStartSession}>
-            Start chat feed
-          </Button>
-        </div>
+        <p className="text-sm text-ink-muted">
+          {bindFailed
+            ? 'Could not connect to YouTube chat yet. Waiting for the broadcast to go live…'
+            : 'Connecting to YouTube chat…'}
+        </p>
       )}
 
       {sessionActive && (

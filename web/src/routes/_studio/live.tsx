@@ -91,10 +91,7 @@ function LivePage() {
               live={s.live}
               sessionActive={s.commentsSessionActive}
               sessionTitle={s.commentsSessionTitle}
-              sessionPending={s.commentsSessionPending}
-              videoUrl={s.commentsVideoUrl}
-              onVideoUrlChange={s.setCommentsVideoUrl}
-              onStartSession={s.startCommentsSession}
+              bindFailed={s.commentsBindFailed}
               comments={s.comments}
               replyText={s.replyText}
               onReplyTextChange={s.setReplyText}

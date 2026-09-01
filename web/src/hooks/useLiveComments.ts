@@ -18,6 +18,8 @@ type YoutubeStatus = {
   externalAccountId?: string;
 };
 
+type ChatBindStatus = 'connecting' | 'active' | 'failed';
+
 type UseLiveCommentsArgs = {
   room: string;
   live: boolean;
@@ -36,6 +38,24 @@ async function parseError(res: Response): Promise<string> {
   }
 }
 
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      { once: true },
+    );
+  });
+}
+
 export function useLiveComments({
   room,
   live,
@@ -48,10 +68,10 @@ export function useLiveComments({
   const [comments, setComments] = useState<LiveComment[]>([]);
   const [sessionActive, setSessionActive] = useState(false);
   const [sessionTitle, setSessionTitle] = useState<string | undefined>();
-  const [videoUrl, setVideoUrl] = useState('');
   const [replyText, setReplyText] = useState('');
   const [replyPending, setReplyPending] = useState(false);
   const [sessionPending, setSessionPending] = useState(false);
+  const [bindFailed, setBindFailed] = useState(false);
   const [pinnedId, setPinnedId] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const clearPinTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -67,7 +87,6 @@ export function useLiveComments({
     void refreshYoutubeStatus();
   }, []);
 
-  // Surface OAuth redirect query params once.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const yt = params.get('youtube');
@@ -97,6 +116,11 @@ export function useLiveComments({
     }
   };
 
+  const stopStream = () => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+  };
+
   const disconnectYoutube = async () => {
     setYoutubePending(true);
     setError('');
@@ -106,6 +130,8 @@ export function useLiveComments({
       setYoutubeStatus({ connected: false });
       stopStream();
       setSessionActive(false);
+      setSessionPending(false);
+      setBindFailed(false);
       setComments([]);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -114,18 +140,92 @@ export function useLiveComments({
     }
   };
 
-  const stopStream = () => {
-    abortRef.current?.abort();
-    abortRef.current = null;
+  const clearPinned = () => {
+    if (clearPinTimer.current) clearTimeout(clearPinTimer.current);
+    clearPinTimer.current = undefined;
+    setPinnedId(null);
+    setPreviewOverlay(null);
   };
 
-  const startCommentsStream = async () => {
-    stopStream();
-    const token = getAccessToken();
-    if (!token) return;
+  useEffect(() => {
+    if (!live || !isOwner || !youtubeStatus.connected) {
+      stopStream();
+      setSessionActive(false);
+      setSessionPending(false);
+      setBindFailed(false);
+      setComments([]);
+      if (!live) clearPinned();
+      return;
+    }
+
     const ac = new AbortController();
     abortRef.current = ac;
-    try {
+    setSessionPending(true);
+    setBindFailed(false);
+    setError('');
+
+    const applyBindStatus = (status: ChatBindStatus, title?: string) => {
+      if (title) setSessionTitle(title);
+      if (status === 'active') {
+        setSessionActive(true);
+        setSessionPending(false);
+        setBindFailed(false);
+      } else if (status === 'failed') {
+        setSessionActive(false);
+        setSessionPending(false);
+        setBindFailed(true);
+      } else {
+        setSessionActive(false);
+        setSessionPending(true);
+        setBindFailed(false);
+      }
+    };
+
+    const handleSseChunk = (chunk: string) => {
+      let event = 'message';
+      const dataLines: string[] = [];
+      for (const line of chunk.split('\n')) {
+        if (line.startsWith('event:')) event = line.slice(6).trim();
+        else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
+      }
+      if (dataLines.length === 0) return;
+      let payload: unknown;
+      try {
+        payload = JSON.parse(dataLines.join('\n'));
+      } catch {
+        return;
+      }
+      if (event === 'status') {
+        const statusPayload = payload as { bindStatus?: ChatBindStatus; title?: string };
+        if (statusPayload.bindStatus) {
+          applyBindStatus(statusPayload.bindStatus, statusPayload.title);
+        }
+        return;
+      }
+      if (event === 'snapshot' || event === 'comments') {
+        const commentsPayload = payload as { comments?: LiveComment[] };
+        const list = commentsPayload.comments ?? [];
+        if (event === 'snapshot') {
+          setComments(list);
+        } else if (list.length > 0) {
+          setComments((prev) => {
+            const seen = new Set(prev.map((c) => c.id));
+            const next = [...prev];
+            for (const c of list) {
+              if (!seen.has(c.id)) next.push(c);
+            }
+            return next.slice(-200);
+          });
+        }
+      } else if (event === 'error') {
+        const errPayload = payload as { message?: string };
+        if (errPayload.message) setError(errPayload.message);
+      }
+    };
+
+    const openStream = async () => {
+      const token = getAccessToken();
+      if (!token) throw new Error('not signed in');
       const res = await fetch(`/api/rooms/${encodeURIComponent(room)}/comments/stream`, {
         headers: { Authorization: `Bearer ${token}`, Accept: 'text/event-stream' },
         signal: ac.signal,
@@ -146,94 +246,40 @@ export function useLiveComments({
           handleSseChunk(chunk);
         }
       }
-    } catch (err) {
-      if (ac.signal.aborted) return;
-      setError(err instanceof Error ? err.message : String(err));
-      setSessionActive(false);
-    }
-  };
+    };
 
-  const handleSseChunk = (chunk: string) => {
-    let event = 'message';
-    const dataLines: string[] = [];
-    for (const line of chunk.split('\n')) {
-      if (line.startsWith('event:')) event = line.slice(6).trim();
-      else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
-    }
-    if (dataLines.length === 0) return;
-    let payload: unknown;
-    try {
-      payload = JSON.parse(dataLines.join('\n'));
-    } catch {
-      return;
-    }
-    if (event === 'snapshot' || event === 'comments') {
-      const commentsPayload = payload as { comments?: LiveComment[] };
-      const list = commentsPayload.comments ?? [];
-      if (event === 'snapshot') {
-        setComments(list);
-      } else if (list.length > 0) {
-        setComments((prev) => {
-          const seen = new Set(prev.map((c) => c.id));
-          const next = [...prev];
-          for (const c of list) {
-            if (!seen.has(c.id)) next.push(c);
+    const run = async () => {
+      while (!ac.signal.aborted) {
+        try {
+          const res = await apiFetch(`/api/rooms/${encodeURIComponent(room)}/comments/session`, {
+            method: 'POST',
+            body: JSON.stringify({}),
+          });
+          if (ac.signal.aborted) return;
+          if (res.ok) {
+            const body = (await res.json()) as { status?: ChatBindStatus; title?: string };
+            if (body.status) applyBindStatus(body.status, body.title);
           }
-          return next.slice(-200);
-        });
+          await openStream();
+        } catch (err) {
+          if (ac.signal.aborted) return;
+          setSessionActive(false);
+          setError(err instanceof Error ? err.message : String(err));
+        }
+        if (ac.signal.aborted) return;
+        await sleep(2000, ac.signal);
       }
-    } else if (event === 'error') {
-      const errPayload = payload as { message?: string };
-      if (errPayload.message) setError(errPayload.message);
-    }
-  };
+    };
 
-  const startSession = async () => {
-    if (!isOwner) return;
-    setSessionPending(true);
-    setError('');
-    try {
-      const res = await apiFetch(`/api/rooms/${encodeURIComponent(room)}/comments/session`, {
-        method: 'POST',
-        body: JSON.stringify({
-          videoUrl: videoUrl.trim() || undefined,
-        }),
-      });
-      if (!res.ok) throw new Error(await parseError(res));
-      const body = (await res.json()) as { title?: string };
-      setSessionTitle(body.title);
-      setSessionActive(true);
-      setComments([]);
-      void startCommentsStream();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setSessionActive(false);
-    } finally {
-      setSessionPending(false);
-    }
-  };
+    void run();
 
-  // Auto-start chat when going live (owner + YouTube connected).
-  useEffect(() => {
-    if (!live || !isOwner || !youtubeStatus.connected || sessionActive || sessionPending) {
-      return;
-    }
-    void startSession();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional trigger on live/connected
-  }, [live, isOwner, youtubeStatus.connected]);
-
-  useEffect(() => {
-    if (!live && sessionActive) {
-      stopStream();
-      setSessionActive(false);
-      if (clearPinTimer.current) clearTimeout(clearPinTimer.current);
-      clearPinTimer.current = undefined;
-      setPinnedId(null);
-      setPreviewOverlay(null);
-    }
-  }, [live, sessionActive, setPreviewOverlay]);
-
-  useEffect(() => () => stopStream(), []);
+    return () => {
+      ac.abort();
+      if (abortRef.current === ac) abortRef.current = null;
+    };
+    // clearPinned uses setPreviewOverlay; omitting it avoids re-subscribing mid-stream
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [live, isOwner, youtubeStatus.connected, room, setError, setPreviewOverlay]);
 
   const sendReply = async () => {
     const text = replyText.trim();
@@ -252,13 +298,6 @@ export function useLiveComments({
     } finally {
       setReplyPending(false);
     }
-  };
-
-  const clearPinned = () => {
-    if (clearPinTimer.current) clearTimeout(clearPinTimer.current);
-    clearPinTimer.current = undefined;
-    setPinnedId(null);
-    setPreviewOverlay(null);
   };
 
   const pinComment = async (comment: LiveComment) => {
@@ -304,9 +343,7 @@ export function useLiveComments({
     sessionActive,
     sessionTitle,
     sessionPending,
-    videoUrl,
-    setVideoUrl,
-    startSession,
+    bindFailed,
     replyText,
     setReplyText,
     replyPending,

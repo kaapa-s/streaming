@@ -98,11 +98,7 @@ export function useStudioController(room: string): StudioValue {
     commentsSessionActive: comments.sessionActive,
     commentsSessionTitle: comments.sessionTitle,
     commentsSessionPending: comments.sessionPending,
-    commentsVideoUrl: comments.videoUrl,
-    setCommentsVideoUrl: comments.setVideoUrl,
-    startCommentsSession: () => {
-      void comments.startSession();
-    },
+    commentsBindFailed: comments.bindFailed,
     replyText: comments.replyText,
     setReplyText: comments.setReplyText,
     replyPending: comments.replyPending,

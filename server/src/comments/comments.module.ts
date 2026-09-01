@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { PlatformsModule } from '../platforms/platforms.module';
 import { RecordingsModule } from '../recordings/recordings.module';
 import { RoomsModule } from '../rooms/rooms.module';
@@ -7,7 +7,7 @@ import { CommentsService } from './comments.service';
 import { YoutubeLiveChatAdapter } from './youtube-live-chat.adapter';
 
 @Module({
-  imports: [RoomsModule, PlatformsModule, RecordingsModule],
+  imports: [RoomsModule, PlatformsModule, forwardRef(() => RecordingsModule)],
   controllers: [CommentsController],
   providers: [CommentsService, YoutubeLiveChatAdapter],
   exports: [CommentsService],

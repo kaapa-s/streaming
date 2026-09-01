@@ -6,20 +6,16 @@ import type {
   ResolveChatInput,
   ResolvedChatSession,
 } from './types';
+import { LiveChatEndedError } from './types';
 
-interface LiveBroadcastList {
-  items?: Array<{
-    id?: string;
-    snippet?: { title?: string; liveChatId?: string };
-  }>;
+interface LiveBroadcastItem {
+  id?: string;
+  snippet?: { title?: string; liveChatId?: string };
+  status?: { lifeCycleStatus?: string };
 }
 
-interface VideoList {
-  items?: Array<{
-    id?: string;
-    snippet?: { title?: string };
-    liveStreamingDetails?: { activeLiveChatId?: string };
-  }>;
+interface LiveBroadcastList {
+  items?: LiveBroadcastItem[];
 }
 
 interface LiveChatMessageList {
@@ -55,33 +51,31 @@ interface LiveChatInsertResponse {
   };
 }
 
-/** Extract a YouTube video id from common URL shapes or a bare id. */
-export function parseYoutubeVideoId(input: string): string | undefined {
-  const trimmed = input.trim();
-  if (!trimmed) return undefined;
-  if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) return trimmed;
+const UPCOMING_CHAT_STATUSES = new Set(['live', 'testing']);
 
-  try {
-    const url = new URL(trimmed);
-    const host = url.hostname.replace(/^www\./, '');
-    if (host === 'youtu.be') {
-      const id = url.pathname.split('/').filter(Boolean)[0];
-      return id && /^[a-zA-Z0-9_-]{11}$/.test(id) ? id : undefined;
-    }
-    if (host === 'youtube.com' || host === 'm.youtube.com' || host === 'music.youtube.com') {
-      const v = url.searchParams.get('v');
-      if (v && /^[a-zA-Z0-9_-]{11}$/.test(v)) return v;
-      const parts = url.pathname.split('/').filter(Boolean);
-      if (
-        (parts[0] === 'live' || parts[0] === 'embed' || parts[0] === 'shorts' || parts[0] === 'v') &&
-        parts[1] &&
-        /^[a-zA-Z0-9_-]{11}$/.test(parts[1])
-      ) {
-        return parts[1];
-      }
-    }
-  } catch {
-    return undefined;
+export function pickLiveBroadcast(
+  activeItems: LiveBroadcastItem[] | undefined,
+  upcomingItems: LiveBroadcastItem[] | undefined,
+): ResolvedChatSession | undefined {
+  const fromActive = (activeItems ?? []).find((b) => b.snippet?.liveChatId);
+  if (fromActive?.snippet?.liveChatId) {
+    return {
+      chatId: fromActive.snippet.liveChatId,
+      videoId: fromActive.id,
+      title: fromActive.snippet.title,
+    };
+  }
+
+  const fromUpcoming = (upcomingItems ?? []).find((b) => {
+    const life = b.status?.lifeCycleStatus;
+    return Boolean(b.snippet?.liveChatId && life && UPCOMING_CHAT_STATUSES.has(life));
+  });
+  if (fromUpcoming?.snippet?.liveChatId) {
+    return {
+      chatId: fromUpcoming.snippet.liveChatId,
+      videoId: fromUpcoming.id,
+      title: fromUpcoming.snippet.title,
+    };
   }
   return undefined;
 }
@@ -89,14 +83,17 @@ export function parseYoutubeVideoId(input: string): string | undefined {
 @Injectable()
 export class YoutubeLiveChatAdapter implements LiveChatAdapter {
   async resolveChatSession(input: ResolveChatInput): Promise<ResolvedChatSession> {
-    if (input.videoUrl?.trim()) {
-      const videoId = parseYoutubeVideoId(input.videoUrl);
-      if (!videoId) {
-        throw new BadRequestException('Could not parse a YouTube video id from the URL');
-      }
-      return this.resolveFromVideoId(input.accessToken, videoId);
+    const [active, upcoming] = await Promise.all([
+      this.listBroadcasts(input.accessToken, 'active'),
+      this.listBroadcasts(input.accessToken, 'upcoming'),
+    ]);
+    const resolved = pickLiveBroadcast(active.items, upcoming.items);
+    if (!resolved) {
+      throw new BadRequestException(
+        'No active YouTube broadcast yet — waiting for YouTube to go live',
+      );
     }
-    return this.resolveActiveBroadcast(input.accessToken);
+    return resolved;
   }
 
   async pollComments(
@@ -185,51 +182,17 @@ export class YoutubeLiveChatAdapter implements LiveChatAdapter {
     };
   }
 
-  private async resolveFromVideoId(
+  private async listBroadcasts(
     accessToken: string,
-    videoId: string,
-  ): Promise<ResolvedChatSession> {
+    broadcastStatus: 'active' | 'upcoming',
+  ): Promise<LiveBroadcastList> {
     const params = new URLSearchParams({
-      part: 'snippet,liveStreamingDetails',
-      id: videoId,
-    });
-    const data = await this.ytGet<VideoList>(accessToken, `videos?${params.toString()}`);
-    const item = data.items?.[0];
-    const chatId = item?.liveStreamingDetails?.activeLiveChatId;
-    if (!chatId) {
-      throw new BadRequestException(
-        'No active live chat for that video — is the broadcast live?',
-      );
-    }
-    return {
-      chatId,
-      videoId,
-      title: item?.snippet?.title,
-    };
-  }
-
-  private async resolveActiveBroadcast(accessToken: string): Promise<ResolvedChatSession> {
-    const params = new URLSearchParams({
-      part: 'snippet',
-      broadcastStatus: 'active',
+      part: 'snippet,status',
+      broadcastStatus,
       broadcastType: 'all',
       maxResults: '5',
     });
-    const data = await this.ytGet<LiveBroadcastList>(
-      accessToken,
-      `liveBroadcasts?${params.toString()}`,
-    );
-    const item = data.items?.find((b) => b.snippet?.liveChatId);
-    if (!item?.snippet?.liveChatId) {
-      throw new BadRequestException(
-        'No active YouTube broadcast (start the stream in YouTube Studio, or paste the live URL)',
-      );
-    }
-    return {
-      chatId: item.snippet.liveChatId,
-      videoId: item.id,
-      title: item.snippet.title,
-    };
+    return this.ytGet<LiveBroadcastList>(accessToken, `liveBroadcasts?${params.toString()}`);
   }
 
   private async ytGet<T>(accessToken: string, pathAndQuery: string): Promise<T> {
@@ -238,6 +201,9 @@ export class YoutubeLiveChatAdapter implements LiveChatAdapter {
     });
     if (!res.ok) {
       const text = await res.text().catch(() => '');
+      if (text.includes('liveChatEnded')) {
+        throw new LiveChatEndedError();
+      }
       throw new BadRequestException(`YouTube API error: ${text.slice(0, 300)}`);
     }
     return (await res.json()) as T;
