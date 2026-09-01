@@ -67,6 +67,33 @@ reclaim_disk() {
   docker system df || true
 }
 
+# Delete leftover *.webm on the recordings volume (session logs + diagnostics stay).
+# Prefers the running compositor so in-progress / pending-upload files are skipped.
+purge_local_recordings() {
+  echo "==> removing leftover local .webm recordings"
+  if "${COMPOSE[@]}" --profile compositor exec -T compositor true >/dev/null 2>&1; then
+    if "${COMPOSE[@]}" --profile compositor exec -T compositor node -e '
+      fetch("http://127.0.0.1:3002/internal/recordings/purge-local", {
+        method: "POST",
+        headers: { "x-internal-secret": process.env.COMPOSITOR_INTERNAL_SECRET ?? "" },
+      }).then(async (r) => {
+        const t = await r.text();
+        if (!r.ok) { console.error(t); process.exit(1); }
+        console.log(t);
+      }).catch((err) => { console.error(err); process.exit(1); });
+    '; then
+      return 0
+    fi
+    echo "==> purge endpoint unavailable — deleting .webm in running container"
+    "${COMPOSE[@]}" --profile compositor exec -T compositor \
+      find /app/compositor/recordings -maxdepth 1 -type f -name '*.webm' -delete || true
+    return 0
+  fi
+  echo "==> compositor not running — deleting .webm from recordings volume"
+  "${COMPOSE[@]}" --profile compositor run --rm --no-deps --entrypoint find compositor \
+    /app/compositor/recordings -maxdepth 1 -type f -name '*.webm' -delete || true
+}
+
 # Build new images while the old stack is still up, then recreate containers
 # from those images (short outage), then prune the previous image generation.
 # Args: optional compose profile flags, then service names (empty = default project).
@@ -166,6 +193,7 @@ case "$TARGET" in
     fi
 
     reclaim_disk
+    purge_local_recordings
 
     avail_kb="$(df -Pk "$ROOT" | awk 'NR==2 { print $4 }')"
     if [[ -n "$avail_kb" && "$avail_kb" -lt 3000000 ]]; then

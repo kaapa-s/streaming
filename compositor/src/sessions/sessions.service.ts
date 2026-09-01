@@ -4,13 +4,13 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { mkdirSync, readFileSync } from 'fs';
+import { mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync } from 'fs';
 import * as path from 'path';
 import type { Browser, Page } from 'puppeteer';
 import type { ChildProcess } from 'child_process';
 import { BrowserPoolService } from '../browser/browser-pool.service';
 import { assertFfmpegAvailable, normalizeRtmpUrl, redactRtmp } from '../recordings/rtmp';
-import { SessionLog, sessionStamp } from '../recordings/session-log';
+import { SessionLog, sessionStamp, taggedRecordingPath } from '../recordings/session-log';
 import {
   parseResolution,
   STREAM_PROFILES,
@@ -328,9 +328,62 @@ export class SessionsService {
         `S3 upload failed status=${res.status} ${text.slice(0, 200)}`,
       );
     }
+    try {
+      const tagged = taggedRecordingPath(pending);
+      if (tagged !== pending) renameSync(pending, tagged);
+      unlinkSync(tagged);
+      this.logger.log(`uploaded room=${room} file=${pending} removed=${tagged}`);
+    } catch (err) {
+      this.logger.warn(
+        `uploaded room=${room} file=${pending} but local cleanup failed: ${String(err)}`,
+      );
+    }
     this.clearPendingFile(room);
-    this.logger.log(`uploaded room=${room} file=${pending}`);
     return { room, uploaded: true };
+  }
+
+  /** Delete leftover `*.webm` on disk. Skips in-progress / pending-upload files. */
+  purgeLocalRecordings(): { deleted: string[]; skipped: string[] } {
+    const skip = new Set<string>();
+    for (const s of this.sessions.values()) {
+      if (s.file) skip.add(path.resolve(s.file));
+      if (s.pendingFile) skip.add(path.resolve(s.pendingFile));
+    }
+    for (const file of this.pendingFiles.values()) {
+      skip.add(path.resolve(file));
+    }
+
+    const deleted: string[] = [];
+    const skipped: string[] = [];
+    let names: string[];
+    try {
+      names = readdirSync(this.dir);
+    } catch (err) {
+      this.logger.warn(`purge: cannot read ${this.dir}: ${String(err)}`);
+      return { deleted, skipped };
+    }
+
+    for (const name of names) {
+      if (!name.endsWith('.webm')) continue;
+      const full = path.resolve(this.dir, name);
+      try {
+        if (!statSync(full).isFile()) continue;
+      } catch {
+        continue;
+      }
+      if (skip.has(full)) {
+        skipped.push(full);
+        continue;
+      }
+      try {
+        unlinkSync(full);
+        deleted.push(full);
+      } catch (err) {
+        this.logger.warn(`purge: failed to remove ${full}: ${String(err)}`);
+      }
+    }
+    this.logger.log(`purged local recordings deleted=${deleted.length} skipped=${skipped.length}`);
+    return { deleted, skipped };
   }
 
   private pendingFiles = new Map<string, string>();

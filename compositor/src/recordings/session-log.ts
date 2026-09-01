@@ -51,3 +51,10 @@ export class SessionLog {
 export function sessionStamp(date = new Date()): string {
   return date.toISOString().replace(/[:.]/g, '-');
 }
+
+/** Mark a local recording as uploaded: `foo.webm` → `foo.uploaded.webm`. */
+export function taggedRecordingPath(file: string): string {
+  if (file.endsWith('.uploaded.webm')) return file;
+  if (file.endsWith('.webm')) return `${file.slice(0, -'.webm'.length)}.uploaded.webm`;
+  return `${file}.uploaded.webm`;
+}

@@ -42,6 +42,11 @@ export class SessionsController {
     return this.sessions.upload(slug, body.putUrl);
   }
 
+  @Post('recordings/purge-local')
+  purgeLocal() {
+    return this.sessions.purgeLocalRecordings();
+  }
+
   @Post('rooms/:slug/overlay')
   setOverlay(@Param('slug') slug: string, @Body() body: SetOverlayDto) {
     return this.sessions.setOverlay(slug, body.overlay);

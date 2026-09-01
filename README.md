@@ -62,7 +62,7 @@ Ensure `SFU_JOIN_SECRET` matches in `server/.env` and `sfu/.env`, and
 2. Open a second browser/profile, register another user, join the same room.
 3. Click **Start recording** — the warmed compositor starts MediaRecorder.
 4. Talk/move for a bit, click **Stop recording**.
-5. Play the file under `compositor/recordings/` (and an S3 download URL if configured).
+5. Play the file under `compositor/recordings/` (when S3 is configured, the local `.webm` is renamed `*.uploaded.webm` then deleted after a successful upload; use the S3 download URL instead).
 
 ### Go live on YouTube
 
@@ -189,7 +189,7 @@ cp .env.example .env
 ./scripts/deploy.sh compositor
 ```
 
-Each run prunes unused Docker build cache/images (volumes kept), builds new images while the stack stays up, then recreates containers from those images and prunes the previous generation.
+Each run prunes unused Docker build cache/images (volumes kept), builds new images while the stack stays up, then recreates containers from those images and prunes the previous generation. Compositor deploy also sweeps leftover `*.webm` on the recordings volume (session logs and `diagnostics/` stay; a live or pending-upload file is skipped). After a successful S3 upload, the compositor already renamed the file `*.uploaded.webm` and deleted it, so this sweep mainly clears legacy files and any tagged leftovers if unlink failed.
 
 Share **https://streaming.kaapa.pl** with testers.
 
@@ -212,11 +212,12 @@ docker stats   # during a test recording
 
 # Two browsers → register → join same room → Start recording → Stop recording
 docker compose --env-file .env --profile compositor exec compositor ls /app/compositor/recordings
+# After S3 upload the .webm is gone; *.session.log remains
 ```
 
 ### Post-live diagnostics
 
-Session logs live next to `.webm` on the compositor box. `monitor` samples `docker stats`
+Session logs live next to recordings on the compositor box (`.webm` files are deleted after a successful S3 upload). `monitor` samples `docker stats`
 into `recordings/diagnostics/host-stats.log`.
 
 ```bash
@@ -235,4 +236,4 @@ into `recordings/diagnostics/host-stats.log`.
 - **Nginx won't start (missing cert):** `./scripts/issue-cert.sh web|sfu|compositor`, then deploy
 - **Choppy YouTube A/V:** undersized compositor instance; check session + host-stats logs
 - **Compositor `deploy.sh` hang / host freeze during build:** BuildKit was racing Chromium apt with the Node build stage; pull latest Dockerfile (sentinel serializes them). Check `free -h` / `df -h` — compositor wants ≥4GB RAM and ≥20GB disk
-- **`No space left on device` during compositor build:** Chromium+ffmpeg image is large. `deploy.sh` prunes build cache / unused images (without `--volumes`, so certs/recordings survive) before building while the old stack is still up, then swaps and prunes again. Expand EBS if still tight (≥20GB)
+- **`No space left on device` during compositor build:** Chromium+ffmpeg image is large. `deploy.sh` prunes build cache / unused images (without `--volumes`, so certs/recordings survive), then sweeps leftover `*.webm` (keeping session logs and diagnostics) before building while the old stack is still up, then swaps and prunes again. After S3 success, local files are renamed `*.uploaded.webm` and deleted immediately. Expand EBS if still tight (≥20GB)
