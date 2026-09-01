@@ -67,31 +67,48 @@ reclaim_disk() {
   docker system df || true
 }
 
-# Delete leftover *.webm on the recordings volume (session logs + diagnostics stay).
-# Prefers the running compositor so in-progress / pending-upload files are skipped.
+# Prefer POST /internal/recordings/purge-local (skips in-use files). If this image
+# predates that route, unlink top-level *.webm with Node instead.
+purge_webm_js() {
+  cat <<'EOF'
+const fs = require("fs");
+const dir = "/app/compositor/recordings";
+function unlinkWebms() {
+  let n = 0, bytes = 0;
+  for (const name of fs.readdirSync(dir)) {
+    if (!name.endsWith(".webm")) continue;
+    const p = dir + "/" + name;
+    const st = fs.statSync(p);
+    if (!st.isFile()) continue;
+    bytes += st.size;
+    fs.unlinkSync(p);
+    console.log("removed " + name);
+    n++;
+  }
+  console.log("deleted " + n + " .webm files (" + Math.round(bytes / 1e6) + " MB)");
+}
+fetch("http://127.0.0.1:3002/internal/recordings/purge-local", {
+  method: "POST",
+  headers: { "x-internal-secret": process.env.COMPOSITOR_INTERNAL_SECRET ?? "" },
+}).then(async (r) => {
+  if (r.ok) { console.log(await r.text()); return; }
+  console.log("purge API HTTP " + r.status + " - deleting .webm with Node");
+  unlinkWebms();
+}).catch((err) => {
+  console.log("purge API unreachable - deleting .webm with Node (" + err + ")");
+  unlinkWebms();
+});
+EOF
+}
+
 purge_local_recordings() {
   echo "==> removing leftover local .webm recordings"
   if "${COMPOSE[@]}" --profile compositor exec -T compositor true >/dev/null 2>&1; then
-    if "${COMPOSE[@]}" --profile compositor exec -T compositor node -e '
-      fetch("http://127.0.0.1:3002/internal/recordings/purge-local", {
-        method: "POST",
-        headers: { "x-internal-secret": process.env.COMPOSITOR_INTERNAL_SECRET ?? "" },
-      }).then(async (r) => {
-        const t = await r.text();
-        if (!r.ok) { console.error(t); process.exit(1); }
-        console.log(t);
-      }).catch((err) => { console.error(err); process.exit(1); });
-    '; then
-      return 0
-    fi
-    echo "==> purge endpoint unavailable — deleting .webm in running container"
-    "${COMPOSE[@]}" --profile compositor exec -T compositor \
-      find /app/compositor/recordings -maxdepth 1 -type f -name '*.webm' -delete || true
+    purge_webm_js | "${COMPOSE[@]}" --profile compositor exec -T compositor node || true
     return 0
   fi
-  echo "==> compositor not running — deleting .webm from recordings volume"
-  "${COMPOSE[@]}" --profile compositor run --rm --no-deps --entrypoint find compositor \
-    /app/compositor/recordings -maxdepth 1 -type f -name '*.webm' -delete || true
+  echo "==> compositor not running - deleting .webm from recordings volume"
+  purge_webm_js | "${COMPOSE[@]}" --profile compositor run --rm --no-deps --entrypoint node compositor || true
 }
 
 # Build new images while the old stack is still up, then recreate containers
@@ -196,8 +213,12 @@ case "$TARGET" in
     purge_local_recordings
 
     avail_kb="$(df -Pk "$ROOT" | awk 'NR==2 { print $4 }')"
-    if [[ -n "$avail_kb" && "$avail_kb" -lt 3000000 ]]; then
-      echo "only ${avail_kb}KB free after prune — expand the EBS volume (≥20GB)" >&2
+    df -h "$ROOT" || true
+    # 3GB is unreachable on an 8GB box while the live Chromium image (~2GB) stays in
+    # use. Rebuilds reuse that layer; 1GB free is enough to fail only when the disk
+    # is actually packed.
+    if [[ -n "$avail_kb" && "$avail_kb" -lt 1000000 ]]; then
+      echo "only ${avail_kb}KB free after prune — expand the EBS volume or delete leftover recordings" >&2
       exit 1
     fi
 
