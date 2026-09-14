@@ -129,6 +129,7 @@ services:
 
   # Opt-in via --profile compositor. On the compositor box:
   # --profile compositor up -d --build compositor compositor-nginx monitor
+  # GPU boxes: deploy.sh also loads compose.gpu.yml (NVIDIA passthrough).
   compositor:
     profiles: ["compositor"]
     build:
@@ -195,6 +196,10 @@ services:
           {
             echo "=== $$(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
             docker stats --no-stream --format 'table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.NetIO}}' 2>/dev/null || true
+            cid="$$(docker ps -q -f name=compositor | head -1)"
+            if [ -n "$$cid" ]; then
+              docker exec "$$cid" nvidia-smi --query-gpu=name,utilization.gpu,utilization.memory,memory.used --format=csv,noheader 2>/dev/null || true
+            fi
           } >> /data/diagnostics/host-stats.log
           sleep 15
         done

@@ -45,11 +45,12 @@ fi
   echo
   echo "## What to look for"
   echo "- *.session.log: codec/mode, ffmpeg speed=, loadavg, ingress kbps, backpressure"
-  echo "- diagnostics/host-stats.log: docker CPU/RAM every 15s (t3 credit / OOM)"
-  echo "- docker-compositor.log: Chromium pool / recording sink / ffmpeg"
+  echo "- diagnostics/host-stats.log: docker CPU/RAM every 15s (t3 credit / OOM); nvidia-smi when GPU is passed through"
+  echo "- docker-compositor.log: Chromium pool / GPU renderer / recording sink / ffmpeg"
   echo "- docker-server.log: nest API stdout"
   echo "- docker-sfu.log: mediasoup / signaling stdout"
   echo "- ffmpeg speed= < 1.0 or rising loadavg → undersized instance"
+  echo "- Chromium GPU renderer contains SwiftShader → GPU not visible to Chrome"
   echo "- codec=vp8/vp9 + libx264/medium → heavy re-encode path"
 } >"$OUT_DIR/README.txt"
 

@@ -109,7 +109,10 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
-  const ctx = canvas.getContext('2d');
+  // Opaque backing store lets Chromium use the GPU 2D path when a GPU is attached.
+  const ctx =
+    canvas.getContext('2d', { alpha: false, desynchronized: true }) ??
+    canvas.getContext('2d');
   if (!ctx) throw new Error('2d canvas context unavailable');
 
   let audioCtx: AudioContext | undefined;

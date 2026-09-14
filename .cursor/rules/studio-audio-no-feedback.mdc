@@ -1,0 +1,29 @@
+---
+description: Never play the local mic through studio speakers (feedback / hear-yourself loop)
+alwaysApply: true
+---
+
+# Studio audio — no self-playback
+
+Hearing yourself (or your keyboard) in the studio is a **feedback loop**. This has been broken more than once. Do not "fix playback" by mixing local audio into speakers.
+
+## Invariant
+
+Studio must **hear other people, never you**.
+
+| Path | Audio |
+|---|---|
+| `VideoTile` / program preview compositor | **Video tracks only.** `mixAudio: false`. Never attach mic tracks to `<video>`. `muted` on a full camera+mic stream is **not** enough — off-DOM elements still leak to speakers. |
+| `useRemoteAudio` / `createRemoteAudioPlayer` | Remote peer mics only. **Never** pass `localStream` or the local peer id. |
+| Headless recorder (`CompositorPage`) | `mixAudio: true` into a `MediaStreamDestination` for MediaRecorder/RTMP. That mix is a **recording sink**, not speakers. |
+
+## Banned
+
+- `createCompositor({ mixAudio: true })` in studio preview (`useProgramPreview`)
+- `video.srcObject = stream` when `stream` still has audio tracks
+- Feeding `localStream` into `useRemoteAudio` / `createRemoteAudioPlayer`
+- Connecting the compositor mix bus to `audioContext.destination` in the studio tab
+
+## If someone reports hearing themselves / typing
+
+The local mic is reaching speakers. Usual causes: full `MediaStream` bound to a media element, studio `mixAudio: true`, or a duplicate SFU session of the same user treated as a remote peer. Do not add a "monitor" of the local mic to "fix" it.

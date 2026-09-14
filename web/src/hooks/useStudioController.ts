@@ -38,7 +38,9 @@ export function useStudioController(room: string): StudioValue {
     name,
     layout: studioLayout.layout,
   });
-  useRemoteAudio(session.joined, session.remotePeers);
+  // Speakers play remote mics only. Never pass localStream — that is the
+  // feedback loop (you hear yourself / typing). Preview mixAudio stays off.
+  useRemoteAudio(session.joined, session.remotePeers, session.localPeerId);
   const recording = useRecordingControls(room, setError);
   const platforms = usePlatformConnections(Boolean(auth.user), setError);
   const liveToYoutube = recording.live && recording.liveDestinations.includes('youtube');

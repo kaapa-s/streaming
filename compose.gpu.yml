@@ -1,0 +1,15 @@
+# Overlay applied by `./scripts/deploy.sh compositor` when nvidia-smi works.
+# Passes the host NVIDIA GPU into Chromium (graphics + video, not just CUDA).
+#
+# Requires nvidia-container-toolkit on the compositor box. Without this file,
+# Chrome uses SwiftShader and nvidia-smi stays at 0%.
+services:
+  compositor:
+    gpus: all
+    shm_size: "1g"
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility,graphics,video,display
+      COMPOSITOR_GPU: "1"
+      LIBVA_DRIVER_NAME: nvidia
+      NVD_BACKEND: direct

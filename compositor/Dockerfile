@@ -49,6 +49,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl3 \
     libx11-xcb1 \
     libxss1 \
+    libegl1 \
+    libgles2 \
+    libgbm1 \
+    libgl1 \
+    libva2 \
+    libva-drm2 \
+    libvulkan1 \
   && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/build-sentinel
 
 COPY --from=build /app/compositor/node_modules ./node_modules

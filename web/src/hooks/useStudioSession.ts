@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { SfuClient, type RemotePeer } from '@streaming/sfu-client';
 import { clearSession, joinRoom, type AuthUser } from '../lib/auth';
 import { useAsyncAction } from './useAsyncAction';
@@ -27,23 +27,32 @@ export function useStudioSession({
   const sfuRef = useRef<SfuClient | null>(null);
   const joiningRef = useRef(false);
   const localStreamRef = useRef<MediaStream | null>(null);
+  const localScreenStreamRef = useRef<MediaStream | null>(null);
   localStreamRef.current = localStream;
+  localScreenStreamRef.current = localScreenStream;
 
   const { pending: screenPending, run: runScreen } = useAsyncAction();
 
   const stopLocalScreen = async () => {
     await sfuRef.current?.stopScreen();
-    setLocalScreenStream((prev) => {
-      prev?.getTracks().forEach((t) => t.stop());
-      return null;
-    });
+    localScreenStreamRef.current?.getTracks().forEach((t) => t.stop());
+    localScreenStreamRef.current = null;
+    setLocalScreenStream(null);
   };
 
-  const leave = async () => {
-    await stopLocalScreen();
+  const stopPublishing = () => {
     sfuRef.current?.close();
     sfuRef.current = null;
     localStreamRef.current?.getTracks().forEach((t) => t.stop());
+    localStreamRef.current = null;
+    localScreenStreamRef.current?.getTracks().forEach((t) => t.stop());
+    localScreenStreamRef.current = null;
+  };
+
+  const leave = async () => {
+    await sfuRef.current?.stopScreen();
+    stopPublishing();
+    setLocalScreenStream(null);
     setLocalStream(null);
     setRemotePeers([]);
     setLocalPeerId(null);
@@ -52,6 +61,19 @@ export function useStudioSession({
     joiningRef.current = false;
     setJoining(false);
   };
+
+  // HMR / layout remount used to leave the SFU publisher alive. The next join
+  // then heard that zombie as a "remote" mic (feedback: you hear yourself type).
+  useEffect(() => {
+    return () => {
+      sfuRef.current?.close();
+      sfuRef.current = null;
+      localStreamRef.current?.getTracks().forEach((t) => t.stop());
+      localStreamRef.current = null;
+      localScreenStreamRef.current?.getTracks().forEach((t) => t.stop());
+      localScreenStreamRef.current = null;
+    };
+  }, []);
 
   const join = async () => {
     if (!user || joiningRef.current) return;
@@ -78,6 +100,7 @@ export function useStudioSession({
           autoGainControl: true,
         },
       });
+      localStreamRef.current = stream;
       setLocalStream(stream);
 
       const sfu = new SfuClient({ onPeersChanged: (peers) => setRemotePeers([...peers]) });
@@ -88,8 +111,8 @@ export function useStudioSession({
       setJoined(true);
       setJoining(false);
     } catch (err) {
-      sfuRef.current?.close();
-      sfuRef.current = null;
+      stopPublishing();
+      setLocalStream(null);
       joiningRef.current = false;
       setJoining(false);
       if (String(err).includes('401') || String(err).toLowerCase().includes('unauthorized')) {
@@ -144,6 +167,7 @@ export function useStudioSession({
           screen.getTracks().forEach((t) => t.stop());
           throw err;
         }
+        localScreenStreamRef.current = screen;
         setLocalScreenStream(screen);
       } catch (err) {
         // User cancelled the picker — not an error worth showing.

@@ -34,6 +34,29 @@ set -a
 source "$ENV_FILE"
 set +a
 
+# When NVIDIA is present, pass the GPU into Chromium (compose.gpu.yml).
+enable_compositor_gpu_if_available() {
+  local want=0
+  if [[ "${COMPOSITOR_GPU:-}" == "1" ]]; then
+    want=1
+  elif command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
+    want=1
+  fi
+  if [[ "$want" -ne 1 ]]; then
+    echo "==> no NVIDIA GPU detected — Chromium will use CPU (SwiftShader)"
+    return 0
+  fi
+  if [[ ! -e /usr/bin/nvidia-container-runtime ]] && ! command -v nvidia-container-cli >/dev/null 2>&1; then
+    echo "==> NVIDIA GPU found but nvidia-container-toolkit is missing" >&2
+    echo "    Chromium cannot see the GPU until you install it:" >&2
+    echo "    https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html" >&2
+    echo "    Continuing without GPU passthrough (nvidia-smi will stay at 0%)." >&2
+    return 0
+  fi
+  echo "==> NVIDIA GPU detected — enabling compositor GPU passthrough (compose.gpu.yml)"
+  COMPOSE+=(-f "$ROOT/compose.gpu.yml")
+}
+
 require_vars() {
   local missing=0
   for v in "$@"; do
@@ -196,6 +219,7 @@ case "$TARGET" in
     DOMAIN="$COMPOSITOR_SERVER_NAME"
     CERT_SERVICE=compositor-certbot
     PROFILE_ARGS=(--profile tools)
+    enable_compositor_gpu_if_available
 
     if ! cert_exists_in_volume "$CERT_SERVICE" "$DOMAIN" "${PROFILE_ARGS[@]}"; then
       if [[ -t 0 ]]; then

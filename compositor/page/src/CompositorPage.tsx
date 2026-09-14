@@ -38,6 +38,7 @@ export function CompositorPage() {
       });
       compositor.canvas.style.width = '100%';
       container.appendChild(compositor.canvas);
+      console.log(`[compositor] gpu renderer=${describeGpuRenderer()}`);
 
       window.__setOverlay = (overlay) => {
         compositor.setOverlay(overlay);
@@ -142,4 +143,15 @@ export function CompositorPage() {
       <div ref={containerRef} />
     </div>
   );
+}
+
+function describeGpuRenderer(): string {
+  const canvas = document.createElement('canvas');
+  const gl = canvas.getContext('webgl2') ?? canvas.getContext('webgl');
+  if (!gl) return 'no-webgl';
+  const ext = gl.getExtension('WEBGL_debug_renderer_info');
+  if (!ext) return String(gl.getParameter(gl.RENDERER));
+  const vendor = String(gl.getParameter(ext.UNMASKED_VENDOR_WEBGL));
+  const renderer = String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL));
+  return `${vendor} / ${renderer}`;
 }
