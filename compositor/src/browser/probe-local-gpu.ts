@@ -1,61 +1,75 @@
 /**
- * Local GPU compositing probe. Headed on macOS, new-headless on Linux.
+ * Chromium GPU probe. Launches one browser with the production flags and prints
+ * what Chrome actually did, then exits — no Nest, no pool, no recorder page.
  *
- *   COMPOSITOR_GPU=1 npx ts-node --transpile-only src/browser/probe-local-gpu.ts
+ * In the container (this is what verify-compositor-gpu.sh runs):
+ *   docker compose -f compose.yml -f compose.gpu.yml --env-file .env \
+ *     run --rm --entrypoint node compositor dist/browser/probe-local-gpu.js
+ *
+ * Locally:
+ *   COMPOSITOR_GPU=1 npm run probe:gpu --prefix compositor
+ *
+ * COMPOSITOR_ANGLE picks the backend (gl-egl, gles-egl, vulkan, swiftshader).
  */
 import puppeteer from 'puppeteer';
-import { isGpuCompositingEnabled } from './gpu';
+import {
+  detectGpu,
+  isGpuCompositingEnabled,
+  isSoftwareGpuRenderer,
+  probeGpuRendererInPage,
+  resolveAngleBackend,
+} from './gpu';
 import { probeGpuFeatureStatus } from './gpu-cdp';
 import { compositorChromeLaunchOptions } from './launch-options';
 
-async function probe(backend: 'gl' | 'vulkan'): Promise<{
-  backend: 'gl' | 'vulkan';
-  compositing?: string;
-  featureStatus: Record<string, string>;
-}> {
-  const opts = compositorChromeLaunchOptions(true, backend);
-  const browser = await puppeteer.launch(opts);
+async function main(): Promise<void> {
+  process.env.COMPOSITOR_GPU ??= '1';
+  const gpu = detectGpu();
+  const angle = resolveAngleBackend();
+  const options = compositorChromeLaunchOptions(gpu.enabled);
+
+  console.log(`platform  : ${process.platform} headless=${options.headless}`);
+  console.log(`gpu       : ${gpu.enabled} (${gpu.reason})`);
+  console.log(`angle     : ${angle}`);
+
+  const browser = await puppeteer.launch(options);
   try {
+    const page = await browser.newPage();
+    const renderer = await page.evaluate(probeGpuRendererInPage);
+    await page.close().catch(() => undefined);
     const featureStatus = await probeGpuFeatureStatus(browser);
-    return {
-      backend,
-      compositing: featureStatus.gpu_compositing,
-      featureStatus,
-    };
+
+    console.log(`renderer  : ${renderer}`);
+    for (const key of Object.keys(featureStatus).sort()) {
+      console.log(`  ${key.padEnd(30)} ${featureStatus[key]}`);
+    }
+
+    const compositing = featureStatus.gpu_compositing;
+    const hardware = !isSoftwareGpuRenderer(renderer);
+    console.log('');
+    if (!gpu.enabled) {
+      console.log('SKIP — GPU not requested (COMPOSITOR_GPU=0 or no device)');
+      return;
+    }
+    if (hardware && isGpuCompositingEnabled(compositing)) {
+      console.log(`PASS — ${renderer}, gpu_compositing=${compositing}`);
+      return;
+    }
+    if (hardware) {
+      console.log(
+        `FAIL — hardware renderer but gpu_compositing=${compositing ?? 'unknown'}; ` +
+          'Blink will rasterize the 2D canvas on CPU',
+      );
+    } else {
+      console.log(`FAIL — renderer is ${renderer} (no hardware GPU)`);
+    }
+    process.exitCode = 1;
   } finally {
     await browser.close().catch(() => undefined);
   }
 }
 
-async function main(): Promise<void> {
-  process.env.COMPOSITOR_GPU ??= '1';
-  const headed = process.platform === 'darwin';
-  console.log(
-    `probe-local-gpu platform=${process.platform} headed=${headed} COMPOSITOR_GPU=${process.env.COMPOSITOR_GPU}`,
-  );
-
-  let lastError: unknown;
-  const backends: Array<'gl' | 'vulkan'> =
-    process.platform === 'darwin' ? ['gl'] : ['gl', 'vulkan'];
-  for (const backend of backends) {
-    try {
-      const result = await probe(backend);
-      console.log(JSON.stringify(result, null, 2));
-      if (isGpuCompositingEnabled(result.compositing)) {
-        console.log(`PASS gpu_compositing=${result.compositing} ANGLE ${backend}`);
-        return;
-      }
-      lastError = new Error(
-        `gpu_compositing=${result.compositing ?? 'unknown'} on ANGLE ${backend}`,
-      );
-      console.warn(`ANGLE ${backend}: ${String(lastError)}`);
-    } catch (err) {
-      lastError = err;
-      console.warn(`ANGLE ${backend} launch/probe failed: ${String(err)}`);
-    }
-  }
-  console.error(`FAIL ${String(lastError)}`);
+void main().catch((err: unknown) => {
+  console.error(`probe failed: ${String(err)}`);
   process.exitCode = 1;
-}
-
-void main();
+});

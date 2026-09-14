@@ -11,6 +11,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 ENV_FILE="${ENV_FILE:-$ROOT/.env}"
 COMPOSE=(docker compose -f "$ROOT/compose.yml" --env-file "$ENV_FILE" --profile compositor)
+COMPOSE_GPU=(docker compose -f "$ROOT/compose.yml" -f "$ROOT/compose.gpu.yml" \
+  --env-file "$ENV_FILE" --profile compositor)
 
 PASS=0
 FAIL=0
@@ -106,88 +108,65 @@ else
   fail "NVIDIA_DRIVER_CAPABILITIES unset (defaults to compute,utility — Chrome stays on SwiftShader)"
 fi
 
-section "5. Inside the container"
-"${COMPOSE[@]}" exec -T compositor sh -c '
-  echo "NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-<unset>}"
-  echo "NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-<unset>}"
-  echo "COMPOSITOR_GPU=${COMPOSITOR_GPU:-<unset>}"
-  echo "--- devices ---"
-  ls -l /dev/nvidia* /dev/dri 2>&1 || true
-  echo "--- nvidia-smi ---"
-  nvidia-smi -L 2>&1 || true
-  echo "--- nvidia userspace (want libEGL_nvidia / libGLX_nvidia) ---"
-  ldconfig -p 2>/dev/null | grep -iE "nvidia|EGL_nvidia|GLX_nvidia" || echo "(no nvidia GL libs in ldconfig)"
-' | sed 's/^/        /' || fail "docker exec compositor failed"
-
-if "${COMPOSE[@]}" exec -T compositor sh -c 'test -e /dev/nvidia0' >/dev/null 2>&1; then
-  pass "container has /dev/nvidia0"
+section "5. Chromium GPU probe"
+# One throwaway container, production launch flags, straight answer. This works
+# even when the service container is down or restarting — which is exactly when
+# the old `docker exec` checks reported phantom "no /dev/nvidia0" failures.
+if [[ "$have_compose_gpu" -eq 1 ]]; then
+  PROBE_OUT="$("${COMPOSE_GPU[@]}" run --rm -e COMPOSITOR_ANGLE="${COMPOSITOR_ANGLE:-}" \
+    --entrypoint node compositor dist/browser/probe-local-gpu.js 2>&1 || true)"
+  echo "$PROBE_OUT" \
+    | grep -vE 'dbus|DBus|bus\.cc|object_proxy|Failed to call method|Container .* (Creating|Created)' \
+    | sed 's/^/        /'
+  if echo "$PROBE_OUT" | grep -q '^PASS'; then
+    pass "Chromium composites on the GPU"
+  elif echo "$PROBE_OUT" | grep -q '^SKIP'; then
+    warn "probe skipped — GPU not requested in that container"
+  else
+    fail "Chromium is not compositing on the GPU (probe output above)"
+    note "ANGLE gl-egl is the default; 'gl' means GLX and cannot work without an X display"
+    note "override to experiment: COMPOSITOR_ANGLE=vulkan ./scripts/verify-compositor-gpu.sh"
+  fi
 else
-  fail "container has no /dev/nvidia0"
-fi
-if "${COMPOSE[@]}" exec -T compositor sh -c 'nvidia-smi -L >/dev/null 2>&1'; then
-  pass "nvidia-smi works inside the container"
-else
-  fail "nvidia-smi does not work inside the container"
-fi
-if "${COMPOSE[@]}" exec -T compositor sh -c 'ldconfig -p 2>/dev/null | grep -q EGL_nvidia'; then
-  pass "libEGL_nvidia is visible inside the container"
-else
-  fail "libEGL_nvidia missing — host driver is likely nvidia-headless (no OpenGL)"
-  note "install a full driver package that includes libnvidia-gl (not nvidia-headless-*)"
+  warn "compose.gpu.yml missing — cannot run the GPU probe"
 fi
 
-section "6. Chromium command line"
-# Convert /proc cmdline NULs to spaces in the container, then again on the host
-# so bash command substitution does not warn about leftover null bytes.
+section "6. Chromium flags in the running pool"
 CMDLINES="$("${COMPOSE[@]}" exec -T compositor sh -c '
-  found=0
   for f in /proc/[0-9]*/cmdline; do
     cmd=$(tr "\000" " " < "$f" 2>/dev/null) || continue
     exe=${cmd%% *}
     case "$exe" in
-      */chromium|*/chromium-browser|*/chrome|*/google-chrome)
-        echo "$cmd"
-        found=1
-        ;;
+      */chromium|*/chromium-browser|*/chrome|*/google-chrome) echo "$cmd" ;;
     esac
   done
-  [ "$found" = 1 ] || echo "(no chromium process — pool not started?)"
-' 2>/dev/null | tr "\000" " " || echo "(exec failed)")"
-echo "$CMDLINES" | fold -s -w 120 | sed 's/^/        /'
-if echo "$CMDLINES" | grep -qi chrom; then
-  pass "Chromium is running"
+' 2>/dev/null | tr "\000" " " || true)"
+if [[ -z "${CMDLINES// /}" ]]; then
+  warn "no Chromium process (container down, restarting, or pool not warmed yet)"
+  note "§5 above is the authoritative check and does not need a healthy container"
 else
-  warn "no Chromium process (container up but pool not launched)"
-fi
-# Exact argv token. `grep --disable-gpu` also matches --disable-gpu-sandbox
-# (which we set on purpose) and Chromium's own --disable-gpu-compositing on
-# some utility renderers.
-if echo "$CMDLINES" | grep -Eq '(^|[[:space:]])--disable-gpu([[:space:]]|$)'; then
-  fail "Chromium args include --disable-gpu"
-elif echo "$CMDLINES" | grep -qi chrom; then
-  pass "Chromium args do not include --disable-gpu"
-fi
-if echo "$CMDLINES" | grep -q -- '--enable-gpu'; then
-  pass "Chromium args include --enable-gpu"
-elif echo "$CMDLINES" | grep -qi chrom; then
-  warn "Chromium running without --enable-gpu (old image, or GPU detection off)"
-fi
-if echo "$CMDLINES" | grep -q -- '--use-angle'; then
-  pass "Chromium args include --use-angle"
-fi
-if echo "$CMDLINES" | grep -q -- '--disable-vulkan-surface'; then
-  fail "Chromium args include --disable-vulkan-surface (forces readback compositing)"
-elif echo "$CMDLINES" | grep -qi chrom; then
-  pass "Chromium args do not include --disable-vulkan-surface"
-fi
-if echo "$CMDLINES" | grep -q -- '--disable-gpu-compositing'; then
-  fail "a Chromium process has --disable-gpu-compositing (software compositor)"
+  echo "$CMDLINES" | fold -s -w 120 | sed 's/^/        /'
+  if echo "$CMDLINES" | grep -q -- '--use-angle=gl-egl'; then
+    pass "pool Chromium runs ANGLE gl-egl"
+  elif echo "$CMDLINES" | grep -Eq -- '--use-angle=gl([[:space:]]|$)'; then
+    fail "pool Chromium runs ANGLE gl (GLX) — needs an X display, will fall back to CPU"
+  fi
+  if echo "$CMDLINES" | grep -Eq '(^|[[:space:]])--disable-gpu([[:space:]]|$)'; then
+    fail "Chromium args include --disable-gpu"
+  fi
+  if echo "$CMDLINES" | grep -q -- '--disable-vulkan-surface'; then
+    fail "Chromium args include --disable-vulkan-surface (stale image)"
+  fi
+  if echo "$CMDLINES" | grep -q -- '--disable-gpu-compositing'; then
+    fail "a Chromium process has --disable-gpu-compositing (software compositor)"
+  fi
 fi
 
 section "7. Compositor logs (renderer)"
 LOGS="$("${COMPOSE[@]}" logs --tail 400 compositor 2>/dev/null || true)"
 echo "$LOGS" | grep -iE 'gpu|renderer|swiftshader|angle|vulkan|chrome://gpu' | tail -40 | sed 's/^/        /' || true
-if echo "$LOGS" | grep -qi swiftshader; then
+# Our own error text says "Refusing CPU/SwiftShader" — do not match on it.
+if echo "$LOGS" | grep -iv 'Refusing CPU/SwiftShader' | grep -qi swiftshader; then
   fail "logs say SwiftShader — Chromium is compositing on CPU"
 elif echo "$LOGS" | grep -qiE 'GPU renderer:.*NVIDIA|renderer=.*NVIDIA'; then
   pass "logs report an NVIDIA renderer"

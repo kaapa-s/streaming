@@ -11,10 +11,11 @@ import {
   assertHardwareGpuCompositing,
   assertHardwareGpuRenderer,
   detectGpu,
-  isSoftwareGpuRenderer,
+  isGpuStrict,
   probeGpuRendererInPage,
+  resolveAngleBackend,
   summarizeChromeGpuPage,
-  type ChromeGpuBackend,
+  type GpuDetection,
   type GpuEncodeMode,
   type GpuFeatureStatus,
 } from './gpu';
@@ -30,31 +31,34 @@ interface PoolSlot {
 export class BrowserPoolService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(BrowserPoolService.name);
   private slots: PoolSlot[] = [];
+  private readonly gpuAngle = resolveAngleBackend();
   private gpuRenderer: string | undefined;
-  private gpuBackend: ChromeGpuBackend = 'gl';
   private gpuPageSummary: string | undefined;
   private gpuFeatureStatus: GpuFeatureStatus | undefined;
   private gpuEncode: GpuEncodeMode = 'mediarecorder';
+  private gpuError: string | undefined;
 
   gpuStatus(): {
     enabled: boolean;
     reason: string;
     renderer?: string;
-    backend?: ChromeGpuBackend;
+    angle: string;
     compositing?: string;
     featureStatus?: GpuFeatureStatus;
     encode: GpuEncodeMode;
     chromeGpu?: string;
+    error?: string;
   } {
     const detection = detectGpu();
     return {
       ...detection,
       renderer: this.gpuRenderer,
-      backend: this.gpuBackend,
+      angle: this.gpuAngle,
       compositing: this.gpuFeatureStatus?.gpu_compositing,
       featureStatus: this.gpuFeatureStatus,
       encode: this.gpuEncode,
       chromeGpu: this.gpuPageSummary,
+      error: this.gpuError,
     };
   }
 
@@ -63,7 +67,8 @@ export class BrowserPoolService implements OnModuleInit, OnModuleDestroy {
     const gpu = detectGpu();
     this.gpuEncode = detectNvenc(gpu) ? 'nvenc' : 'mediarecorder';
     this.logger.log(
-      `warming Chromium pool size=${size} gpu=${gpu.enabled} (${gpu.reason}) encode=${this.gpuEncode}`,
+      `warming Chromium pool size=${size} gpu=${gpu.enabled} (${gpu.reason}) ` +
+        `angle=${this.gpuAngle} encode=${this.gpuEncode}`,
     );
     for (let i = 0; i < size; i++) {
       const browser = await this.launchBrowser();
@@ -112,111 +117,71 @@ export class BrowserPoolService implements OnModuleInit, OnModuleDestroy {
     if (slot) slot.busy = false;
   }
 
+  /**
+   * One launch, one diagnostic pass. There is no backend ladder: ANGLE over EGL
+   * is the only Linux configuration that composites on hardware, and
+   * COMPOSITOR_ANGLE overrides it for experiments.
+   *
+   * A GPU verdict never takes the service down unless COMPOSITOR_GPU_STRICT=1 —
+   * a crash-looping container cannot be inspected, which is how the last GPU
+   * regression hid itself behind four bogus verify-script failures.
+   */
   private async launchBrowser(): Promise<Browser> {
     const gpu = detectGpu();
-    if (gpu.enabled) {
-      return this.launchGpuBrowser(gpu);
-    }
-    const browser = await this.launchWithBackend('gl', false);
-    await this.captureGpuDiagnostics(browser, gpu, 'gl');
-    return browser;
-  }
-
-  private async launchGpuBrowser(gpu: { enabled: boolean; reason: string }): Promise<Browser> {
-    const preferred = this.gpuRenderer ? this.gpuBackend : 'gl';
-    const first = await this.tryLaunchWithBackend(preferred, true);
-    if (first) {
-      const firstRenderer = await this.probeRenderer(first);
-      if (preferred === 'vulkan') {
-        return this.acceptGpuBrowser(first, gpu, 'vulkan', firstRenderer);
-      }
-      if (!isSoftwareGpuRenderer(firstRenderer)) {
-        const accepted = await this.tryAcceptGpuBrowser(first, gpu, preferred, firstRenderer);
-        if (accepted) return accepted;
-      } else {
-        await first.close().catch(() => undefined);
-      }
-      this.logger.warn(
-        `ANGLE GL is ${firstRenderer} (or software compositing); retrying Chromium with Vulkan`,
+    let browser: Browser | undefined;
+    try {
+      browser = await puppeteer.launch(
+        compositorChromeLaunchOptions(gpu.enabled, process.platform, this.gpuAngle),
       );
-    } else if (preferred === 'vulkan') {
-      throw new Error(`Chromium Vulkan launch failed (${gpu.reason})`);
-    } else {
-      this.logger.warn('ANGLE GL launch failed; retrying Chromium with Vulkan');
-    }
-
-    const second = await this.launchWithBackend('vulkan', true);
-    const secondRenderer = await this.probeRenderer(second);
-    return this.acceptGpuBrowser(second, gpu, 'vulkan', secondRenderer);
-  }
-
-  private async tryLaunchWithBackend(
-    backend: ChromeGpuBackend,
-    gpuEnabled: boolean,
-  ): Promise<Browser | undefined> {
-    try {
-      return await this.launchWithBackend(backend, gpuEnabled);
-    } catch (err) {
-      this.logger.warn(`Chromium launch (ANGLE ${backend}) failed: ${String(err)}`);
-      return undefined;
-    }
-  }
-
-  private async tryAcceptGpuBrowser(
-    browser: Browser,
-    gpu: { enabled: boolean; reason: string },
-    backend: ChromeGpuBackend,
-    renderer: string,
-  ): Promise<Browser | undefined> {
-    try {
-      await this.captureGpuDiagnostics(browser, gpu, backend, renderer);
+      await this.captureGpuDiagnostics(browser, gpu);
       return browser;
     } catch (err) {
-      this.logger.warn(`ANGLE ${backend} rejected: ${String(err)}`);
-      await browser.close().catch(() => undefined);
-      return undefined;
+      await browser?.close().catch(() => undefined);
+      if (!gpu.enabled || isGpuStrict()) throw err;
+      this.gpuError = String(err);
+      this.logger.error(
+        `Chromium GPU launch failed (${this.gpuError}) — falling back to CPU rendering. ` +
+          'Set COMPOSITOR_GPU_STRICT=1 to fail the container instead.',
+      );
     }
+    const cpu = await puppeteer.launch(
+      compositorChromeLaunchOptions(false, process.platform, this.gpuAngle),
+    );
+    await this.captureGpuDiagnostics(cpu, { enabled: false, reason: 'gpu launch failed' });
+    return cpu;
   }
 
-  private async acceptGpuBrowser(
-    browser: Browser,
-    gpu: { enabled: boolean; reason: string },
-    backend: ChromeGpuBackend,
-    renderer: string,
-  ): Promise<Browser> {
-    try {
-      await this.captureGpuDiagnostics(browser, gpu, backend, renderer);
-      return browser;
-    } catch (err) {
-      await browser.close().catch(() => undefined);
-      throw err;
-    }
-  }
-
-  private launchWithBackend(backend: ChromeGpuBackend, gpuEnabled: boolean): Promise<Browser> {
-    return puppeteer.launch(compositorChromeLaunchOptions(gpuEnabled, backend));
-  }
-
-  private async captureGpuDiagnostics(
-    browser: Browser,
-    gpu: { enabled: boolean; reason: string },
-    backend: ChromeGpuBackend,
-    renderer?: string,
-  ): Promise<void> {
-    const resolvedRenderer = renderer ?? (await this.probeRenderer(browser));
+  /**
+   * Records renderer + featureStatus *before* asserting, so /internal/health and
+   * the logs explain a bad GPU even when the verdict is fatal.
+   */
+  private async captureGpuDiagnostics(browser: Browser, gpu: GpuDetection): Promise<void> {
+    const renderer = await this.probeRenderer(browser);
     const featureStatus = await probeGpuFeatureStatus(browser);
-    this.gpuPageSummary = await this.probeChromeGpuPage(browser);
-    assertHardwareGpuRenderer(gpu, resolvedRenderer, backend);
-    assertHardwareGpuCompositing(gpu, backend, featureStatus);
-    this.gpuBackend = backend;
-    this.gpuRenderer = resolvedRenderer;
+    this.gpuRenderer = renderer;
     this.gpuFeatureStatus = featureStatus;
+    this.gpuPageSummary = await this.probeChromeGpuPage(browser);
     this.logger.log(
-      `Chromium GPU renderer: ${resolvedRenderer} (ANGLE ${backend}) ` +
-        `compositing=${featureStatus.gpu_compositing ?? 'unknown'}`,
+      `Chromium GPU renderer: ${renderer} (ANGLE ${this.gpuAngle}) ` +
+        `compositing=${featureStatus.gpu_compositing ?? 'unknown'} ` +
+        `2d_canvas=${featureStatus['2d_canvas'] ?? 'unknown'} ` +
+        `video_decode=${featureStatus.video_decode ?? 'unknown'}`,
     );
     if (this.gpuPageSummary) {
       this.logger.log(`chrome://gpu ${this.gpuPageSummary}`);
+    }
+
+    try {
+      assertHardwareGpuRenderer(gpu, renderer, this.gpuAngle);
+      assertHardwareGpuCompositing(gpu, this.gpuAngle, featureStatus);
+      this.gpuError = undefined;
+    } catch (err) {
+      this.gpuError = String(err);
+      if (isGpuStrict()) throw err;
+      this.logger.error(
+        `${this.gpuError} — serving anyway on CPU. ` +
+          'Set COMPOSITOR_GPU_STRICT=1 to fail the container instead.',
+      );
     }
   }
 

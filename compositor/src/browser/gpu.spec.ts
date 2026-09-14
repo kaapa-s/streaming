@@ -6,8 +6,10 @@ import {
   chromeGpuArgs,
   detectGpu,
   isGpuCompositingEnabled,
+  isGpuStrict,
   isSoftwareGpuRenderer,
   isSwiftShaderRenderer,
+  resolveAngleBackend,
 } from './gpu';
 
 describe('detectGpu', () => {
@@ -53,29 +55,62 @@ describe('chromeGpuArgs', () => {
     assert.deepEqual(chromeGpuArgs(false), []);
   });
 
-  it('asks ANGLE for a real GL device when GPU is on', () => {
-    const args = chromeGpuArgs(true, 'gl', 'linux');
+  it('asks ANGLE for EGL on Linux — GLX needs a DISPLAY containers do not have', () => {
+    const args = chromeGpuArgs(true, 'linux');
     assert.ok(args.includes('--use-gl=angle'));
-    assert.ok(args.includes('--use-angle=gl'));
+    assert.ok(args.includes('--use-angle=gl-egl'));
+    assert.ok(args.includes('--use-cmd-decoder=passthrough'));
     assert.ok(args.includes('--ignore-gpu-blocklist'));
     assert.ok(args.includes('--enable-accelerated-2d-canvas'));
     assert.ok(args.includes('--disable-gpu-sandbox'));
-    assert.ok(args.includes('--disable-software-rasterizer'));
+    assert.equal(args.includes('--use-angle=gl'), false);
     assert.equal(args.some((a) => /Vaapi/i.test(a)), false);
   });
 
-  it('can request Vulkan ANGLE without disabling the swapchain', () => {
-    const args = chromeGpuArgs(true, 'vulkan', 'linux');
-    assert.ok(args.includes('--use-angle=vulkan'));
+  it('keeps the software fallback so a GPU failure names SwiftShader, not no-webgl', () => {
+    const args = chromeGpuArgs(true, 'linux');
+    assert.equal(args.includes('--disable-software-rasterizer'), false);
+  });
+
+  it('sets no Vulkan features — they move viz onto Vulkan, which needs a surface', () => {
+    const args = chromeGpuArgs(true, 'linux');
+    assert.equal(args.some((a) => /VulkanFromANGLE|DefaultANGLEVulkan/.test(a)), false);
     assert.equal(args.includes('--disable-vulkan-surface'), false);
-    assert.ok(args.some((a) => a.includes('VulkanFromANGLE')));
+  });
+
+  it('lets COMPOSITOR_ANGLE pick another backend', () => {
+    const args = chromeGpuArgs(true, 'linux', 'vulkan');
+    assert.ok(args.includes('--use-angle=vulkan'));
+    assert.equal(args.includes('--use-angle=gl-egl'), false);
   });
 
   it('uses Metal-friendly flags on macOS (no NVIDIA ANGLE)', () => {
-    const args = chromeGpuArgs(true, 'vulkan', 'darwin');
+    const args = chromeGpuArgs(true, 'darwin');
     assert.ok(args.includes('--enable-gpu'));
-    assert.equal(args.includes('--use-angle=vulkan'), false);
+    assert.equal(args.some((a) => a.startsWith('--use-angle=')), false);
     assert.equal(args.includes('--disable-software-rasterizer'), false);
+  });
+});
+
+describe('resolveAngleBackend', () => {
+  it('defaults to gl-egl', () => {
+    assert.equal(resolveAngleBackend({}), 'gl-egl');
+  });
+
+  it('honors COMPOSITOR_ANGLE', () => {
+    assert.equal(resolveAngleBackend({ COMPOSITOR_ANGLE: 'vulkan' }), 'vulkan');
+  });
+
+  it('ignores an empty COMPOSITOR_ANGLE', () => {
+    assert.equal(resolveAngleBackend({ COMPOSITOR_ANGLE: '  ' }), 'gl-egl');
+  });
+});
+
+describe('isGpuStrict', () => {
+  it('is off by default so a GPU verdict cannot crash-loop the container', () => {
+    assert.equal(isGpuStrict({}), false);
+    assert.equal(isGpuStrict({ COMPOSITOR_GPU_STRICT: '0' }), false);
+    assert.equal(isGpuStrict({ COMPOSITOR_GPU_STRICT: '1' }), true);
   });
 });
 
@@ -99,20 +134,20 @@ describe('assertHardwareGpuRenderer', () => {
 
   it('throws when GPU was requested but Chromium is on CPU', () => {
     assert.throws(
-      () => assertHardwareGpuRenderer(gpu, 'Google SwiftShader', 'gl'),
+      () => assertHardwareGpuRenderer(gpu, 'Google SwiftShader', 'gl-egl'),
       /must run on the GPU/,
     );
   });
 
   it('allows a real NVIDIA renderer', () => {
-    assertHardwareGpuRenderer(gpu, 'NVIDIA Tesla T4', 'vulkan');
+    assertHardwareGpuRenderer(gpu, 'NVIDIA Tesla T4', 'gl-egl');
   });
 
   it('is a no-op when GPU is not requested', () => {
     assertHardwareGpuRenderer(
       { enabled: false, reason: 'COMPOSITOR_GPU=0' },
       'Google SwiftShader',
-      'gl',
+      'gl-egl',
     );
   });
 });
@@ -131,7 +166,7 @@ describe('gpu compositing', () => {
   it('throws when GPU was requested but compositing is software', () => {
     assert.throws(
       () =>
-        assertHardwareGpuCompositing(gpu, 'vulkan', {
+        assertHardwareGpuCompositing(gpu, 'gl-egl', {
           gpu_compositing: 'disabled_software',
         }),
       /gpu_compositing=disabled_software/,
@@ -139,13 +174,13 @@ describe('gpu compositing', () => {
   });
 
   it('allows enabled compositing', () => {
-    assertHardwareGpuCompositing(gpu, 'vulkan', { gpu_compositing: 'enabled' });
+    assertHardwareGpuCompositing(gpu, 'gl-egl', { gpu_compositing: 'enabled' });
   });
 
   it('is a no-op when GPU is not requested', () => {
     assertHardwareGpuCompositing(
       { enabled: false, reason: 'COMPOSITOR_GPU=0' },
-      'gl',
+      'gl-egl',
       { gpu_compositing: 'disabled_software' },
     );
   });

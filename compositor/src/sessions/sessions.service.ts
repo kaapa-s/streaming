@@ -258,7 +258,7 @@ export class SessionsService {
     );
     sessionLog.write(
       `gpu enabled=${gpu.enabled} reason=${gpu.reason} renderer=${gpu.renderer ?? 'unknown'} ` +
-        `compositing=${gpu.compositing ?? 'n/a'} encode=${gpu.encode} backend=${gpu.backend ?? 'n/a'}`,
+        `compositing=${gpu.compositing ?? 'n/a'} encode=${gpu.encode} angle=${gpu.angle}`,
     );
 
     entry.state = 'recording';

@@ -1,5 +1,4 @@
-import type { ChromeGpuBackend } from './gpu';
-import { chromeGpuArgs } from './gpu';
+import { chromeGpuArgs, resolveAngleBackend } from './gpu';
 
 export interface CompositorChromeLaunchOptions {
   timeout: number;
@@ -9,13 +8,15 @@ export interface CompositorChromeLaunchOptions {
 }
 
 /**
- * Shared Puppeteer launch options for the pool and local GPU probe.
- * Stay headless (ozone-headless). Headed + Xvfb is a Tesla fallback, not default.
+ * Shared Puppeteer launch options for the pool and the local GPU probe.
+ *
+ * Linux stays new-headless (ozone-headless). ANGLE over EGL gets a hardware
+ * output surface there, so no Xvfb and no X server are needed.
  */
 export function compositorChromeLaunchOptions(
   gpuEnabled: boolean,
-  backend: ChromeGpuBackend,
   platform: NodeJS.Platform = process.platform,
+  angle: string = resolveAngleBackend(),
 ): CompositorChromeLaunchOptions {
   const ignoreDefaultArgs = gpuEnabled
     ? ['--mute-audio', '--disable-gpu', '--use-angle=swiftshader-webgl']
@@ -32,7 +33,7 @@ export function compositorChromeLaunchOptions(
       '--disable-background-timer-throttling',
       '--disable-renderer-backgrounding',
       '--disable-backgrounding-occluded-windows',
-      ...chromeGpuArgs(gpuEnabled, backend, platform),
+      ...chromeGpuArgs(gpuEnabled, platform, angle),
       ...(process.env.NODE_ENV !== 'production' ? ['--ignore-certificate-errors'] : []),
     ],
   };

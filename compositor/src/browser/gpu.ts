@@ -41,13 +41,33 @@ export function detectGpu(
   return { enabled: false, reason: 'no GPU device in container' };
 }
 
-export type ChromeGpuBackend = 'gl' | 'vulkan';
+/**
+ * ANGLE backend for Linux Chromium.
+ *
+ * `gl-egl` binds EGL surfacelessly, so ozone-headless gets a hardware output
+ * surface with no X server. `gl` (the old default) means GLX, which needs a
+ * DISPLAY that containers do not have — it yields no-webgl and software
+ * compositing. Measured on a Tesla T4: gl-egl gives gpu_compositing=enabled,
+ * gl gives disabled_software.
+ *
+ * COMPOSITOR_ANGLE overrides it (gl-egl, gles-egl, vulkan, swiftshader).
+ */
+export const DEFAULT_ANGLE_BACKEND = 'gl-egl';
+
+export function resolveAngleBackend(env: NodeJS.Dict<string> = process.env): string {
+  return env.COMPOSITOR_ANGLE?.trim() || DEFAULT_ANGLE_BACKEND;
+}
+
+/** A failed GPU verdict kills the container only when this is set. */
+export function isGpuStrict(env: NodeJS.Dict<string> = process.env): boolean {
+  return env.COMPOSITOR_GPU_STRICT === '1';
+}
 
 /** Chromium flags so ANGLE uses the host GPU instead of SwiftShader. */
 export function chromeGpuArgs(
   enabled: boolean,
-  backend: ChromeGpuBackend = 'gl',
   platform: NodeJS.Platform = process.platform,
+  angle: string = resolveAngleBackend(),
 ): string[] {
   if (!enabled) return [];
   // macOS: default Metal. NVIDIA ANGLE/Vulkan flags crash or disable the GPU process.
@@ -59,16 +79,13 @@ export function chromeGpuArgs(
       '--enable-accelerated-2d-canvas',
     ];
   }
-  const angle =
-    backend === 'vulkan'
-      ? ['--use-gl=angle', '--use-angle=vulkan']
-      : ['--use-gl=angle', '--use-angle=gl'];
-  // Canvas/raster only. VAAPI (and LIBVA_DRIVER_NAME=nvidia) is an Intel/AMD
-  // path — on Tesla it can crash MediaRecorder and fail go-live with 503.
-  const features =
-    backend === 'vulkan'
-      ? 'Vulkan,DefaultANGLEVulkan,VulkanFromANGLE,CanvasOopRasterization'
-      : 'CanvasOopRasterization';
+  // No --disable-software-rasterizer: it turns every GPU init failure into a
+  // bare "no-webgl" instead of a renderer string that names SwiftShader.
+  // assertHardwareGpuRenderer already refuses CPU rendering, and readably.
+  //
+  // No Vulkan feature flags either. DefaultANGLEVulkan/VulkanFromANGLE move viz
+  // itself onto Vulkan, which then needs a real window surface — that is what
+  // produced gpu_compositing=disabled_software. ANGLE over EGL needs none.
   return [
     '--enable-gpu',
     '--ignore-gpu-blocklist',
@@ -76,10 +93,9 @@ export function chromeGpuArgs(
     '--enable-zero-copy',
     '--enable-accelerated-2d-canvas',
     '--disable-gpu-sandbox',
-    // If the device is missing, fail instead of silently rasterizing on CPU.
-    '--disable-software-rasterizer',
-    ...angle,
-    `--enable-features=${features}`,
+    '--use-gl=angle',
+    `--use-angle=${angle}`,
+    '--use-cmd-decoder=passthrough',
   ];
 }
 
@@ -96,22 +112,22 @@ export function isSoftwareGpuRenderer(renderer: string): boolean {
 export function hardwareGpuRequiredError(
   gpu: GpuDetection,
   renderer: string,
-  backend: ChromeGpuBackend,
+  angle: string,
 ): Error {
   return new Error(
-    `Chromium must run on the GPU (${gpu.reason}, ANGLE ${backend}) but renderer is ${renderer}. ` +
-      'Refusing CPU/SwiftShader. Fix GPU passthrough (compose.gpu.yml) and run ./scripts/verify-compositor-gpu.sh',
+    `Chromium must run on the GPU (${gpu.reason}, ANGLE ${angle}) but renderer is ${renderer}. ` +
+      'Refusing CPU/SwiftShader. Run ./scripts/verify-compositor-gpu.sh',
   );
 }
 
 export function assertHardwareGpuRenderer(
   gpu: GpuDetection,
   renderer: string,
-  backend: ChromeGpuBackend,
+  angle: string,
 ): void {
   if (!gpu.enabled) return;
   if (isSoftwareGpuRenderer(renderer)) {
-    throw hardwareGpuRequiredError(gpu, renderer, backend);
+    throw hardwareGpuRequiredError(gpu, renderer, angle);
   }
 }
 
@@ -126,19 +142,19 @@ export function isGpuCompositingEnabled(status: string | undefined): boolean {
 
 export function softwareCompositingError(
   gpu: GpuDetection,
-  backend: ChromeGpuBackend,
+  angle: string,
   compositing: string | undefined,
 ): Error {
   return new Error(
-    `Chromium gpu_compositing=${compositing ?? 'unknown'} (${gpu.reason}, ANGLE ${backend}). ` +
-      'Need enabled (not disabled_software). Drop --disable-vulkan-surface; ' +
-      'do not add Xvfb unless this still fails on the Tesla.',
+    `Chromium gpu_compositing=${compositing ?? 'unknown'} (${gpu.reason}, ANGLE ${angle}). ` +
+      'Need enabled (not disabled_software) or Blink rasterizes the 2D canvas on CPU. ' +
+      'Try COMPOSITOR_ANGLE=gl-egl and run ./scripts/verify-compositor-gpu.sh',
   );
 }
 
 export function assertHardwareGpuCompositing(
   gpu: GpuDetection,
-  backend: ChromeGpuBackend,
+  angle: string,
   featureStatus: GpuFeatureStatus,
 ): void {
   if (!gpu.enabled) return;
@@ -146,10 +162,10 @@ export function assertHardwareGpuCompositing(
   if (isGpuCompositingEnabled(compositing)) return;
   if (featureStatus.probe_error) {
     throw new Error(
-      `Chromium GPU compositing probe failed (${gpu.reason}, ANGLE ${backend}): ${featureStatus.probe_error}`,
+      `Chromium GPU compositing probe failed (${gpu.reason}, ANGLE ${angle}): ${featureStatus.probe_error}`,
     );
   }
-  throw softwareCompositingError(gpu, backend, compositing);
+  throw softwareCompositingError(gpu, angle, compositing);
 }
 
 interface PageCanvas {

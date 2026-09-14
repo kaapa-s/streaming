@@ -138,6 +138,8 @@ iterate on layout without mediasoup or the Nest server.
 - `SFU_PUBLIC_WS_URL` — SFU signaling for the headless page (local `ws://localhost:3001/ws/signaling`)
 - `FFMPEG_PATH` — optional
 - `COMPOSITOR_GPU` — `1` force GPU Chromium flags, `0` force CPU. Unset autodectects `/dev/nvidia0` or `/dev/dri`. Production Docker needs `compose.gpu.yml` so those devices exist. Local Mac: set `1` and run `./scripts/verify-compositor-gpu-local.sh` (headed Chrome, Apple GPU compositing).
+- `COMPOSITOR_ANGLE` — ANGLE backend for Linux Chromium. Default `gl-egl` (EGL, needs no X server). `gl` means GLX and cannot work in a container. `vulkan` also composites but is not the tested path.
+- `COMPOSITOR_GPU_STRICT` — `1` makes a failed GPU verdict kill the container. Default off: the compositor logs the failure, reports it at `/internal/health`, and keeps serving on CPU.
 - `COMPOSITOR_NVENC` — `0` forces Chrome MediaRecorder even if ffmpeg has `h264_nvenc`.
 
 **sfu** (`sfu/.env`)
@@ -205,7 +207,11 @@ cp .env.example .env
 
 ### Compositor GPU (NVIDIA)
 
-Headless Chromium in Docker uses SwiftShader (CPU) unless the GPU is passed into the container **with graphics + video capabilities** (CUDA-only passthrough still leaves `nvidia-smi` at 0% for Chrome).
+Headless Chromium in Docker uses SwiftShader (CPU) unless two things are true: the GPU is passed into the container **with graphics + video capabilities** (CUDA-only passthrough still leaves `nvidia-smi` at 0% for Chrome), and ANGLE is told to use **EGL**.
+
+That second part is easy to get wrong. `--use-angle=gl` selects GLX, which needs an X display no container has — Chromium then reports `no-webgl` and rasterizes everything on CPU. `--use-angle=gl-egl` binds EGL surfacelessly and ozone-headless gets a hardware output surface, so **no Xvfb and no X server are needed**. Measured on a Tesla T4: `gl-egl` gives `gpu_compositing=enabled`, `gl` gives `disabled_software`.
+
+`gpu_compositing` is the number that matters, not just the renderer string: Blink refuses to accelerate a 2D canvas when GPU compositing is off, so Chromium can report an NVIDIA renderer while the compositor canvas still burns CPU.
 
 On the compositor box (Ubuntu 24.04), after the NVIDIA driver is installed and `nvidia-smi` works:
 
@@ -227,7 +233,14 @@ Then `./scripts/deploy.sh compositor`. On the compositor box:
 ./scripts/verify-compositor-gpu.sh
 ```
 
-Logs should show `Chromium GPU renderer: NVIDIA …`, not SwiftShader.
+§5 of that script is the authoritative check — it runs one throwaway container with the production launch flags, so it works even when the service is down. To probe directly:
+
+```bash
+docker compose -f compose.yml -f compose.gpu.yml --env-file .env \
+  run --rm --entrypoint node compositor dist/browser/probe-local-gpu.js
+```
+
+Expect `PASS — … Tesla T4 …, gpu_compositing=enabled`. Logs should show `Chromium GPU renderer: NVIDIA …`, not SwiftShader.
 
 ### One-command deploy / rebuild
 
@@ -287,6 +300,6 @@ into `recordings/diagnostics/host-stats.log`.
 - **ACME / cert issue fails:** TXT `_acme-challenge.<domain>` propagated before Enter
 - **Nginx won't start (missing cert):** `./scripts/issue-cert.sh web|sfu|compositor`, then deploy
 - **Choppy YouTube A/V:** undersized compositor instance; check session + host-stats logs
-- **GPU at 0% / compositor CPU pegged:** Chromium is not compositing on the GPU. Run `./scripts/verify-compositor-gpu.sh` on the compositor box (or `./scripts/verify-compositor-gpu-local.sh` on a Mac). Host needs NVIDIA driver + [nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html), then `./scripts/deploy.sh compositor` (loads `compose.gpu.yml`). Confirm health `gpu.compositing` starts with `enabled` and renderer is NVIDIA, not SwiftShader. `--disable-vulkan-surface` forces software compositing even when the probe shows NVIDIA. Live H.264 is ffmpeg `h264_nvenc` when `gpu.encode=nvenc`; otherwise Chrome MediaRecorder (CPU) → ffmpeg copy.
+- **GPU at 0% / compositor CPU pegged:** Chromium is not compositing on the GPU. Run `./scripts/verify-compositor-gpu.sh` on the compositor box (or `./scripts/verify-compositor-gpu-local.sh` on a Mac). Host needs NVIDIA driver + [nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html), then `./scripts/deploy.sh compositor` (loads `compose.gpu.yml`). Confirm health `gpu.compositing` starts with `enabled` and renderer is NVIDIA, not SwiftShader. If the renderer is `no-webgl`, ANGLE is on GLX — check that the pool runs `--use-angle=gl-egl` (§6 of the verify script). The compositor no longer crash-loops on a bad GPU verdict; it degrades to CPU and reports `gpu.error` at `/internal/health` unless `COMPOSITOR_GPU_STRICT=1`. Live H.264 is ffmpeg `h264_nvenc` when `gpu.encode=nvenc`; otherwise Chrome MediaRecorder (CPU) → ffmpeg copy.
 - **Compositor `deploy.sh` hang / host freeze during build:** BuildKit was racing Chromium apt with the Node build stage; pull latest Dockerfile (sentinel serializes them). Check `free -h` / `df -h` — compositor wants ≥4GB RAM; an 8GB disk is enough for rebuilds once leftover `.webm` files are gone (first Chromium image build is tighter)
 - **`No space left on device` during compositor build:** Chromium+ffmpeg image is large. `deploy.sh` prunes build cache / unused images (without `--volumes`, so certs/recordings survive), then sweeps leftover `*.webm` (keeping session logs and diagnostics) before building while the old stack is still up, then swaps and prunes again. After S3 success, local files are renamed `*.uploaded.webm` and deleted immediately. Rebuilds abort only if less than ~1GB is free; expand EBS if a first-time Chromium build still fills the disk
