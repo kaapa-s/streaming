@@ -1,8 +1,10 @@
 import {
   BadRequestException,
+  HttpException,
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync } from 'fs';
 import * as path from 'path';
@@ -200,7 +202,7 @@ export class SessionsService {
     } catch (err) {
       if (page) await page.close().catch(() => undefined);
       this.pool.release(browser);
-      throw err;
+      this.rethrowHttp(err);
     }
   }
 
@@ -210,6 +212,11 @@ export class SessionsService {
   ): Promise<{ room: string; live: boolean; resolution: StreamResolution }> {
     const room = slug.trim().toLowerCase();
     let entry = this.sessions.get(room);
+    if (entry && (entry.page.isClosed() || !entry.browser.connected)) {
+      this.logger.warn(`room "${room}" Chromium session is dead — re-warming`);
+      await this.releaseRoom(room, { keepPending: false });
+      entry = undefined;
+    }
 
     const resolution = parseResolution(opts.resolution ?? entry?.resolution);
     const normalized = collectRtmpUrls(opts).map((url) => normalizeRtmpUrl(url));
@@ -273,7 +280,7 @@ export class SessionsService {
       sessionLog.write(`go-live failed: ${String(err)}`);
       sessionLog.close('status=failed');
       entry.sessionLog = undefined;
-      throw err;
+      this.rethrowHttp(err);
     }
 
     this.logger.log(
@@ -469,6 +476,12 @@ export class SessionsService {
   }
 
   private pendingFiles = new Map<string, string>();
+
+  private rethrowHttp(err: unknown): never {
+    if (err instanceof HttpException) throw err;
+    const message = err instanceof Error ? err.message : String(err);
+    throw new ServiceUnavailableException(message);
+  }
 
   private takePendingFile(room: string): string | undefined {
     const file = this.pendingFiles.get(room);

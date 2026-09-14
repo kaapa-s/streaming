@@ -1,4 +1,10 @@
-import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 
 export interface CompositorWarmupResult {
   room: string;
@@ -97,14 +103,22 @@ export class CompositorClient {
 
   private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
     const url = `${this.baseUrl()}${path}`;
-    const res = await fetch(url, {
-      method,
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Internal-Secret': this.secret(),
-      },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Internal-Secret': this.secret(),
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new ServiceUnavailableException(
+        `compositor unreachable (${method} ${path}): ${detail}`,
+      );
+    }
     const text = await res.text();
     let parsed: unknown = undefined;
     if (text) {
@@ -122,6 +136,9 @@ export class CompositorClient {
         (parsed as { message: unknown }).message
           ? String((parsed as { message: unknown }).message)
           : `compositor ${method} ${path} failed: ${res.status}`;
+      this.logger.warn(`compositor ${method} ${path} → ${res.status}: ${msg}`);
+      if (res.status === 400) throw new BadRequestException(msg);
+      if (res.status === 404) throw new NotFoundException(msg);
       throw new ServiceUnavailableException(msg);
     }
     return parsed as T;

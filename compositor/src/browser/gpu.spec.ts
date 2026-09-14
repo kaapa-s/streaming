@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { chromeGpuArgs, detectGpu, isSwiftShaderRenderer } from './gpu';
+import {
+  assertHardwareGpuRenderer,
+  chromeGpuArgs,
+  detectGpu,
+  isSoftwareGpuRenderer,
+  isSwiftShaderRenderer,
+} from './gpu';
 
 describe('detectGpu', () => {
   it('honors COMPOSITOR_GPU=0 even when a device exists', () => {
@@ -51,6 +57,9 @@ describe('chromeGpuArgs', () => {
     assert.ok(args.includes('--use-angle=gl'));
     assert.ok(args.includes('--ignore-gpu-blocklist'));
     assert.ok(args.includes('--enable-accelerated-2d-canvas'));
+    assert.ok(args.includes('--disable-gpu-sandbox'));
+    assert.ok(args.includes('--disable-software-rasterizer'));
+    assert.equal(args.some((a) => /Vaapi/i.test(a)), false);
   });
 
   it('can request Vulkan ANGLE for headless NVIDIA', () => {
@@ -65,5 +74,36 @@ describe('isSwiftShaderRenderer', () => {
   it('flags software renderers', () => {
     assert.equal(isSwiftShaderRenderer('Google SwiftShader'), true);
     assert.equal(isSwiftShaderRenderer('NVIDIA Tesla T4'), false);
+  });
+});
+
+describe('assertHardwareGpuRenderer', () => {
+  const gpu = { enabled: true, reason: 'COMPOSITOR_GPU=1' };
+
+  it('treats SwiftShader, llvmpipe, and failed probes as CPU', () => {
+    assert.equal(isSoftwareGpuRenderer('Google SwiftShader'), true);
+    assert.equal(isSoftwareGpuRenderer('llvmpipe'), true);
+    assert.equal(isSoftwareGpuRenderer('probe-failed: boom'), true);
+    assert.equal(isSoftwareGpuRenderer('no-webgl'), true);
+    assert.equal(isSoftwareGpuRenderer('NVIDIA Tesla T4'), false);
+  });
+
+  it('throws when GPU was requested but Chromium is on CPU', () => {
+    assert.throws(
+      () => assertHardwareGpuRenderer(gpu, 'Google SwiftShader', 'gl'),
+      /must run on the GPU/,
+    );
+  });
+
+  it('allows a real NVIDIA renderer', () => {
+    assertHardwareGpuRenderer(gpu, 'NVIDIA Tesla T4', 'vulkan');
+  });
+
+  it('is a no-op when GPU is not requested', () => {
+    assertHardwareGpuRenderer(
+      { enabled: false, reason: 'COMPOSITOR_GPU=0' },
+      'Google SwiftShader',
+      'gl',
+    );
   });
 });

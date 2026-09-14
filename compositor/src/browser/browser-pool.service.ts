@@ -3,12 +3,15 @@ import {
   Logger,
   OnModuleDestroy,
   OnModuleInit,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import puppeteer, { type Browser } from 'puppeteer';
 import {
+  assertHardwareGpuRenderer,
   chromeGpuArgs,
   detectGpu,
-  isSwiftShaderRenderer,
+  hardwareGpuRequiredError,
+  isSoftwareGpuRenderer,
   probeGpuRendererInPage,
   summarizeChromeGpuPage,
   type ChromeGpuBackend,
@@ -76,7 +79,9 @@ export class BrowserPoolService implements OnModuleInit, OnModuleDestroy {
   async claim(): Promise<Browser> {
     const slot = this.slots.find((s) => !s.busy);
     if (!slot) {
-      throw new Error('compositor pool exhausted — no free Chromium slots');
+      throw new ServiceUnavailableException(
+        'compositor pool exhausted — no free Chromium slots',
+      );
     }
     slot.busy = true;
     if (!slot.browser.connected) {
@@ -93,37 +98,76 @@ export class BrowserPoolService implements OnModuleInit, OnModuleDestroy {
 
   private async launchBrowser(): Promise<Browser> {
     const gpu = detectGpu();
-    if (!gpu.enabled) {
-      const browser = await this.launchWithBackend('gl');
-      await this.captureGpuDiagnostics(browser, gpu, 'gl');
-      return browser;
+    if (gpu.enabled) {
+      return this.launchGpuBrowser(gpu);
     }
-
-    const preferred = this.gpuRenderer ? this.gpuBackend : 'gl';
-    const first = await this.launchWithBackend(preferred);
-    const firstRenderer = await this.probeRenderer(first);
-    if (!isSwiftShaderRenderer(firstRenderer) || preferred === 'vulkan') {
-      await this.captureGpuDiagnostics(first, gpu, preferred, firstRenderer);
-      return first;
-    }
-
-    this.logger.warn(
-      `ANGLE GL is ${firstRenderer}; retrying Chromium with Vulkan (typical on Tesla/headless NVIDIA)`,
-    );
-    await first.close().catch(() => undefined);
-    const second = await this.launchWithBackend('vulkan');
-    const secondRenderer = await this.probeRenderer(second);
-    await this.captureGpuDiagnostics(second, gpu, 'vulkan', secondRenderer);
-    return second;
+    const browser = await this.launchWithBackend('gl', false);
+    await this.captureGpuDiagnostics(browser, gpu, 'gl');
+    return browser;
   }
 
-  private launchWithBackend(backend: ChromeGpuBackend): Promise<Browser> {
-    const gpu = detectGpu();
+  private async launchGpuBrowser(gpu: { enabled: boolean; reason: string }): Promise<Browser> {
+    const preferred = this.gpuRenderer ? this.gpuBackend : 'gl';
+    const first = await this.tryLaunchWithBackend(preferred, true);
+    if (first) {
+      const firstRenderer = await this.probeRenderer(first);
+      if (!isSoftwareGpuRenderer(firstRenderer)) {
+        return this.acceptGpuBrowser(first, gpu, preferred, firstRenderer);
+      }
+      await first.close().catch(() => undefined);
+      if (preferred === 'vulkan') {
+        throw hardwareGpuRequiredError(gpu, firstRenderer, 'vulkan');
+      }
+      this.logger.warn(
+        `ANGLE GL is ${firstRenderer}; retrying Chromium with Vulkan (typical on Tesla/headless NVIDIA)`,
+      );
+    } else if (preferred === 'vulkan') {
+      throw new Error(`Chromium Vulkan launch failed (${gpu.reason})`);
+    } else {
+      this.logger.warn('ANGLE GL launch failed; retrying Chromium with Vulkan');
+    }
+
+    const second = await this.launchWithBackend('vulkan', true);
+    const secondRenderer = await this.probeRenderer(second);
+    return this.acceptGpuBrowser(second, gpu, 'vulkan', secondRenderer);
+  }
+
+  private async tryLaunchWithBackend(
+    backend: ChromeGpuBackend,
+    gpuEnabled: boolean,
+  ): Promise<Browser | undefined> {
+    try {
+      return await this.launchWithBackend(backend, gpuEnabled);
+    } catch (err) {
+      this.logger.warn(`Chromium launch (ANGLE ${backend}) failed: ${String(err)}`);
+      return undefined;
+    }
+  }
+
+  private async acceptGpuBrowser(
+    browser: Browser,
+    gpu: { enabled: boolean; reason: string },
+    backend: ChromeGpuBackend,
+    renderer: string,
+  ): Promise<Browser> {
+    try {
+      await this.captureGpuDiagnostics(browser, gpu, backend, renderer);
+      return browser;
+    } catch (err) {
+      await browser.close().catch(() => undefined);
+      throw err;
+    }
+  }
+
+  private launchWithBackend(backend: ChromeGpuBackend, gpuEnabled: boolean): Promise<Browser> {
     return puppeteer.launch({
+      timeout: 30_000,
       // Puppeteer adds --mute-audio by default. That zeroes the Web Audio graph
       // the recorder mixes into MediaRecorder — YouTube/RTMP gets video, no audio.
       // Studio feedback is unaffected (client-side video-only tiles).
-      ignoreDefaultArgs: ['--mute-audio', '--disable-gpu'],
+      // Only drop --disable-gpu when we actually want the host GPU. Leaving it
+      // ignored on CPU boxes makes headless Chrome try (and sometimes crash) GPU init.
+      ignoreDefaultArgs: gpuEnabled ? ['--mute-audio', '--disable-gpu'] : ['--mute-audio'],
       args: [
         '--no-sandbox',
         '--autoplay-policy=no-user-gesture-required',
@@ -133,7 +177,7 @@ export class BrowserPoolService implements OnModuleInit, OnModuleDestroy {
         '--disable-background-timer-throttling',
         '--disable-renderer-backgrounding',
         '--disable-backgrounding-occluded-windows',
-        ...chromeGpuArgs(gpu.enabled, backend),
+        ...chromeGpuArgs(gpuEnabled, backend),
         // Local SFU may use HTTPS/WSS with a self-signed or mkcert cert.
         ...(process.env.NODE_ENV !== 'production'
           ? ['--ignore-certificate-errors']
@@ -151,14 +195,8 @@ export class BrowserPoolService implements OnModuleInit, OnModuleDestroy {
     this.gpuBackend = backend;
     this.gpuRenderer = renderer ?? (await this.probeRenderer(browser));
     this.gpuPageSummary = await this.probeChromeGpuPage(browser);
-    if (gpu.enabled && isSwiftShaderRenderer(this.gpuRenderer)) {
-      this.logger.warn(
-        `GPU requested (${gpu.reason}, ANGLE ${backend}) but Chromium is on ${this.gpuRenderer} — ` +
-          'nvidia-smi will stay at 0%. Run ./scripts/verify-compositor-gpu.sh on the box.',
-      );
-    } else {
-      this.logger.log(`Chromium GPU renderer: ${this.gpuRenderer} (ANGLE ${backend})`);
-    }
+    assertHardwareGpuRenderer(gpu, this.gpuRenderer, backend);
+    this.logger.log(`Chromium GPU renderer: ${this.gpuRenderer} (ANGLE ${backend})`);
     if (this.gpuPageSummary) {
       this.logger.log(`chrome://gpu ${this.gpuPageSummary}`);
     }

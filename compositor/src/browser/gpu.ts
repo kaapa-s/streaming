@@ -43,9 +43,6 @@ export function detectGpu(
 
 export type ChromeGpuBackend = 'gl' | 'vulkan';
 
-const VAAPI_FEATURES =
-  'VaapiVideoDecoder,VaapiVideoEncoder,VaapiIgnoreDriverChecks,AcceleratedVideoDecodeLinuxGL,AcceleratedVideoEncoder,CanvasOopRasterization';
-
 /** Chromium flags so ANGLE uses the host GPU instead of SwiftShader. */
 export function chromeGpuArgs(
   enabled: boolean,
@@ -56,26 +53,56 @@ export function chromeGpuArgs(
     backend === 'vulkan'
       ? ['--use-gl=angle', '--use-angle=vulkan', '--disable-vulkan-surface']
       : ['--use-gl=angle', '--use-angle=gl'];
+  // Canvas/raster only. VAAPI (and LIBVA_DRIVER_NAME=nvidia) is an Intel/AMD
+  // path — on Tesla it can crash MediaRecorder and fail go-live with 503.
   const features =
     backend === 'vulkan'
-      ? `Vulkan,DefaultANGLEVulkan,VulkanFromANGLE,${VAAPI_FEATURES}`
-      : VAAPI_FEATURES;
+      ? 'Vulkan,DefaultANGLEVulkan,VulkanFromANGLE,CanvasOopRasterization'
+      : 'CanvasOopRasterization';
   return [
     '--enable-gpu',
     '--ignore-gpu-blocklist',
     '--enable-gpu-rasterization',
     '--enable-zero-copy',
     '--enable-accelerated-2d-canvas',
-    '--enable-accelerated-video-decode',
-    '--enable-accelerated-video-encode',
+    '--disable-gpu-sandbox',
+    // If the device is missing, fail instead of silently rasterizing on CPU.
+    '--disable-software-rasterizer',
     ...angle,
     `--enable-features=${features}`,
-    '--disable-features=UseChromeOSDirectVideoDecoder',
   ];
 }
 
 export function isSwiftShaderRenderer(renderer: string): boolean {
   return /swiftshader|llvmpipe|softpipe|microsoft basic render/i.test(renderer);
+}
+
+/** True when Chromium did not attach a real GPU (CPU / probe failure). */
+export function isSoftwareGpuRenderer(renderer: string): boolean {
+  if (isSwiftShaderRenderer(renderer)) return true;
+  return /no-webgl|no-document|probe-failed/i.test(renderer);
+}
+
+export function hardwareGpuRequiredError(
+  gpu: GpuDetection,
+  renderer: string,
+  backend: ChromeGpuBackend,
+): Error {
+  return new Error(
+    `Chromium must run on the GPU (${gpu.reason}, ANGLE ${backend}) but renderer is ${renderer}. ` +
+      'Refusing CPU/SwiftShader. Fix GPU passthrough (compose.gpu.yml) and run ./scripts/verify-compositor-gpu.sh',
+  );
+}
+
+export function assertHardwareGpuRenderer(
+  gpu: GpuDetection,
+  renderer: string,
+  backend: ChromeGpuBackend,
+): void {
+  if (!gpu.enabled) return;
+  if (isSoftwareGpuRenderer(renderer)) {
+    throw hardwareGpuRequiredError(gpu, renderer, backend);
+  }
 }
 
 interface PageCanvas {
