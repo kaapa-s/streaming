@@ -1,6 +1,24 @@
 const RAW_VIDEO = 1;
 const RAW_AUDIO = 2;
 
+/**
+ * WebCodecs pixel format → wire code. Must stay in sync with VIDEO_FORMATS in
+ * compositor/src/recordings/raw-pipe.ts, which maps the code to an ffmpeg
+ * `-pix_fmt`. (The page is a separate Vite build and cannot import from the
+ * Nest service, so the kind bytes above are duplicated the same way.)
+ */
+const VIDEO_FORMAT_CODES: Record<string, number> = {
+  I420: 1,
+  NV12: 2,
+  I420A: 3,
+  I422: 4,
+  I444: 5,
+  RGBA: 6,
+  RGBX: 7,
+  BGRA: 8,
+  BGRX: 9,
+};
+
 interface TrackProcessor<T> {
   readable: ReadableStream<T>;
 }
@@ -24,11 +42,22 @@ function bytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return out;
 }
 
-async function videoPacket(frame: VideoFrame): Promise<ArrayBuffer> {
-  const size = frame.allocationSize({ format: 'I420' });
-  const packet = new Uint8Array(1 + size);
+/**
+ * Copies the frame in its own pixel format and tags the packet with it.
+ *
+ * `copyTo({ format })` only converts to RGB formats — asking it for I420 throws
+ * NotSupportedError and kills the pipe, which is how every frame of a session
+ * was silently lost while audio kept flowing. Let the frame keep its format and
+ * let ffmpeg be told what it is.
+ */
+async function videoPacket(frame: VideoFrame): Promise<ArrayBuffer | undefined> {
+  const code = frame.format ? VIDEO_FORMAT_CODES[frame.format] : undefined;
+  if (code === undefined) return undefined;
+  const size = frame.allocationSize();
+  const packet = new Uint8Array(2 + size);
   packet[0] = RAW_VIDEO;
-  await frame.copyTo(packet.subarray(1), { format: 'I420' });
+  packet[1] = code;
+  await frame.copyTo(packet.subarray(2));
   return bytesToArrayBuffer(packet);
 }
 
@@ -72,6 +101,8 @@ async function pumpTrack(
   const Processor = requireTrackProcessor();
   const processor = new Processor({ track });
   const reader = processor.readable.getReader();
+  let announcedFormat: string | undefined;
+  let unsupported = 0;
   try {
     while (!abort.aborted) {
       const { value, done } = await reader.read();
@@ -82,8 +113,22 @@ async function pumpTrack(
       }
       try {
         if (kind === 'video' && value instanceof VideoFrame) {
+          const format = value.format ?? 'unknown';
+          if (format !== announcedFormat) {
+            announcedFormat = format;
+            console.log(
+              `[compositor] nvenc pipe video format=${format} ` +
+                `${value.codedWidth}x${value.codedHeight}`,
+            );
+          }
           const packet = await videoPacket(value);
-          ws.send(packet);
+          if (packet) {
+            ws.send(packet);
+          } else if (++unsupported <= 3) {
+            console.error(
+              `[compositor] nvenc pipe: unsupported VideoFrame format ${format} — dropping frame`,
+            );
+          }
         } else if (kind === 'audio' && typeof (value as AudioData).numberOfFrames === 'number') {
           ws.send(audioPacket(value as AudioData));
         }
@@ -96,7 +141,7 @@ async function pumpTrack(
   }
 }
 
-/** Stream canvas I420 + mix PCM over the recording WebSocket for ffmpeg NVENC. */
+/** Stream canvas frames + mix PCM over the recording WebSocket for ffmpeg NVENC. */
 export function startNvencPipe(
   stream: MediaStream,
   ws: WebSocket,

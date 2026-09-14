@@ -18,9 +18,36 @@ function defaultSpawnEncoders(bin: string, args: string[]) {
 }
 
 /**
+ * Encodes one black frame. Listing h264_nvenc only proves the ffmpeg build was
+ * compiled with it — opening it also needs a host driver new enough for that
+ * build's NVENC API. A driver that is too old fails here with "Driver does not
+ * support the required nvenc API version", and the encoder never opens.
+ */
+export const NVENC_TRIAL_ARGS = [
+  '-hide_banner',
+  '-loglevel',
+  'error',
+  '-f',
+  'lavfi',
+  '-i',
+  'color=c=black:s=256x144:r=30',
+  '-frames:v',
+  '1',
+  '-c:v',
+  'h264_nvenc',
+  '-f',
+  'null',
+  '-',
+];
+
+/**
  * True when this process should encode with ffmpeg NVENC instead of Chrome
- * MediaRecorder. Needs GPU passthrough and an ffmpeg built with h264_nvenc
- * (Debian's ffmpeg is not).
+ * MediaRecorder. Needs GPU passthrough and an ffmpeg whose h264_nvenc actually
+ * opens against the installed driver — so this runs a trial encode rather than
+ * trusting `-encoders`, which lists the encoder even when the driver is too old.
+ *
+ * Returning false is a safe degrade: the caller falls back to MediaRecorder
+ * H.264, which streams without the GPU encoder.
  */
 export function detectNvenc(
   gpu: GpuDetection,
@@ -30,9 +57,24 @@ export function detectNvenc(
   if (!gpu.enabled) return false;
   if (env.COMPOSITOR_NVENC === '0') return false;
   const bin = env.FFMPEG_PATH?.trim() || 'ffmpeg';
-  const result = spawnEncoders(bin, ['-hide_banner', '-encoders']);
-  if (result.error || result.status !== 0) return false;
-  return /\bh264_nvenc\b/.test(result.stdout);
+  const listed = spawnEncoders(bin, ['-hide_banner', '-encoders']);
+  if (listed.error || listed.status !== 0) return false;
+  if (!/\bh264_nvenc\b/.test(listed.stdout)) return false;
+  const trial = spawnEncoders(bin, NVENC_TRIAL_ARGS);
+  if (trial.error || trial.status !== 0) return false;
+  return true;
+}
+
+/** Why the trial encode failed, for the boot log. */
+export function nvencTrialFailure(
+  env: NodeJS.Dict<string> = process.env,
+  spawnEncoders: SpawnEncoders = defaultSpawnEncoders,
+): string | undefined {
+  const bin = env.FFMPEG_PATH?.trim() || 'ffmpeg';
+  const trial = spawnEncoders(bin, NVENC_TRIAL_ARGS);
+  if (!trial.error && trial.status === 0) return undefined;
+  const detail = trial.error ? String(trial.error) : trial.stdout.trim();
+  return detail.split(/\r?\n/).filter(Boolean).slice(0, 3).join(' / ') || 'unknown error';
 }
 
 function nvencVideoArgs(profile: StreamProfile): string[] {
@@ -61,7 +103,7 @@ function nvencVideoArgs(profile: StreamProfile): string[] {
   ];
 }
 
-function rawInputs(profile: StreamProfile): string[] {
+function rawInputs(profile: StreamProfile, pixFmt: string): string[] {
   return [
     '-hide_banner',
     '-loglevel',
@@ -75,7 +117,7 @@ function rawInputs(profile: StreamProfile): string[] {
     '-f',
     'rawvideo',
     '-pix_fmt',
-    'yuv420p',
+    pixFmt,
     '-s:v',
     `${profile.width}x${profile.height}`,
     '-r',
@@ -96,15 +138,17 @@ function rawInputs(profile: StreamProfile): string[] {
 }
 
 /**
- * ffmpeg args: I420 + f32le PCM in, NVENC H.264 out.
+ * ffmpeg args: raw video (`pixFmt`, as the page reported it) + f32le PCM in,
+ * NVENC H.264 out.
  * Archive is always H.264+Opus WebM. Live RTMP adds AAC via tee (one NVENC encode).
  */
 export function buildNvencFfmpegArgs(
   profile: StreamProfile,
   file: string,
   urls: string[],
+  pixFmt = 'yuv420p',
 ): string[] {
-  const head = rawInputs(profile);
+  const head = rawInputs(profile, pixFmt);
   const video = nvencVideoArgs(profile);
 
   if (urls.length === 0) {

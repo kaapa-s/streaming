@@ -7,13 +7,19 @@ import type { WebSocket } from 'ws';
 import { SessionsService } from '../sessions/sessions.service';
 import type { SessionLog } from './session-log';
 import { buildNvencFfmpegArgs } from './nvenc';
-import { i420FrameSize, parseRawPacket } from './raw-pipe';
+import { frameSize, parseRawPacket, type VideoFormat } from './raw-pipe';
 import { buildFfmpegArgs, redactFfmpegArg } from './rtmp';
 import { parseRecorderCodec, STREAM_PROFILES } from '@streaming/stream-quality';
 
+/** Audio held while waiting for the first video frame (~5s at 48kHz stereo f32). */
+const MAX_PENDING_AUDIO_BYTES = 4_000_000;
+
+/** How long to wait for a first video frame before saying so in the log. */
+const VIDEO_WAIT_WARN_MS = 10_000;
+
 /**
  * Binary sink on /ws/recording?room=X&codec=h264|vp9|vp8|raw — compositor streams
- * MediaRecorder chunks (or raw I420/PCM for NVENC) here. File always; RTMP via ffmpeg when live.
+ * MediaRecorder chunks (or raw frames + PCM for NVENC) here. File always; RTMP via ffmpeg when live.
  */
 @WebSocketGateway({ path: '/ws/recording' })
 export class RecordingGateway implements OnGatewayConnection {
@@ -62,6 +68,10 @@ export class RecordingGateway implements OnGatewayConnection {
     }
 
     const out = createWriteStream(file);
+    out.on('error', (err) => {
+      sessionLog?.write(`recording file error: ${String(err)}`);
+      console.error(`[recording:${room}] file error:`, err);
+    });
     let bytesIn = 0;
     let chunkCount = 0;
     let windowBytes = 0;
@@ -77,6 +87,7 @@ export class RecordingGateway implements OnGatewayConnection {
       const args = buildFfmpegArgs(profile, codec, rtmpUrls);
       ffmpeg = spawn(bin, args, { stdio: ['pipe', 'ignore', 'pipe'] });
       this.sessions.attachFfmpeg(room, ffmpeg);
+      guardFfmpegPipes(room, ffmpeg, sessionLog);
       attachFfmpegLogging(room, ffmpeg, sessionLog);
       const mode = codec === 'h264' ? 'copy+aac' : `libx264/${profile.ffmpegPreset}`;
       const banner =
@@ -95,10 +106,7 @@ export class RecordingGateway implements OnGatewayConnection {
       windowBytes += buf.length;
       windowChunks += 1;
       out.write(buf);
-      if (ffmpeg?.stdin && !ffmpeg.stdin.destroyed) {
-        const ok = ffmpeg.stdin.write(buf);
-        if (!ok) sessionLog?.write('ffmpeg stdin backpressure (write returned false)');
-      }
+      writePipe(ffmpeg?.stdin, buf, sessionLog, 'stdin');
       const now = Date.now();
       const elapsedMs = now - windowStartedAt;
       if (elapsedMs >= 10_000) {
@@ -113,16 +121,24 @@ export class RecordingGateway implements OnGatewayConnection {
       }
     });
 
+    socket.on('error', (err) => {
+      sessionLog?.write(`sink socket error: ${String(err)}`);
+      console.error(`[recording:${room}] sink socket error:`, err);
+    });
+
     socket.on('close', () => {
       out.end();
-      if (ffmpeg?.stdin && !ffmpeg.stdin.destroyed) {
-        ffmpeg.stdin.end();
-      }
+      endPipe(ffmpeg?.stdin);
       sessionLog?.write(`sink closed chunks=${chunkCount} total_bytes=${bytesIn}`);
       console.log(`[recording] finished ${file}`);
     });
   }
 
+  /**
+   * ffmpeg is spawned on the first video frame, not on connect: only the frame
+   * knows its pixel format, and `-f rawvideo` has to be told the right one.
+   * Audio arrives first and is held until then.
+   */
   private handleRawNvenc(
     socket: WebSocket,
     opts: {
@@ -136,22 +152,17 @@ export class RecordingGateway implements OnGatewayConnection {
   ): void {
     const { room, file, rtmpUrls, sessionLog, live, resolution } = opts;
     const profile = STREAM_PROFILES[resolution];
-    const expectedVideo = i420FrameSize(profile.width, profile.height);
-    const bin = process.env.FFMPEG_PATH ?? 'ffmpeg';
-    const args = buildNvencFfmpegArgs(profile, file, rtmpUrls);
-    const ffmpeg = spawn(bin, args, { stdio: ['pipe', 'ignore', 'pipe', 'pipe'] });
-    this.sessions.attachFfmpeg(room, ffmpeg);
-    attachFfmpegLogging(room, ffmpeg, sessionLog);
-
-    const audioIn = extraStdin(ffmpeg, 3);
     const mode = live ? 'nvenc+aac+tee' : 'nvenc+webm';
-    const banner =
-      `NVENC ${resolution} mode=${mode} file=${file} ` +
-      `destinations=${rtmpUrls.length} @ ${profile.rtmpVideoBitrate} for room ${room}`;
-    console.log(`[recording] ${banner}`);
+
     sessionLog?.write(`sink connected codec=raw resolution=${resolution} file=${file}`);
-    sessionLog?.write(banner);
-    sessionLog?.write(`ffmpeg args: ${args.map(redactFfmpegArg).join(' ')}`);
+
+    let ffmpeg: ChildProcess | undefined;
+    let audioIn: Writable | undefined;
+    let format: VideoFormat | undefined;
+    let expectedVideo = 0;
+    let pendingAudio: Buffer[] = [];
+    let pendingAudioBytes = 0;
+    let droppedAudio = 0;
 
     let bytesIn = 0;
     let videoFrames = 0;
@@ -160,6 +171,43 @@ export class RecordingGateway implements OnGatewayConnection {
     let windowBytes = 0;
     let windowStartedAt = Date.now();
 
+    const waitWarning = setTimeout(() => {
+      if (ffmpeg) return;
+      const msg =
+        `no video frame after ${VIDEO_WAIT_WARN_MS / 1000}s — ffmpeg not started, ` +
+        `audio_packets=${audioPackets}. The page is not delivering frames.`;
+      sessionLog?.write(msg);
+      console.error(`[recording:${room}] ${msg}`);
+    }, VIDEO_WAIT_WARN_MS);
+
+    const startFfmpeg = (videoFormat: VideoFormat): ChildProcess => {
+      format = videoFormat;
+      expectedVideo = frameSize(videoFormat, profile.width, profile.height);
+      const bin = process.env.FFMPEG_PATH ?? 'ffmpeg';
+      const args = buildNvencFfmpegArgs(profile, file, rtmpUrls, videoFormat.pixFmt);
+      ffmpeg = spawn(bin, args, { stdio: ['pipe', 'ignore', 'pipe', 'pipe'] });
+      this.sessions.attachFfmpeg(room, ffmpeg);
+      guardFfmpegPipes(room, ffmpeg, sessionLog);
+      attachFfmpegLogging(room, ffmpeg, sessionLog);
+      audioIn = extraStdin(ffmpeg, 3);
+
+      const banner =
+        `NVENC ${resolution} mode=${mode} file=${file} ` +
+        `format=${videoFormat.name} pix_fmt=${videoFormat.pixFmt} ` +
+        `destinations=${rtmpUrls.length} @ ${profile.rtmpVideoBitrate} for room ${room}`;
+      console.log(`[recording] ${banner}`);
+      sessionLog?.write(banner);
+      sessionLog?.write(`ffmpeg args: ${args.map(redactFfmpegArg).join(' ')}`);
+
+      for (const chunk of pendingAudio) writePipe(audioIn, chunk, sessionLog, 'audio');
+      if (droppedAudio > 0) {
+        sessionLog?.write(`dropped ${droppedAudio} buffered audio packets before first video frame`);
+      }
+      pendingAudio = [];
+      pendingAudioBytes = 0;
+      return ffmpeg;
+    };
+
     socket.on('message', (data, isBinary) => {
       if (!isBinary) return;
       const buf = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
@@ -167,7 +215,22 @@ export class RecordingGateway implements OnGatewayConnection {
       if (!packet) return;
       bytesIn += packet.payload.length;
       windowBytes += packet.payload.length;
+
       if (packet.kind === 'video') {
+        let target = ffmpeg;
+        if (!target) {
+          clearTimeout(waitWarning);
+          target = startFfmpeg(packet.format);
+        } else if (packet.format.name !== format?.name) {
+          skippedVideo += 1;
+          if (skippedVideo <= 3) {
+            sessionLog?.write(
+              `nvenc skip video format=${packet.format.name} expected=${format?.name} ` +
+                '(pixel format cannot change mid-stream)',
+            );
+          }
+          return;
+        }
         if (packet.payload.length !== expectedVideo) {
           skippedVideo += 1;
           if (skippedVideo <= 3 || skippedVideo % 120 === 0) {
@@ -178,11 +241,22 @@ export class RecordingGateway implements OnGatewayConnection {
           return;
         }
         videoFrames += 1;
-        writePipe(ffmpeg.stdin, packet.payload, sessionLog, 'video');
+        writePipe(target.stdin, packet.payload, sessionLog, 'video');
       } else {
         audioPackets += 1;
-        writePipe(audioIn, packet.payload, sessionLog, 'audio');
+        if (!ffmpeg) {
+          // Held until the first video frame names the pixel format.
+          if (pendingAudioBytes + packet.payload.length > MAX_PENDING_AUDIO_BYTES) {
+            droppedAudio += 1;
+          } else {
+            pendingAudio.push(Buffer.from(packet.payload));
+            pendingAudioBytes += packet.payload.length;
+          }
+        } else {
+          writePipe(audioIn, packet.payload, sessionLog, 'audio');
+        }
       }
+
       const now = Date.now();
       const elapsedMs = now - windowStartedAt;
       if (elapsedMs >= 10_000) {
@@ -197,9 +271,20 @@ export class RecordingGateway implements OnGatewayConnection {
       }
     });
 
+    socket.on('error', (err) => {
+      sessionLog?.write(`sink socket error: ${String(err)}`);
+      console.error(`[recording:${room}] sink socket error:`, err);
+    });
+
     socket.on('close', () => {
-      if (ffmpeg.stdin && !ffmpeg.stdin.destroyed) ffmpeg.stdin.end();
-      if (audioIn && !audioIn.destroyed) audioIn.end();
+      clearTimeout(waitWarning);
+      endPipe(ffmpeg?.stdin);
+      endPipe(audioIn);
+      if (!ffmpeg) {
+        const msg = 'sink closed before any video frame — nothing was encoded';
+        sessionLog?.write(msg);
+        console.error(`[recording:${room}] ${msg}`);
+      }
       sessionLog?.write(
         `sink closed codec=raw video_frames=${videoFrames} audio_packets=${audioPackets} ` +
           `skipped_video=${skippedVideo} total_bytes=${bytesIn}`,
@@ -223,9 +308,49 @@ function writePipe(
   sessionLog: SessionLog | undefined,
   label: string,
 ): void {
-  if (!dest || dest.destroyed) return;
-  const ok = dest.write(payload);
-  if (!ok) sessionLog?.write(`ffmpeg ${label} backpressure (write returned false)`);
+  if (!dest || dest.destroyed || dest.writableEnded) return;
+  try {
+    const ok = dest.write(payload);
+    if (!ok) sessionLog?.write(`ffmpeg ${label} backpressure (write returned false)`);
+  } catch (err) {
+    sessionLog?.write(`ffmpeg ${label} write failed: ${String(err)}`);
+  }
+}
+
+function endPipe(dest: Writable | null | undefined): void {
+  if (!dest || dest.destroyed || dest.writableEnded) return;
+  try {
+    dest.end();
+  } catch {
+    // The pipe is already gone; ffmpeg exiting is handled by its own listener.
+  }
+}
+
+/**
+ * An ffmpeg that dies mid-session resets its stdio pipes. Without a listener,
+ * that ECONNRESET/EPIPE is an unhandled 'error' event, which takes the whole
+ * compositor process down with it — every in-flight session, plus the HTTP
+ * server, so `/internal/rooms/:slug/stop` then answers 502 from nginx.
+ */
+function guardFfmpegPipes(
+  room: string,
+  ffmpeg: ChildProcess,
+  sessionLog: SessionLog | undefined,
+): void {
+  const guard = (stream: { on?: (ev: string, cb: (err: Error) => void) => unknown } | null | undefined, label: string) => {
+    stream?.on?.('error', (err: Error) => {
+      sessionLog?.write(`ffmpeg ${label} pipe error: ${String(err)}`);
+      console.error(`[ffmpeg:${room}] ${label} pipe error: ${String(err)}`);
+    });
+  };
+  guard(ffmpeg.stdin, 'stdin');
+  guard(ffmpeg.stdout, 'stdout');
+  guard(ffmpeg.stderr, 'stderr');
+  guard(extraStdin(ffmpeg, 3), 'fd3');
+  ffmpeg.on('error', (err) => {
+    sessionLog?.write(`ffmpeg process error: ${String(err)}`);
+    console.error(`[ffmpeg:${room}] process error: ${String(err)}`);
+  });
 }
 
 function attachFfmpegLogging(

@@ -6,7 +6,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import puppeteer, { type Browser } from 'puppeteer';
-import { detectNvenc } from '../recordings/nvenc';
+import { detectNvenc, nvencTrialFailure } from '../recordings/nvenc';
 import {
   assertHardwareGpuCompositing,
   assertHardwareGpuRenderer,
@@ -66,6 +66,17 @@ export class BrowserPoolService implements OnModuleInit, OnModuleDestroy {
     const size = Math.max(1, Number(process.env.COMPOSITOR_POOL_SIZE ?? 1) || 1);
     const gpu = detectGpu();
     this.gpuEncode = detectNvenc(gpu) ? 'nvenc' : 'mediarecorder';
+    if (gpu.enabled && this.gpuEncode === 'mediarecorder' && process.env.COMPOSITOR_NVENC !== '0') {
+      // Falling back is safe, but silently is not: this is the difference
+      // between a GPU encode and a CPU one, and it turns on the host driver.
+      const why = nvencTrialFailure();
+      if (why) {
+        this.logger.warn(
+          `h264_nvenc will not open (${why}) — encoding with MediaRecorder H.264 instead. ` +
+            'Chromium still renders on the GPU.',
+        );
+      }
+    }
     this.logger.log(
       `warming Chromium pool size=${size} gpu=${gpu.enabled} (${gpu.reason}) ` +
         `angle=${this.gpuAngle} encode=${this.gpuEncode}`,
