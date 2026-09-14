@@ -69,6 +69,17 @@ export class CompositorClient {
     });
   }
 
+  async setLayout(
+    slug: string,
+    layout: {
+      cameraPreset: 'focus' | 'pip-left' | 'pip-right' | 'grid';
+      featuredId: string | null;
+      sceneScreenIds: string[];
+    },
+  ): Promise<{ room: string; ok: boolean }> {
+    return this.request('POST', `/internal/rooms/${encodeURIComponent(slug)}/layout`, layout);
+  }
+
   async status(): Promise<unknown> {
     return this.request('GET', '/internal/status');
   }

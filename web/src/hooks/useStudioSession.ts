@@ -19,6 +19,7 @@ export function useStudioSession({
   const [joined, setJoined] = useState(false);
   const [joining, setJoining] = useState(false);
   const [roomRole, setRoomRole] = useState<'owner' | 'speaker' | 'viewer' | null>(null);
+  const [localPeerId, setLocalPeerId] = useState<string | null>(null);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [localScreenStream, setLocalScreenStream] = useState<MediaStream | null>(null);
   const [remotePeers, setRemotePeers] = useState<RemotePeer[]>([]);
@@ -45,6 +46,7 @@ export function useStudioSession({
     localStreamRef.current?.getTracks().forEach((t) => t.stop());
     setLocalStream(null);
     setRemotePeers([]);
+    setLocalPeerId(null);
     setJoined(false);
     setRoomRole(null);
     joiningRef.current = false;
@@ -82,6 +84,7 @@ export function useStudioSession({
       sfuRef.current = sfu;
       await sfu.join(joinedRoom.slug, user.name, 'speaker', joinToken, sfuUrl);
       await sfu.publish(stream);
+      setLocalPeerId(sfu.peerId);
       setJoined(true);
       setJoining(false);
     } catch (err) {
@@ -97,14 +100,18 @@ export function useStudioSession({
     }
   };
 
+  const stopScreenShare = () => {
+    void runScreen(async () => {
+      setError('');
+      await stopLocalScreen();
+    });
+  };
+
   const toggleScreenShare = () => {
+    if (localScreenStream) return;
     void runScreen(async () => {
       setError('');
       try {
-        if (localScreenStream) {
-          await stopLocalScreen();
-          return;
-        }
         if (!navigator.mediaDevices?.getDisplayMedia) {
           throw new Error('Screen sharing is not supported in this browser');
         }
@@ -146,24 +153,20 @@ export function useStudioSession({
     });
   };
 
-  const screenLabel = screenPending
-    ? localScreenStream
-      ? 'Stopping share…'
-      : 'Starting share…'
-    : localScreenStream
-      ? 'Stop sharing'
-      : 'Share screen';
+  const screenLabel = screenPending ? 'Starting share…' : 'Share screen';
 
   return {
     joined,
     joining,
     roomRole,
+    localPeerId,
     localStream,
     localScreenStream,
     remotePeers,
     join,
     leave,
     toggleScreenShare,
+    stopScreenShare,
     screenPending,
     screenLabel,
   };

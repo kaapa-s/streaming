@@ -3,16 +3,19 @@ import {
   createCompositor,
   type CommentOverlay,
   type Compositor,
+  type LayoutState,
 } from '@streaming/canvas-compositor';
 import { STREAM_PROFILES } from '@streaming/stream-quality';
 import type { RemotePeer } from '@streaming/sfu-client';
 
 type ProgramPreviewInput = {
   joined: boolean;
+  localPeerId: string | null;
   localStream: MediaStream | null;
   localScreenStream: MediaStream | null;
   remotePeers: RemotePeer[];
   name: string;
+  layout: LayoutState;
 };
 
 const PROGRAM = STREAM_PROFILES['1080p'];
@@ -45,12 +48,16 @@ function fitPreviewCanvasSize(
 /** Program preview compositor (video only, no audio mix). */
 export function useProgramPreview({
   joined,
+  localPeerId,
   localStream,
   localScreenStream,
   remotePeers,
   name,
+  layout,
 }: ProgramPreviewInput) {
   const compositorRef = useRef<Compositor | null>(null);
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
   const [container, setContainer] = useState<HTMLDivElement | null>(null);
 
   const previewRef = (node: HTMLDivElement | null) => {
@@ -70,6 +77,7 @@ export function useProgramPreview({
     compositorRef.current = compositor;
     compositor.canvas.className = 'preview-canvas';
     container.appendChild(compositor.canvas);
+    compositor.setLayout(layoutRef.current);
 
     const syncSize = () => {
       const size = fitPreviewCanvasSize(container, PROGRAM.width, PROGRAM.height);
@@ -91,17 +99,21 @@ export function useProgramPreview({
   // Include `container` so peers sync after the compositor is created on /live
   // mount (join sets streams before the preview DOM exists).
   useEffect(() => {
-    if (!container || !compositorRef.current || !localStream) return;
+    if (!container || !compositorRef.current || !localStream || !localPeerId) return;
     compositorRef.current.setPeers([
       {
-        id: 'local',
+        id: localPeerId,
         name,
         stream: localStream,
         ...(localScreenStream ? { screenStream: localScreenStream } : {}),
       },
       ...remotePeers,
     ]);
-  }, [container, joined, localStream, localScreenStream, remotePeers, name]);
+  }, [container, joined, localPeerId, localStream, localScreenStream, remotePeers, name]);
+
+  useEffect(() => {
+    compositorRef.current?.setLayout(layout);
+  }, [container, joined, layout]);
 
   const setPreviewOverlay = (overlay: CommentOverlay | null) => {
     compositorRef.current?.setOverlay(overlay);

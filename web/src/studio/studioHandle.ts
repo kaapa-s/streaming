@@ -3,6 +3,7 @@ import type { FinishedRecording } from '../components/studio/RecordingFinishedMo
 import type { LiveComment } from '../hooks/useLiveComments';
 import type { RemotePeer } from '@streaming/sfu-client';
 import type { AuthUser } from '../lib/auth';
+import type { CameraPreset } from '@streaming/canvas-compositor';
 
 export type StudioValue = {
   error: string;
@@ -27,12 +28,20 @@ export type StudioValue = {
   join: () => Promise<void>;
   leave: () => Promise<void>;
   roomRole: 'owner' | 'speaker' | 'viewer' | null;
+  localPeerId: string | null;
   localStream: MediaStream | null;
   localScreenStream: MediaStream | null;
   remotePeers: RemotePeer[];
   toggleScreenShare: () => void;
+  stopScreenShare: () => void;
   screenPending: boolean;
   screenLabel: string;
+  cameraPreset: CameraPreset;
+  featuredId: string | null;
+  sceneScreenIds: string[];
+  setCameraPreset: (preset: CameraPreset) => void;
+  setFeatured: (sourceId: string) => void;
+  toggleSceneScreen: (sourceId: string) => void;
   previewRef: (node: HTMLDivElement | null) => void;
   recording: boolean;
   live: boolean;

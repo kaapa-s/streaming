@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { createCompositor, type Compositor } from '@streaming/canvas-compositor';
+import {
+  createCompositor,
+  sourceId,
+  type Compositor,
+  type LayoutState,
+} from '@streaming/canvas-compositor';
 import { Button } from '../components/Button';
+import { LAYOUT_OPTIONS } from '../components/studio/layoutIcons';
 import {
   createFakePeer,
   createFakeScreen,
@@ -25,9 +31,17 @@ export function CompositorDev() {
   const nextIndexRef = useRef(0);
 
   const [peerCount, setPeerCount] = useState(0);
+  const [peerList, setPeerList] = useState<{ id: string; name: string }[]>([]);
   const [mixAudio, setMixAudio] = useState(initialAudio);
   const [withAudio, setWithAudio] = useState(initialAudio);
   const [withScreen, setWithScreen] = useState(initialScreen);
+  const [layout, setLayout] = useState<LayoutState>({
+    cameraPreset: 'focus',
+    featuredId: null,
+    sceneScreenIds: [],
+  });
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
 
   // Recreate compositor when mixAudio toggles (audio graph is baked in at create time).
   useEffect(() => {
@@ -36,6 +50,7 @@ export function CompositorDev() {
     compositor.canvas.className = 'preview-canvas';
     previewRef.current.appendChild(compositor.canvas);
     compositorRef.current = compositor;
+    compositor.setLayout(layoutRef.current);
     compositor.setPeers(peersForCompositor());
     return () => {
       compositor.stop();
@@ -43,6 +58,10 @@ export function CompositorDev() {
       compositorRef.current = null;
     };
   }, [mixAudio]);
+
+  useEffect(() => {
+    compositorRef.current?.setLayout(layout);
+  }, [layout]);
 
   // Seed initial fake peers once.
   useEffect(() => {
@@ -66,7 +85,23 @@ export function CompositorDev() {
 
   const sync = () => {
     compositorRef.current?.setPeers(peersForCompositor());
-    setPeerCount(peersRef.current.length);
+    const list = peersRef.current.map((peer) => ({ id: peer.id, name: peer.name }));
+    setPeerList(list);
+    setPeerCount(list.length);
+    const cameraIds = list.map((peer) => sourceId(peer.id, 'camera')).sort((a, b) => a.localeCompare(b));
+    const liveScreens =
+      screenRef.current && list[0] ? [sourceId(list[0].id, 'screen')] : [];
+    setLayout((prev) => {
+      const featuredId =
+        prev.featuredId && cameraIds.includes(prev.featuredId)
+          ? prev.featuredId
+          : cameraIds[0] ?? null;
+      const sceneScreenIds = prev.sceneScreenIds.filter((id) => liveScreens.includes(id));
+      if (featuredId === prev.featuredId && sceneScreenIds.length === prev.sceneScreenIds.length) {
+        return prev;
+      }
+      return { ...prev, featuredId, sceneScreenIds };
+    });
   };
 
   const addPeer = () => {
@@ -140,6 +175,56 @@ export function CompositorDev() {
             Controls
           </h2>
           <div className="flex flex-col gap-2.5 items-start">
+            <p className="text-xs font-medium text-ink-muted">Layout</p>
+            <div className="flex flex-wrap gap-2">
+              {LAYOUT_OPTIONS.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setLayout((prev) => ({ ...prev, cameraPreset: item.id }))}
+                  aria-label={item.label}
+                  title={item.label}
+                  className={`size-10 inline-flex items-center justify-center rounded-lg border transition-colors ${
+                    layout.cameraPreset === item.id
+                      ? 'border-accent bg-accent/10 text-accent'
+                      : 'border-border bg-surface text-ink-muted hover:text-ink'
+                  }`}
+                >
+                  <item.Icon className="size-5" />
+                </button>
+              ))}
+            </div>
+            {withScreen && (
+              <p className="text-xs text-ink-muted">
+                Screen track is live. Add it to the scene to use presentation.
+              </p>
+            )}
+
+            <p className="text-xs font-medium text-ink-muted mt-1">Featured camera</p>
+            <div className="flex flex-wrap gap-2">
+              {peerList.map((peer) => {
+                const id = sourceId(peer.id, 'camera');
+                const selected = layout.featuredId === id;
+                return (
+                  <button
+                    key={peer.id}
+                    type="button"
+                    onClick={() => setLayout((prev) => ({ ...prev, featuredId: id }))}
+                    className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${
+                      selected
+                        ? 'border-accent bg-accent/10 text-accent'
+                        : 'border-border bg-surface text-ink-muted hover:text-ink'
+                    }`}
+                  >
+                    {peer.name}
+                  </button>
+                );
+              })}
+              {peerList.length === 0 && (
+                <span className="text-sm text-ink-muted">Add a peer to pick a featured camera.</span>
+              )}
+            </div>
+
             <Button variant="primary" onClick={addPeer}>
               Add peer
             </Button>
@@ -178,7 +263,35 @@ export function CompositorDev() {
                 onChange={(e) => onScreenToggle(e.target.checked)}
                 disabled={peerCount === 0 && !withScreen}
               />
-              Fake screen share (presentation layout)
+              Fake screen share (source only)
+            </label>
+            <label className="flex items-center gap-2 text-sm text-ink cursor-pointer">
+              <input
+                type="checkbox"
+                className="w-auto m-0"
+                checked={
+                  !!peerList[0] &&
+                  layout.sceneScreenIds.includes(sourceId(peerList[0].id, 'screen'))
+                }
+                onChange={(e) => {
+                  const first = peerList[0];
+                  if (!first) return;
+                  const id = sourceId(first.id, 'screen');
+                  const enabled = e.target.checked;
+                  setLayout((prev) => {
+                    const has = prev.sceneScreenIds.includes(id);
+                    if (enabled === has) return prev;
+                    return {
+                      ...prev,
+                      sceneScreenIds: enabled
+                        ? [...prev.sceneScreenIds, id]
+                        : prev.sceneScreenIds.filter((screenId) => screenId !== id),
+                    };
+                  });
+                }}
+                disabled={!withScreen}
+              />
+              Screen on scene (presentation)
             </label>
             <Button
               type="button"

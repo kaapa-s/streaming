@@ -112,7 +112,7 @@ export function useLiveComments({
 
   useEffect(() => {
     if (!signedIn) {
-      setYoutubeStatus({ connected: false });
+      setYoutubeStatus((prev) => (prev.connected ? { connected: false } : prev));
       return;
     }
     void refreshYoutubeStatus();
@@ -190,7 +190,7 @@ export function useLiveComments({
       setSessionActive(false);
       setSessionPending(false);
       setBindFailed(false);
-      setComments([]);
+      setComments((prev) => (prev.length === 0 ? prev : []));
       if (!live) clearPinned();
       return;
     }
@@ -318,9 +318,9 @@ export function useLiveComments({
       ac.abort();
       if (abortRef.current === ac) abortRef.current = null;
     };
-    // clearPinned uses setPreviewOverlay; omitting it avoids re-subscribing mid-stream
+    // Overlay setter is not an input to this subscription.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [live, isOwner, youtubeStatus.connected, room, setError, setPreviewOverlay]);
+  }, [live, isOwner, youtubeStatus.connected, room, setError]);
 
   const sendReply = async () => {
     const text = replyText.trim();

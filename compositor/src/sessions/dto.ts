@@ -1,5 +1,7 @@
 import { Type } from 'class-transformer';
 import {
+  IsArray,
+  IsIn,
   IsNumber,
   IsOptional,
   IsString,
@@ -57,4 +59,18 @@ export class SetOverlayDto {
   @ValidateNested()
   @Type(() => OverlayPayloadDto)
   declare overlay: OverlayPayloadDto | null;
+}
+
+export class SetLayoutDto {
+  @IsIn(['focus', 'pip-left', 'pip-right', 'grid'])
+  declare cameraPreset: 'focus' | 'pip-left' | 'pip-right' | 'grid';
+
+  @ValidateIf((_, value) => value !== null)
+  @IsString()
+  @MinLength(1)
+  declare featuredId: string | null;
+
+  @IsArray()
+  @IsString({ each: true })
+  declare sceneScreenIds: string[];
 }

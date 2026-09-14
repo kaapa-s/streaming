@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { InternalSecretGuard } from '../auth/internal-secret.guard';
-import { GoLiveDto, SetOverlayDto, UploadDto, WarmupDto } from './dto';
+import { GoLiveDto, SetLayoutDto, SetOverlayDto, UploadDto, WarmupDto } from './dto';
 import { SessionsService } from './sessions.service';
 
 @Controller('internal')
@@ -50,5 +50,14 @@ export class SessionsController {
   @Post('rooms/:slug/overlay')
   setOverlay(@Param('slug') slug: string, @Body() body: SetOverlayDto) {
     return this.sessions.setOverlay(slug, body.overlay);
+  }
+
+  @Post('rooms/:slug/layout')
+  setLayout(@Param('slug') slug: string, @Body() body: SetLayoutDto) {
+    return this.sessions.setLayout(slug, {
+      cameraPreset: body.cameraPreset,
+      featuredId: body.featuredId,
+      sceneScreenIds: body.sceneScreenIds,
+    });
   }
 }

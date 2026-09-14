@@ -45,6 +45,10 @@ export function CompositorPage() {
       window.__clearOverlay = () => {
         compositor.setOverlay(null);
       };
+      window.__setLayout = (state) => {
+        compositor.setLayout(state);
+      };
+      window.__getLayoutSnapshot = () => compositor.getLayoutSnapshot();
 
       const sfu = new SfuClient({ onPeersChanged: (peers) => compositor.setPeers(peers) });
       await sfu.join(room, 'Recorder', 'compositor', token, sfuUrl);

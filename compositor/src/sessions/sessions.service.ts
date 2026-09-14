@@ -24,6 +24,12 @@ import {
 
 type SessionState = 'warm' | 'recording';
 
+interface LayoutPayload {
+  cameraPreset: 'focus' | 'pip-left' | 'pip-right' | 'grid';
+  featuredId: string | null;
+  sceneScreenIds: string[];
+}
+
 interface RoomSession {
   state: SessionState;
   browser: Browser;
@@ -251,6 +257,7 @@ export class SessionsService {
         if (!start) throw new Error('__startRecording not available');
         await start({ requireH264 });
       }, !!normalized);
+      await this.writeSceneSnapshot(entry);
     } catch (err) {
       entry.state = 'warm';
       entry.rtmpUrl = undefined;
@@ -343,6 +350,32 @@ export class SessionsService {
       set(payload);
     }, overlay);
     return { room, ok: true };
+  }
+
+  async setLayout(slug: string, state: LayoutPayload): Promise<{ room: string; ok: boolean }> {
+    const room = slug.trim().toLowerCase();
+    const entry = this.sessions.get(room);
+    if (!entry) throw new NotFoundException(`no active session for room "${room}"`);
+    await entry.page.evaluate((payload) => {
+      const set = globalThis.__setLayout;
+      if (!set) throw new Error('__setLayout not available');
+      set(payload);
+    }, state);
+    if (entry.state === 'recording') {
+      await this.writeSceneSnapshot(entry);
+    }
+    return { room, ok: true };
+  }
+
+  private async writeSceneSnapshot(entry: RoomSession): Promise<void> {
+    if (!entry.sessionLog) return;
+    try {
+      const snapshot = await entry.page.evaluate(() => globalThis.__getLayoutSnapshot?.());
+      if (!snapshot) return;
+      entry.sessionLog.write(`scene ${JSON.stringify(snapshot)}`);
+    } catch (err) {
+      this.logger.warn(`scene snapshot failed: ${String(err)}`);
+    }
   }
 
   async upload(slug: string, putUrl: string): Promise<{ room: string; uploaded: boolean }> {

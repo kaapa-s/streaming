@@ -8,4 +8,16 @@ declare global {
     | ((overlay: { author: string; text: string; until?: number }) => void)
     | undefined;
   var __clearOverlay: (() => void) | undefined;
+  var __setLayout:
+    | ((state: { cameraPreset: string; featuredId: string | null; sceneScreenIds: string[] }) => void)
+    | undefined;
+  var __getLayoutSnapshot:
+    | (() => {
+        cameraPreset: string;
+        featuredId: string | null;
+        sceneScreenIds: string[];
+        effective: string;
+        sources: string[];
+      })
+    | undefined;
 }

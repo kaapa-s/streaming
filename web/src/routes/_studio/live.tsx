@@ -107,9 +107,18 @@ function LivePage() {
         <SceneStrip
           localStream={s.localStream}
           localScreenStream={s.localScreenStream}
+          localPeerId={s.localPeerId}
           remotePeers={s.remotePeers}
           screenPending={s.screenPending}
           onToggleScreenShare={s.toggleScreenShare}
+          onRemoveLocalScreen={s.stopScreenShare}
+          cameraPreset={s.cameraPreset}
+          featuredId={s.featuredId}
+          sceneScreenIds={s.sceneScreenIds}
+          canEditLayout={s.isRoomOwner}
+          onCameraPreset={s.setCameraPreset}
+          onFeature={s.setFeatured}
+          onToggleSceneScreen={s.toggleSceneScreen}
         />
       </div>
 

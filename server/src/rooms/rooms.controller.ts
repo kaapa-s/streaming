@@ -1,18 +1,22 @@
-import { Body, Controller, Get, Inject, Param, Post, UseGuards, forwardRef } from '@nestjs/common';
+import { Body, Controller, ForbiddenException, Get, Inject, Logger, Param, Post, UseGuards, forwardRef } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/auth.guards';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { AuthUser } from '../auth/jwt.strategy';
+import { CompositorClient } from '../recordings/compositor.client';
 import { RecordingsService } from '../recordings/recordings.service';
-import { CreateRoomDto } from './dto/rooms.dto';
+import { CreateRoomDto, SetLayoutDto } from './dto/rooms.dto';
 import { RoomsService } from './rooms.service';
 
 @Controller('rooms')
 @UseGuards(JwtAuthGuard)
 export class RoomsController {
+  private readonly logger = new Logger(RoomsController.name);
+
   constructor(
     private readonly rooms: RoomsService,
     @Inject(forwardRef(() => RecordingsService))
     private readonly recordings: RecordingsService,
+    private readonly compositor: CompositorClient,
   ) {}
 
   @Post()
@@ -34,6 +38,28 @@ export class RoomsController {
     // Warm compositor Chromium for this room (idle SFU join, no recording yet).
     this.recordings.warmupRoom(result.room.slug);
     return result;
+  }
+
+  @Post(':slug/layout')
+  async setLayout(
+    @Param('slug') slug: string,
+    @CurrentUser() user: AuthUser,
+    @Body() body: SetLayoutDto,
+  ) {
+    const { member } = await this.rooms.requireMembershipBySlug(slug, user.id);
+    if (member.role !== 'owner') {
+      throw new ForbiddenException('only the room owner can change layout');
+    }
+    try {
+      await this.compositor.setLayout(slug, {
+        cameraPreset: body.cameraPreset,
+        featuredId: body.featuredId,
+        sceneScreenIds: body.sceneScreenIds,
+      });
+    } catch (err) {
+      this.logger.warn(`compositor layout failed for ${slug}: ${String(err)}`);
+    }
+    return { ok: true };
   }
 }
 

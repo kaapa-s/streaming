@@ -1,10 +1,30 @@
 import { AUDIO } from '@streaming/stream-quality';
+import {
+  effectivePreset,
+  layoutSolve,
+  sourceId,
+  type LayoutSource,
+  type LayoutState,
+  type LayoutSnapshot,
+} from './layout';
+import { wrapTextLines } from './wrap-text';
+
+export type {
+  CameraPreset,
+  LayoutPreset,
+  LayoutSnapshot,
+  LayoutSource,
+  LayoutState,
+  Placement,
+  SourceKind,
+} from './layout';
+export { effectivePreset, layoutSolve, sourceId, SPEAKER_STRIP_RATIO } from './layout';
 
 export interface CompositorPeer {
   id: string;
   name: string;
   stream: MediaStream;
-  /** When set, triggers presentation layout (left cameras + main screen). */
+  /** Screen-share video; the solver treats this as `{peerId}:screen`. */
   screenStream?: MediaStream;
 }
 
@@ -22,6 +42,8 @@ export interface Compositor {
   stream: MediaStream;
   setPeers: (peers: CompositorPeer[]) => void;
   setOverlay: (overlay: CommentOverlay | null) => void;
+  setLayout: (state: LayoutState) => void;
+  getLayoutSnapshot: () => LayoutSnapshot;
   /** Resize the output canvas (e.g. studio preview fitting its container). */
   resize: (width: number, height: number) => void;
   /** Resume Web Audio so MediaRecorder gets a live mixed mic track (recorder only). */
@@ -60,6 +82,7 @@ function createMixAudioContext(): AudioContext {
 
 interface ScreenEntry {
   peerId: string;
+  name: string;
   stream: MediaStream;
   video: HTMLVideoElement;
   videoTrackIds: string;
@@ -73,15 +96,10 @@ function videoTrackIds(stream: MediaStream): string {
     .join(',');
 }
 
-const SPEAKER_STRIP_RATIO = 0.14;
-
 /**
- * Draws all peers into a single canvas (grid layout, cover-fit, name labels)
- * and optionally mixes their audio with Web Audio. The same module powers the
- * studio's program preview and the headless recorder, so both are identical.
- *
- * When any peer has a screenStream, switches to presentation layout:
- * shrunk cameras stacked on the left, screen contain-fit on the right.
+ * Draws peers into a single canvas from `layoutSolve` placements and optionally
+ * mixes their audio with Web Audio. The same module powers the studio program
+ * preview and the headless recorder, so both are identical.
  */
 export function createCompositor(options: CompositorOptions = {}): Compositor {
   let width = options.width ?? 1280;
@@ -122,7 +140,8 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
   }
 
   const entries = new Map<string, TileEntry>();
-  let screenEntry: ScreenEntry | undefined;
+  const screens = new Map<string, ScreenEntry>();
+  let layoutState: LayoutState = { cameraPreset: 'focus', featuredId: null, sceneScreenIds: [] };
   let commentOverlay: CommentOverlay | null = null;
   let diagAt = 0;
 
@@ -192,9 +211,33 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
     entry.audioSource.connect(mixBus);
   };
 
+  const bindScreen = (peer: CompositorPeer, stream: MediaStream) => {
+    let entry = screens.get(peer.id);
+    if (!entry) {
+      const video = createVideoEl();
+      screens.set(peer.id, {
+        peerId: peer.id,
+        name: peer.name,
+        stream,
+        video,
+        videoTrackIds: bindVideo(video, stream),
+      });
+      return;
+    }
+    entry.name = peer.name;
+    const streamChanged = entry.stream !== stream;
+    entry.stream = stream;
+    const ids = videoTrackIds(stream);
+    if (streamChanged || entry.videoTrackIds !== ids) {
+      entry.videoTrackIds = bindVideo(entry.video, stream);
+    } else if (ids && entry.video.paused) {
+      void entry.video.play().catch(() => undefined);
+    }
+  };
+
   const setPeers = (peers: CompositorPeer[]) => {
     const seen = new Set<string>();
-    let nextScreen: { peerId: string; stream: MediaStream } | undefined;
+    const seenScreens = new Set<string>();
 
     for (const peer of peers) {
       seen.add(peer.id);
@@ -226,9 +269,13 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
       // Mix peer mics via Web Audio (recorder). No-op when mixAudio is false.
       bindPeerAudio(entry, peer.stream);
 
-      // First peer with a screenStream wins (deterministic peer order).
-      if (!nextScreen && peer.screenStream && peer.screenStream.getVideoTracks().length > 0) {
-        nextScreen = { peerId: peer.id, stream: peer.screenStream };
+      const screenStream = peer.screenStream;
+      if (
+        screenStream &&
+        screenStream.getVideoTracks().some((track) => track.readyState !== 'ended')
+      ) {
+        seenScreens.add(peer.id);
+        bindScreen(peer, screenStream);
       }
     }
 
@@ -240,36 +287,97 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
       }
     }
 
-    if (nextScreen) {
-      if (
-        !screenEntry ||
-        screenEntry.peerId !== nextScreen.peerId ||
-        screenEntry.stream !== nextScreen.stream
-      ) {
-        if (screenEntry) screenEntry.video.srcObject = null;
-        const video = createVideoEl();
-        screenEntry = {
-          peerId: nextScreen.peerId,
-          stream: nextScreen.stream,
-          video,
-          videoTrackIds: bindVideo(video, nextScreen.stream),
-        };
-      } else {
-        const ids = videoTrackIds(nextScreen.stream);
-        if (screenEntry.videoTrackIds !== ids) {
-          screenEntry.videoTrackIds = bindVideo(screenEntry.video, nextScreen.stream);
-        } else if (ids && screenEntry.video.paused) {
-          void screenEntry.video.play().catch(() => undefined);
-        }
+    for (const [id, entry] of screens) {
+      if (!seenScreens.has(id)) {
+        entry.video.srcObject = null;
+        screens.delete(id);
       }
-    } else if (screenEntry) {
-      screenEntry.video.srcObject = null;
-      screenEntry = undefined;
     }
   };
 
+  const aspectOf = (video: HTMLVideoElement): number | undefined => {
+    if (video.videoWidth > 0 && video.videoHeight > 0) {
+      return video.videoWidth / video.videoHeight;
+    }
+    return undefined;
+  };
+
+  const currentSources = (): LayoutSource[] => {
+    const sources: LayoutSource[] = [];
+    for (const [peerId, entry] of entries) {
+      sources.push({
+        id: sourceId(peerId, 'camera'),
+        peerId,
+        kind: 'camera',
+        name: entry.name,
+        aspectRatio: aspectOf(entry.video),
+      });
+    }
+    for (const [peerId, entry] of screens) {
+      sources.push({
+        id: sourceId(peerId, 'screen'),
+        peerId,
+        kind: 'screen',
+        name: entry.name,
+        aspectRatio: aspectOf(entry.video),
+      });
+    }
+    return sources;
+  };
+
+  const videoFor = (id: string): HTMLVideoElement | undefined => {
+    if (id.endsWith(':camera')) {
+      return entries.get(id.slice(0, -':camera'.length))?.video;
+    }
+    if (id.endsWith(':screen')) {
+      return screens.get(id.slice(0, -':screen'.length))?.video;
+    }
+    return undefined;
+  };
+
+  const drawLabel = (name: string, x: number, y: number, w: number, h: number) => {
+    const font = '600 20px system-ui, sans-serif';
+    const lineH = 24;
+    const padX = 10;
+    const padY = 6;
+    const inset = 12;
+    const maxBoxW = Math.max(0, w - inset * 2);
+    const maxTextW = Math.max(1, maxBoxW - padX * 2);
+    const maxLines = Math.min(4, Math.max(1, Math.floor((h - inset - padY * 2) / lineH)));
+
+    ctx.font = font;
+    const lines = wrapTextLines(name, maxTextW, (s) => ctx.measureText(s).width, maxLines);
+    if (lines.length === 0) return;
+
+    let textW = 0;
+    for (const line of lines) {
+      textW = Math.max(textW, ctx.measureText(line).width);
+    }
+    const boxW = Math.min(maxBoxW, Math.ceil(textW + padX * 2));
+    const boxH = padY * 2 + lines.length * lineH;
+    const boxX = x + inset;
+    const boxY = y + h - inset - boxH;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x, y, w, h);
+    ctx.clip();
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.fillRect(boxX, boxY, boxW, boxH);
+    ctx.fillStyle = '#fff';
+    ctx.font = font;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    let ty = boxY + padY;
+    for (const line of lines) {
+      ctx.fillText(line, boxX + padX, ty);
+      ty += lineH;
+    }
+    ctx.restore();
+  };
+
   const drawTileCover = (
-    video: HTMLVideoElement,
+    video: HTMLVideoElement | undefined,
     name: string | undefined,
     x: number,
     y: number,
@@ -279,7 +387,7 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
     ctx.fillStyle = '#1a1d24';
     ctx.fillRect(x, y, w, h);
 
-    if (video.readyState >= 2 && video.videoWidth > 0) {
+    if (video && video.readyState >= 2 && video.videoWidth > 0) {
       const scale = Math.max(w / video.videoWidth, h / video.videoHeight);
       const sw = w / scale;
       const sh = h / scale;
@@ -288,98 +396,58 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
       ctx.drawImage(video, sx, sy, sw, sh, x, y, w, h);
     }
 
-    if (name) {
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
-      ctx.font = '600 20px system-ui, sans-serif';
-      const labelWidth = ctx.measureText(name).width + 20;
-      ctx.fillRect(x + 12, y + h - 44, labelWidth, 32);
-      ctx.fillStyle = '#fff';
-      ctx.fillText(name, x + 22, y + h - 21);
-    }
+    if (name) drawLabel(name, x, y, w, h);
   };
 
-  const drawGrid = (list: TileEntry[]) => {
-    const cols = list.length <= 2 ? list.length : Math.ceil(Math.sqrt(list.length));
-    const rows = Math.ceil(list.length / cols);
-    const gap = 8;
-    const tileW = (width - gap * (cols + 1)) / cols;
-    const tileH = (height - gap * (rows + 1)) / rows;
-
-    list.forEach((entry, i) => {
-      const col = i % cols;
-      const row = Math.floor(i / cols);
-      drawTileCover(
-        entry.video,
-        entry.name,
-        gap + col * (tileW + gap),
-        gap + row * (tileH + gap),
-        tileW,
-        tileH,
-      );
-    });
-  };
-
-  const drawPresentation = (speakers: TileEntry[], screen: ScreenEntry) => {
-    const gap = 8;
-    const stripW = Math.floor(width * SPEAKER_STRIP_RATIO);
-    const mainX = stripW + gap;
-    const mainW = width - mainX - gap;
-    const mainY = gap;
-    const mainH = height - gap * 2;
-
-    // Fill main area; then draw the largest AR-correct rect from the live
-    // capture size (videoWidth/Height update when the shared window resizes).
+  const drawTileContain = (
+    video: HTMLVideoElement | undefined,
+    name: string | undefined,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+  ) => {
     ctx.fillStyle = '#0b0d10';
-    ctx.fillRect(mainX, mainY, mainW, mainH);
+    ctx.fillRect(x, y, w, h);
 
-    const video = screen.video;
-    if (video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0) {
-      const scale = Math.min(mainW / video.videoWidth, mainH / video.videoHeight);
+    if (video && video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0) {
+      const scale = Math.min(w / video.videoWidth, h / video.videoHeight);
       const dw = video.videoWidth * scale;
       const dh = video.videoHeight * scale;
-      const dx = mainX + (mainW - dw) / 2;
-      const dy = mainY + (mainH - dh) / 2;
+      const dx = x + (w - dw) / 2;
+      const dy = y + (h - dh) / 2;
       ctx.drawImage(video, dx, dy, dw, dh);
     }
 
-    if (speakers.length === 0) return;
-
-    const tileW = stripW - gap;
-    const tileH = Math.min(
-      tileW * (9 / 16),
-      (height - gap * (speakers.length + 1)) / speakers.length,
-    );
-    const totalH = speakers.length * tileH + (speakers.length - 1) * gap;
-    let y = Math.max(gap, (height - totalH) / 2);
-
-    for (const entry of speakers) {
-      drawTileCover(entry.video, entry.name, gap, y, tileW, tileH);
-      y += tileH + gap;
-    }
+    if (name) drawLabel(name, x, y, w, h);
   };
 
   const setOverlay = (overlay: CommentOverlay | null) => {
     commentOverlay = overlay;
   };
 
+  const setLayout = (state: LayoutState) => {
+    layoutState = {
+      cameraPreset: state.cameraPreset,
+      featuredId: state.featuredId,
+      sceneScreenIds: state.sceneScreenIds ?? [],
+    };
+  };
+
+  const getLayoutSnapshot = (): LayoutSnapshot => {
+    const sources = currentSources();
+    return {
+      cameraPreset: layoutState.cameraPreset,
+      featuredId: layoutState.featuredId,
+      sceneScreenIds: [...layoutState.sceneScreenIds],
+      effective: effectivePreset(layoutState, sources),
+      sources: sources.map((source) => source.id).sort((a, b) => a.localeCompare(b)),
+    };
+  };
+
   const wrapText = (text: string, maxWidth: number, font: string): string[] => {
     ctx.font = font;
-    const words = text.split(/\s+/).filter(Boolean);
-    if (words.length === 0) return [];
-    const lines: string[] = [];
-    let line = words[0] ?? '';
-    for (let i = 1; i < words.length; i++) {
-      const word = words[i] ?? '';
-      const next = `${line} ${word}`;
-      if (ctx.measureText(next).width <= maxWidth) {
-        line = next;
-      } else {
-        lines.push(line);
-        line = word;
-      }
-    }
-    lines.push(line);
-    return lines.slice(0, 3);
+    return wrapTextLines(text, maxWidth, (s) => ctx.measureText(s).width).slice(0, 3);
   };
 
   const drawCommentOverlay = () => {
@@ -431,8 +499,8 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
     ctx.fillStyle = '#0b0d10';
     ctx.fillRect(0, 0, width, height);
 
-    const list = [...entries.values()];
-    if (list.length === 0 && !screenEntry) {
+    const sources = currentSources();
+    if (sources.length === 0) {
       ctx.fillStyle = '#5c6470';
       ctx.font = '600 32px system-ui, sans-serif';
       ctx.textAlign = 'center';
@@ -445,7 +513,7 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
     const now = performance.now();
     if (now - diagAt > 2000) {
       diagAt = now;
-      for (const entry of list) {
+      for (const entry of entries.values()) {
         const v = entry.video;
         const tracks = entry.stream.getVideoTracks().map((t) => `${t.readyState}/${t.muted ? 'muted' : 'live'}`);
         const aTracks = entry.stream.getAudioTracks().map((t) => `${t.readyState}/${t.muted ? 'muted' : 'live'}`);
@@ -455,19 +523,23 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
             `audio=[${aTracks.join(',')}] mix=${entry.audioSource ? 'on' : 'off'}`,
         );
       }
-      if (screenEntry) {
-        const v = screenEntry.video;
+      for (const entry of screens.values()) {
+        const v = entry.video;
         console.log(
-          `[compositor] screen peerId=${screenEntry.peerId} readyState=${v.readyState} ` +
+          `[compositor] screen peerId=${entry.peerId} readyState=${v.readyState} ` +
             `${v.videoWidth}x${v.videoHeight}`,
         );
       }
     }
 
-    if (screenEntry) {
-      drawPresentation(list, screenEntry);
-    } else {
-      drawGrid(list);
+    const placements = layoutSolve(layoutState, sources, width, height);
+    for (const placement of placements) {
+      const video = videoFor(placement.sourceId);
+      if (placement.fit === 'contain') {
+        drawTileContain(video, placement.label, placement.x, placement.y, placement.w, placement.h);
+      } else {
+        drawTileCover(video, placement.label, placement.x, placement.y, placement.w, placement.h);
+      }
     }
     drawCommentOverlay();
   };
@@ -534,10 +606,10 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
       entry.video.srcObject = null;
     }
     entries.clear();
-    if (screenEntry) {
-      screenEntry.video.srcObject = null;
-      screenEntry = undefined;
+    for (const entry of screens.values()) {
+      entry.video.srcObject = null;
     }
+    screens.clear();
     for (const track of stream.getTracks()) track.stop();
     try {
       mixKeepAlive?.stop();
@@ -549,5 +621,5 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
     void audioCtx?.close();
   };
 
-  return { canvas, stream, setPeers, setOverlay, resize, ensureAudio, stop };
+  return { canvas, stream, setPeers, setOverlay, setLayout, getLayoutSnapshot, resize, ensureAudio, stop };
 }

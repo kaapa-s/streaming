@@ -268,15 +268,16 @@ Opens from **Go live ▾** (modal or dropdown). If YouTube not connected, nudge 
 
 ## 8. Scene strip (detail)
 
-Layouts are **mocked** for UI; sources reflect real participants / screen share.
+Layout **behavior** is specified in [layouts.md](./layouts.md). Sources reflect real participants / screen share.
 
 ```
 │  Scene                                                                 │
 │                                                                        │
-│  Layout                                                                │
-│  ┌────────┐  ┌────────┐  ┌────────┐  ┌────────┐                        │
-│  │ focus  │  │ pip L  │  │ pip R  │  │ grid   │                        │
-│  └────────┘  └────────┘  └────────┘  └────────┘                        │
+│  Layout  (icons; tooltip/aria-label: focus · pip L · pip R · grid)     │
+│  ┌────┐  ┌────┐  ┌────┐  ┌────┐                                        │
+│  │    │  │▪   │  │   ▪│  │▪ ▪│                                        │
+│  │    │  │▪   │  │   ▪│  │▪ ▪│                                        │
+│  └────┘  └────┘  └────┘  └────┘                                        │
 │                                                                        │
 │  Sources                                                               │
 │  ┌──────────┐ ┌──────────┐ ┌──────────┐                                │
@@ -285,7 +286,7 @@ Layouts are **mocked** for UI; sources reflect real participants / screen share.
 │  └──────────┘ └──────────┘ └──────────┘                                │
 ```
 
-Suggested layout preset ids (UI-only until compositor supports them): `focus`, `pip-left`, `pip-right`, `grid`.
+Preset ids: `focus`, `pip-left`, `pip-right`, `grid`. Presentation is the effective preset while a screen is **on the scene** (not a fifth button).
 
 ---
 
