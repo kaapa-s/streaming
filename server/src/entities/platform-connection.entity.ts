@@ -9,9 +9,10 @@ import {
   Unique,
   UpdateDateColumn,
 } from 'typeorm';
+import type { PlatformProvider } from '../platforms/platform-ids';
 import { User } from './user.entity';
 
-export type PlatformProvider = 'youtube';
+export type { PlatformProvider };
 
 @Entity('platform_connections')
 @Unique(['userId', 'provider'])

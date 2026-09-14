@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CommentOverlay } from '@streaming/canvas-compositor';
-import { apiFetch, getAccessToken } from '../lib/auth';
+import { apiFetch } from '../lib/auth';
 
 export type LiveComment = {
   id: string;
@@ -12,19 +12,13 @@ export type LiveComment = {
   canReply: boolean;
 };
 
-type YoutubeStatus = {
-  connected: boolean;
-  accountLabel?: string;
-  externalAccountId?: string;
-};
-
 type ChatBindStatus = 'connecting' | 'active' | 'failed';
 
 type UseLiveCommentsArgs = {
   room: string;
   live: boolean;
   isOwner: boolean;
-  signedIn: boolean;
+  youtubeConnected: boolean;
   setError: (message: string) => void;
   setPreviewOverlay: (overlay: CommentOverlay | null) => void;
 };
@@ -78,12 +72,10 @@ export function useLiveComments({
   room,
   live,
   isOwner,
-  signedIn,
+  youtubeConnected,
   setError,
   setPreviewOverlay,
 }: UseLiveCommentsArgs) {
-  const [youtubeStatus, setYoutubeStatus] = useState<YoutubeStatus>({ connected: false });
-  const [youtubePending, setYoutubePending] = useState(false);
   const [comments, setComments] = useState<LiveComment[]>([]);
   const [sessionActive, setSessionActive] = useState(false);
   const [sessionTitle, setSessionTitle] = useState<string | undefined>();
@@ -95,86 +87,9 @@ export function useLiveComments({
   const abortRef = useRef<AbortController | null>(null);
   const clearPinTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
-  const refreshYoutubeStatus = async () => {
-    if (!signedIn || !getAccessToken()) return;
-    try {
-      const res = await apiFetch('/api/platforms/youtube/status');
-      if (!res.ok) {
-        setError(await parseError(res));
-        return;
-      }
-      const body = (await res.json()) as YoutubeStatus;
-      setYoutubeStatus(body);
-    } catch (err) {
-      setError(reportCommentsError('youtube status failed', err));
-    }
-  };
-
-  useEffect(() => {
-    if (!signedIn) {
-      setYoutubeStatus((prev) => (prev.connected ? { connected: false } : prev));
-      return;
-    }
-    void refreshYoutubeStatus();
-    // refreshYoutubeStatus closes over signedIn; re-run when auth changes
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [signedIn]);
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const yt = params.get('youtube');
-    if (!yt) return;
-    if (yt === 'connected') {
-      void refreshYoutubeStatus();
-    } else if (yt === 'error') {
-      const message = params.get('message') || 'YouTube connect failed';
-      console.error('[comments] youtube oauth callback error', message);
-      setError(message);
-    }
-    params.delete('youtube');
-    params.delete('message');
-    const next = `${window.location.pathname}${params.toString() ? `?${params}` : ''}${window.location.hash}`;
-    window.history.replaceState({}, '', next);
-    // refreshYoutubeStatus is recreated each render
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [setError]);
-
-  const connectYoutube = async () => {
-    setYoutubePending(true);
-    setError('');
-    try {
-      const res = await apiFetch('/api/platforms/youtube/connect');
-      if (!res.ok) throw new Error(await parseError(res));
-      const body = (await res.json()) as { url: string };
-      window.location.href = body.url;
-    } catch (err) {
-      setError(reportCommentsError('youtube connect failed', err));
-      setYoutubePending(false);
-    }
-  };
-
   const stopStream = () => {
     abortRef.current?.abort();
     abortRef.current = null;
-  };
-
-  const disconnectYoutube = async () => {
-    setYoutubePending(true);
-    setError('');
-    try {
-      const res = await apiFetch('/api/platforms/youtube', { method: 'DELETE' });
-      if (!res.ok) throw new Error(await parseError(res));
-      setYoutubeStatus({ connected: false });
-      stopStream();
-      setSessionActive(false);
-      setSessionPending(false);
-      setBindFailed(false);
-      setComments([]);
-    } catch (err) {
-      setError(reportCommentsError('youtube disconnect failed', err));
-    } finally {
-      setYoutubePending(false);
-    }
   };
 
   const clearPinned = () => {
@@ -185,7 +100,7 @@ export function useLiveComments({
   };
 
   useEffect(() => {
-    if (!live || !isOwner || !youtubeStatus.connected) {
+    if (!live || !isOwner || !youtubeConnected) {
       stopStream();
       setSessionActive(false);
       setSessionPending(false);
@@ -320,7 +235,7 @@ export function useLiveComments({
     };
     // Overlay setter is not an input to this subscription.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [live, isOwner, youtubeStatus.connected, room, setError]);
+  }, [live, isOwner, youtubeConnected, room, setError]);
 
   const sendReply = async () => {
     const text = replyText.trim();
@@ -376,10 +291,6 @@ export function useLiveComments({
   };
 
   return {
-    youtubeStatus,
-    youtubePending,
-    connectYoutube,
-    disconnectYoutube,
     comments,
     sessionActive,
     sessionTitle,

@@ -9,7 +9,12 @@ import * as path from 'path';
 import type { Browser, Page } from 'puppeteer';
 import type { ChildProcess } from 'child_process';
 import { BrowserPoolService } from '../browser/browser-pool.service';
-import { assertFfmpegAvailable, normalizeRtmpUrl, redactRtmp } from '../recordings/rtmp';
+import {
+  assertFfmpegAvailable,
+  collectRtmpUrls,
+  normalizeRtmpUrl,
+  redactRtmp,
+} from '../recordings/rtmp';
 import {
   isLoopbackCompositorUrl,
   redactCompositorUrl,
@@ -35,7 +40,7 @@ interface RoomSession {
   browser: Browser;
   page: Page;
   resolution: StreamResolution;
-  rtmpUrl?: string;
+  rtmpUrls?: string[];
   file?: string;
   ffmpeg?: ChildProcess;
   sessionLog?: SessionLog;
@@ -46,7 +51,7 @@ interface RoomSession {
 
 export interface RecordingSink {
   file: string;
-  rtmpUrl?: string;
+  rtmpUrls: string[];
   resolution: StreamResolution;
   sessionLog?: SessionLog;
 }
@@ -74,7 +79,7 @@ export class SessionsService {
         room,
         state: s.state,
         resolution: s.resolution,
-        live: !!s.rtmpUrl,
+        live: (s.rtmpUrls?.length ?? 0) > 0,
         file: s.file ?? s.pendingFile,
       })),
     };
@@ -84,7 +89,7 @@ export class SessionsService {
     return [...this.sessions.entries()].map(([room, s]) => ({
       room,
       file: s.file ?? s.pendingFile,
-      live: !!s.rtmpUrl,
+      live: (s.rtmpUrls?.length ?? 0) > 0,
       resolution: s.resolution,
       state: s.state,
     }));
@@ -103,7 +108,7 @@ export class SessionsService {
     entry.sessionLog?.write(`recording file=${file}`);
     return {
       file,
-      rtmpUrl: entry.rtmpUrl,
+      rtmpUrls: entry.rtmpUrls ?? [],
       resolution: entry.resolution,
       sessionLog: entry.sessionLog,
     };
@@ -200,16 +205,15 @@ export class SessionsService {
 
   async goLive(
     slug: string,
-    opts: { rtmpUrl?: string; resolution?: string; token?: string },
+    opts: { rtmpUrl?: string; rtmpUrls?: string[]; resolution?: string; token?: string },
   ): Promise<{ room: string; live: boolean; resolution: StreamResolution }> {
     const room = slug.trim().toLowerCase();
     let entry = this.sessions.get(room);
 
     const resolution = parseResolution(opts.resolution ?? entry?.resolution);
-    const normalized = opts.rtmpUrl?.trim()
-      ? normalizeRtmpUrl(opts.rtmpUrl.trim())
-      : undefined;
-    if (normalized) assertFfmpegAvailable();
+    const normalized = collectRtmpUrls(opts).map((url) => normalizeRtmpUrl(url));
+    const live = normalized.length > 0;
+    if (live) assertFfmpegAvailable();
 
     if (!entry) {
       if (!opts.token) {
@@ -240,12 +244,12 @@ export class SessionsService {
     const sessionLog = new SessionLog(this.dir, room, stamp);
     sessionLog.write(
       `go-live room=${room} resolution=${resolution} ` +
-        `live=${!!normalized} rtmp=${normalized ? redactRtmp(normalized) : 'none'} ` +
+        `live=${live} rtmp=${live ? normalized.map(redactRtmp).join(',') : 'none'} ` +
         `profile=${STREAM_PROFILES[resolution].width}x${STREAM_PROFILES[resolution].height}`,
     );
 
     entry.state = 'recording';
-    entry.rtmpUrl = normalized;
+    entry.rtmpUrls = live ? normalized : undefined;
     entry.stamp = stamp;
     entry.sessionLog = sessionLog;
     entry.pendingFile = undefined;
@@ -256,11 +260,11 @@ export class SessionsService {
         const start = globalThis.__startRecording;
         if (!start) throw new Error('__startRecording not available');
         await start({ requireH264 });
-      }, !!normalized);
+      }, live);
       await this.writeSceneSnapshot(entry);
     } catch (err) {
       entry.state = 'warm';
-      entry.rtmpUrl = undefined;
+      entry.rtmpUrls = undefined;
       sessionLog.write(`go-live failed: ${String(err)}`);
       sessionLog.close('status=failed');
       entry.sessionLog = undefined;
@@ -269,9 +273,9 @@ export class SessionsService {
 
     this.logger.log(
       `recording started room=${room} ${resolution}` +
-        `${normalized ? ` → ${redactRtmp(normalized)}` : ''} (log ${sessionLog.path})`,
+        `${live ? ` → ${normalized.map(redactRtmp).join(', ')}` : ''} (log ${sessionLog.path})`,
     );
-    return { room, live: !!normalized, resolution };
+    return { room, live, resolution };
   }
 
   async stop(slug: string): Promise<{ room: string; file?: string; live: boolean }> {
@@ -284,7 +288,7 @@ export class SessionsService {
       return { room, live: false };
     }
 
-    const wasLive = !!entry.rtmpUrl;
+    const wasLive = (entry.rtmpUrls?.length ?? 0) > 0;
     entry.sessionLog?.write('stop requested');
 
     try {
@@ -322,7 +326,7 @@ export class SessionsService {
     entry.pendingFile = file;
     entry.sessionLog = undefined;
     entry.ffmpeg = undefined;
-    entry.rtmpUrl = undefined;
+    entry.rtmpUrls = undefined;
     entry.file = undefined;
     entry.stamp = undefined;
 

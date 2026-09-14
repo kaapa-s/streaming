@@ -2,6 +2,8 @@
 
 Status: **frozen** — implement against this set unless product revises it.
 
+Product revision (outbound destinations): Settings connects YouTube, Facebook, LinkedIn, Instagram, and X. Go live can select several destinations at once. Comments remain YouTube-only.
+
 Stack notes for implementation:
 
 - Use **Tailwind CSS**
@@ -10,9 +12,9 @@ Stack notes for implementation:
 
 ## Goals
 
-- Separate **YouTube streaming** from **local recording**
-- Connect YouTube channel in **Settings** (not in the live header by default)
-- Studio defaults to **recording**; Go live (stream key) is not visible at start. Chat auto-binds when live to YouTube.
+- Separate **live streaming** from **local recording**
+- Connect destinations in **Settings** (not in the live header by default)
+- Studio defaults to **recording**; Go live (stream keys) is not visible at start. Chat auto-binds when live to YouTube.
 - Rename rooms/join flow toward **New recording**
 - Separate **Login** and **Sign up** pages (not tabs on one page)
 
@@ -20,8 +22,8 @@ Stack notes for implementation:
 
 - Do **not** claim live also records locally (e.g. no “(also recording locally)”)
 - Do not add Library or other features not listed here
-- Do not show YouTube RTMP/stream key or comments in the default studio chrome
-- Comments panel **only** when streaming to YouTube
+- Do not show RTMP/stream keys or comments in the default studio chrome
+- Comments panel **only** when streaming to YouTube (not Facebook / LinkedIn / Instagram / X)
 
 ---
 
@@ -116,14 +118,14 @@ Nav items: **New recording**, **Settings**. No Library in this freeze.
 
 ## 4. New recording (replaces rooms / join lobby)
 
-Default path: start a recording session. No YouTube UI here.
+Default path: start a recording session. No destination UI here.
 
 ```
 ┌────────────┬─────────────────────────────────────────────────┐
 │  Studio    │  New recording                                  │
 │            │                                                 │
 │  ● New     │  Start a session to record locally.             │
-│    recording│  You can go live to YouTube later from studio. │
+│    recording│  You can go live later from studio.            │
 │            │                                                 │
 │  ○ Settings│  ┌───────────────────────────────────────────┐  │
 │            │  │  Session name                             │  │
@@ -145,9 +147,9 @@ Default path: start a recording session. No YouTube UI here.
 
 ---
 
-## 5. Settings — YouTube connection
+## 5. Settings — destination connections
 
-YouTube OAuth (and optional default stream key) live here, not in the studio header.
+OAuth identity (and optional default stream key) live here, not in the studio header. Repeat the same card for YouTube, Facebook, LinkedIn, Instagram, and X.
 
 ```
 ┌────────────┬─────────────────────────────────────────────────┐
@@ -163,10 +165,13 @@ YouTube OAuth (and optional default stream key) live here, not in the studio hea
 │            │  │  Status: Not connected                    │  │
 │            │  │                                           │  │
 │            │  │  Connect your channel to enable Go live   │  │
-│            │  │  options (stream key, live chat).         │  │
+│            │  │  (stream key, live chat).                 │  │
 │            │  │                                           │  │
 │            │  │  [  Connect YouTube  ]                    │  │
 │            │  └───────────────────────────────────────────┘  │
+│            │                                                 │
+│            │  Facebook / LinkedIn / Instagram / X            │
+│            │  (same card: Connect → default stream key)      │
 │            │                                                 │
 │            │  ─── after connect ───                          │
 │            │  ┌───────────────────────────────────────────┐  │
@@ -214,18 +219,21 @@ Idle variant: same layout; status **Ready · 1080p60**; button **Start recording
 
 ### Go live options (not visible at start)
 
-Opens from **Go live ▾** (modal or dropdown). If YouTube not connected, nudge to Settings.
+Opens from **Go live ▾**. Connected destinations can be multi-selected. Unconnected rows nudge to Settings.
 
 ```
 ┌──────────────────────────────────────┐
 │  Go live                             │
 │                                      │
-│  YouTube  ·  MyChannel               │
+│  ☑ YouTube  ·  MyChannel             │
+│    Stream key  [prefilled]           │
 │                                      │
-│  Stream key                          │
-│  ┌────────────────────────────────┐  │
-│  │  (prefilled from Settings)     │  │
-│  └────────────────────────────────┘  │
+│  ☑ Facebook ·  My Page               │
+│    Stream key  [prefilled]           │
+│                                      │
+│  ☐ LinkedIn  Connect in Settings     │
+│  ☐ Instagram Connect in Settings     │
+│  ☐ X         Connect in Settings     │
 │                                      │
 │  [ Cancel ]          [ Go live ]     │
 └──────────────────────────────────────┘
@@ -233,13 +241,13 @@ Opens from **Go live ▾** (modal or dropdown). If YouTube not connected, nudge 
 
 ---
 
-## 7. Studio — live on YouTube
+## 7. Studio — live
 
 - Status: **LIVE** (not REC)
 - Primary stop: **Stop live**
-- **YouTube chat** right panel **only while live to YT**
+- **YouTube chat** right panel **only while live to YT** (hidden if only Facebook/LinkedIn/Instagram/X)
 - Scene strip stays **full width** under program + comments
-- Footer: `Live on YouTube @ 1080p60` only — **no** local-recording claim
+- Footer: `Live on YouTube, Facebook @ 1080p60` — **no** local-recording claim
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
@@ -251,7 +259,7 @@ Opens from **Go live ▾** (modal or dropdown). If YouTube not connected, nudge 
 ├─────────────────────────────────────────────────────┴──────────────────┤
 │  Scene · Layouts (mock) + Sources                                      │
 ├────────────────────────────────────────────────────────────────────────┤
-│  Live on YouTube @ 1080p60                                             │
+│  Live on YouTube, Facebook @ 1080p60                                       │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -296,7 +304,7 @@ Preset ids: `focus`, `pip-left`, `pip-right`, `grid`. Presentation is the effect
 |---------|--------|
 | `/login` AuthLobby tabs (Log in \| Register) | Separate `/login` and `/signup` |
 | `/join` JoinLobby | **New recording** under app shell |
-| No settings page | **Settings** with YouTube connect + optional default stream key |
+| No settings page | **Settings** with destination connect + optional default stream key |
 | Live header: YT OAuth + RTMP + combined go-live/record | Record primary; Go live secondary with options panel; YT connect in Settings |
 | Speakers column right of program | Sources in Scene strip **below** program |
 | Comments always in program column | Comments **right panel only when live to YT** |
@@ -315,8 +323,10 @@ Key existing paths (for implementers):
 - [x] Login / Sign up separated
 - [x] App shell: New recording + Settings
 - [x] YouTube connect in Settings
+- [x] Facebook / LinkedIn / Instagram / X connect in Settings
 - [x] Studio: program on top, Scene (layouts mock + sources) below
 - [x] Record vs Go live separated; Go live details not visible at start
+- [x] Multi-destination Go live
 - [x] YouTube comments right panel only when live to YT
 - [x] No “also recording locally” copy
 - [x] Tailwind + light default

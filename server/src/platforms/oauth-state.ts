@@ -1,8 +1,10 @@
 import { createHmac, timingSafeEqual } from 'crypto';
 
-interface StatePayload {
+export interface OAuthStatePayload {
   userId: string;
   exp: number;
+  provider?: string;
+  codeVerifier?: string;
 }
 
 function secret(): string {
@@ -18,17 +20,22 @@ function fromB64url(value: string): Buffer {
 }
 
 /** Short-lived signed state for OAuth round-trip (binds callback to user). */
-export function signOAuthState(userId: string, ttlSec = 600): string {
-  const payload: StatePayload = {
+export function signOAuthState(
+  userId: string,
+  extra: { provider?: string; codeVerifier?: string } = {},
+  ttlSec = 600,
+): string {
+  const payload: OAuthStatePayload = {
     userId,
     exp: Math.floor(Date.now() / 1000) + ttlSec,
+    ...extra,
   };
   const body = b64url(Buffer.from(JSON.stringify(payload), 'utf8'));
   const sig = createHmac('sha256', secret()).update(body).digest();
   return `${body}.${b64url(sig)}`;
 }
 
-export function verifyOAuthState(state: string): string {
+export function verifyOAuthState(state: string): OAuthStatePayload {
   const [body, sigB64] = state.split('.');
   if (!body || !sigB64) throw new Error('invalid oauth state');
   const expected = createHmac('sha256', secret()).update(body).digest();
@@ -36,12 +43,12 @@ export function verifyOAuthState(state: string): string {
   if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
     throw new Error('invalid oauth state signature');
   }
-  const payload = JSON.parse(fromB64url(body).toString('utf8')) as StatePayload;
+  const payload = JSON.parse(fromB64url(body).toString('utf8')) as OAuthStatePayload;
   if (!payload.userId || typeof payload.exp !== 'number') {
     throw new Error('invalid oauth state payload');
   }
   if (payload.exp < Math.floor(Date.now() / 1000)) {
     throw new Error('oauth state expired');
   }
-  return payload.userId;
+  return payload;
 }

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { StudioValue } from '../studio/studioHandle';
 import { useLiveComments } from './useLiveComments';
+import { usePlatformConnections } from './usePlatformConnections';
 import { useProgramPreview } from './useProgramPreview';
 import { useRecordingControls } from './useRecordingControls';
 import { useRemoteAudio } from './useRemoteAudio';
@@ -39,11 +40,13 @@ export function useStudioController(room: string): StudioValue {
   });
   useRemoteAudio(session.joined, session.remotePeers);
   const recording = useRecordingControls(room, setError);
+  const platforms = usePlatformConnections(Boolean(auth.user), setError);
+  const liveToYoutube = recording.live && recording.liveDestinations.includes('youtube');
   const comments = useLiveComments({
     room,
-    live: recording.live,
+    live: liveToYoutube,
     isOwner,
-    signedIn: Boolean(auth.user),
+    youtubeConnected: platforms.status.youtube.connected,
     setError,
     setPreviewOverlay,
   });
@@ -95,25 +98,25 @@ export function useStudioController(room: string): StudioValue {
     previewRef,
     recording: recording.recording,
     live: recording.live,
+    liveDestinations: recording.liveDestinations,
     recordingInfo: recording.recordingInfo,
     finishedRecording: recording.finishedRecording,
     setFinishedRecording: recording.setFinishedRecording,
-    rtmpUrl: recording.rtmpUrl,
-    setRtmpUrl: recording.setRtmpUrl,
+    streamKeys: recording.streamKeys,
+    setStreamKey: recording.setStreamKey,
     recordingPending: recording.recordingPending,
     startRecording: recording.startRecording,
     goLive: recording.goLive,
     stopRecording: recording.stopRecording,
     toggleRecording: recording.toggleRecording,
     streamControlsLocked: recording.streamControlsLocked,
-    youtubeConnected: comments.youtubeStatus.connected,
-    youtubeAccountLabel: comments.youtubeStatus.accountLabel,
-    youtubePending: comments.youtubePending,
-    connectYoutube: () => {
-      void comments.connectYoutube();
+    platforms: platforms.status,
+    platformPending: platforms.pendingProvider,
+    connectPlatform: (provider) => {
+      void platforms.connect(provider);
     },
-    disconnectYoutube: () => {
-      void comments.disconnectYoutube();
+    disconnectPlatform: (provider) => {
+      void platforms.disconnect(provider);
     },
     comments: comments.comments,
     commentsSessionActive: comments.sessionActive,

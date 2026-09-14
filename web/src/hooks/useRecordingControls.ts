@@ -1,22 +1,60 @@
 import { useEffect, useState } from 'react';
 import { apiFetch } from '../lib/auth';
 import type { FinishedRecording } from '../components/studio/RecordingFinishedModal';
+import {
+  STREAM_KEY_STORAGE,
+  formatLiveInfo,
+  type OutboundDestination,
+  type PlatformProvider,
+} from '../lib/platforms';
 import { useAsyncAction } from './useAsyncAction';
 import { useLocalStorageState } from './useLocalStorageState';
-
-const YT_RTMP_STORAGE_KEY = 'streaming-studio-yt-rtmp';
 
 export function useRecordingControls(room: string, setError: (message: string) => void) {
   const [recording, setRecording] = useState(false);
   const [live, setLive] = useState(false);
+  const [liveDestinations, setLiveDestinations] = useState<PlatformProvider[]>([]);
   const [recordingInfo, setRecordingInfo] = useState('');
   const [finishedRecording, setFinishedRecording] = useState<FinishedRecording | null>(null);
-  const [rtmpUrl, setRtmpUrl] = useLocalStorageState(YT_RTMP_STORAGE_KEY, '');
+  const [youtubeKey, setYoutubeKey] = useLocalStorageState(STREAM_KEY_STORAGE.youtube, '');
+  const [facebookKey, setFacebookKey] = useLocalStorageState(STREAM_KEY_STORAGE.facebook, '');
+  const [linkedinKey, setLinkedinKey] = useLocalStorageState(STREAM_KEY_STORAGE.linkedin, '');
+  const [instagramKey, setInstagramKey] = useLocalStorageState(STREAM_KEY_STORAGE.instagram, '');
+  const [xKey, setXKey] = useLocalStorageState(STREAM_KEY_STORAGE.x, '');
   const { pending: recordingPending, run } = useAsyncAction();
+
+  const streamKeys: Record<PlatformProvider, string> = {
+    youtube: youtubeKey,
+    facebook: facebookKey,
+    linkedin: linkedinKey,
+    instagram: instagramKey,
+    x: xKey,
+  };
+
+  const setStreamKey = (platform: PlatformProvider, value: string) => {
+    switch (platform) {
+      case 'youtube':
+        setYoutubeKey(value);
+        break;
+      case 'facebook':
+        setFacebookKey(value);
+        break;
+      case 'linkedin':
+        setLinkedinKey(value);
+        break;
+      case 'instagram':
+        setInstagramKey(value);
+        break;
+      case 'x':
+        setXKey(value);
+        break;
+    }
+  };
 
   const resetUi = () => {
     setRecording(false);
     setLive(false);
+    setLiveDestinations([]);
     setRecordingInfo('');
   };
 
@@ -24,16 +62,19 @@ export function useRecordingControls(room: string, setError: (message: string) =
     resetUi();
   }, [room]);
 
-  const runRecordingAction = (action: 'start' | 'stop', opts?: { rtmpUrl?: string }) => {
+  const runRecordingAction = (
+    action: 'start' | 'stop',
+    opts?: { destinations?: OutboundDestination[] },
+  ) => {
     void run(async () => {
       setError('');
       try {
-        const trimmed = opts?.rtmpUrl?.trim() ?? '';
+        const destinations = opts?.destinations ?? [];
         const res = await apiFetch(`/api/recordings/${action}`, {
           method: 'POST',
           body: JSON.stringify({
             room,
-            ...(action === 'start' && trimmed ? { rtmpUrl: trimmed } : {}),
+            ...(action === 'start' && destinations.length ? { destinations } : {}),
           }),
         });
         const body = await res.json();
@@ -43,7 +84,12 @@ export function useRecordingControls(room: string, setError: (message: string) =
         }
         const nextRecording = action === 'start';
         setRecording(nextRecording);
-        setLive(nextRecording ? !!body.live : false);
+        const nextLive = nextRecording ? !!body.live : false;
+        setLive(nextLive);
+        const nextDestinations = Array.isArray(body.destinations)
+          ? (body.destinations as PlatformProvider[])
+          : destinations.map((d) => d.platform);
+        setLiveDestinations(nextRecording && nextLive ? nextDestinations : []);
         if (action === 'stop') {
           const downloadUrl =
             typeof body.downloadUrl === 'string' ? body.downloadUrl : undefined;
@@ -59,7 +105,9 @@ export function useRecordingControls(room: string, setError: (message: string) =
             setRecordingInfo('');
           }
         } else {
-          setRecordingInfo(body.live ? 'Live on YouTube @ 1080p60' : 'Recording @ 1080p60');
+          setRecordingInfo(
+            body.live ? formatLiveInfo(nextDestinations) : 'Recording @ 1080p60',
+          );
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
@@ -72,13 +120,16 @@ export function useRecordingControls(room: string, setError: (message: string) =
     runRecordingAction('start');
   };
 
-  const goLive = (streamKey: string) => {
+  const goLive = (destinations: OutboundDestination[]) => {
     if (recordingPending) return;
     if (recording) {
       setError('Stop recording before going live');
       return;
     }
-    runRecordingAction('start', { rtmpUrl: streamKey });
+    for (const dest of destinations) {
+      setStreamKey(dest.platform, dest.streamKey);
+    }
+    runRecordingAction('start', { destinations });
   };
 
   const stopRecording = () => {
@@ -94,11 +145,12 @@ export function useRecordingControls(room: string, setError: (message: string) =
   return {
     recording,
     live,
+    liveDestinations,
     recordingInfo,
     finishedRecording,
     setFinishedRecording,
-    rtmpUrl,
-    setRtmpUrl,
+    streamKeys,
+    setStreamKey,
     recordingPending,
     startRecording,
     goLive,

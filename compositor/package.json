@@ -8,6 +8,7 @@
     "build:api": "tsc",
     "start": "node dist/main.js",
     "typecheck": "tsc --noEmit",
+    "test": "node --require ts-node/register --test src/recordings/*.spec.ts",
     "lint": "oxlint src"
   },
   "dependencies": {

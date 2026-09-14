@@ -5,13 +5,8 @@ import type { IncomingMessage } from 'http';
 import type { WebSocket } from 'ws';
 import { SessionsService } from '../sessions/sessions.service';
 import type { SessionLog } from './session-log';
-import { redactRtmp } from './rtmp';
-import {
-  AUDIO,
-  parseRecorderCodec,
-  STREAM_PROFILES,
-  type StreamProfile,
-} from '@streaming/stream-quality';
+import { buildFfmpegArgs, redactFfmpegArg } from './rtmp';
+import { parseRecorderCodec, STREAM_PROFILES } from '@streaming/stream-quality';
 
 /**
  * Binary sink on /ws/recording?room=X&codec=h264|vp9|vp8 — compositor streams
@@ -35,10 +30,11 @@ export class RecordingGateway implements OnGatewayConnection {
       return;
     }
 
-    const { file, rtmpUrl, resolution, sessionLog } = sink;
+    const { file, rtmpUrls, resolution, sessionLog } = sink;
     const profile = STREAM_PROFILES[resolution];
+    const live = rtmpUrls.length > 0;
 
-    if (rtmpUrl && codec !== 'h264') {
+    if (live && codec !== 'h264') {
       const msg =
         `live RTMP requires H.264 recorder output (got ${codec}) — ` +
         'refusing sink to avoid libx264 re-encode';
@@ -59,21 +55,19 @@ export class RecordingGateway implements OnGatewayConnection {
     sessionLog?.write(`sink connected codec=${codec} resolution=${resolution} file=${file}`);
 
     let ffmpeg: ChildProcess | undefined;
-    if (rtmpUrl) {
+    if (live) {
       const bin = process.env.FFMPEG_PATH ?? 'ffmpeg';
-      const args = buildFfmpegArgs(profile, codec, rtmpUrl);
+      const args = buildFfmpegArgs(profile, codec, rtmpUrls);
       ffmpeg = spawn(bin, args, { stdio: ['pipe', 'ignore', 'pipe'] });
       this.sessions.attachFfmpeg(room, ffmpeg);
       attachFfmpegLogging(room, ffmpeg, sessionLog);
       const mode = codec === 'h264' ? 'copy+aac' : `libx264/${profile.ffmpegPreset}`;
       const banner =
         `live RTMP ${resolution} codec=${codec} mode=${mode} ` +
-        `@ ${profile.rtmpVideoBitrate} for room ${room}`;
+        `destinations=${rtmpUrls.length} @ ${profile.rtmpVideoBitrate} for room ${room}`;
       console.log(`[recording] ${banner}`);
       sessionLog?.write(banner);
-      sessionLog?.write(
-        `ffmpeg args: ${args.map((a) => (/^rtmps?:\/\//i.test(a) ? redactRtmp(a) : a)).join(' ')}`,
-      );
+      sessionLog?.write(`ffmpeg args: ${args.map(redactFfmpegArg).join(' ')}`);
     }
 
     socket.on('message', (data, isBinary) => {
@@ -138,75 +132,4 @@ function attachFfmpegLogging(
     console.log(`[ffmpeg:${room}] ${msg}`);
     sessionLog?.write(msg);
   });
-}
-
-function buildFfmpegArgs(profile: StreamProfile, codec: string, rtmpUrl: string): string[] {
-  const commonHead = [
-    '-hide_banner',
-    '-loglevel',
-    'info',
-    '-stats_period',
-    '5',
-    '-fflags',
-    '+genpts',
-    '-i',
-    'pipe:0',
-  ];
-  const audio = [
-    '-af',
-    AUDIO.ffmpegResampleFilter,
-    '-c:a',
-    'aac',
-    '-b:a',
-    profile.rtmpAudioBitrate,
-    '-ar',
-    String(AUDIO.sampleRate),
-    '-ac',
-    String(AUDIO.channels),
-  ];
-  const out = ['-f', 'flv', rtmpUrl];
-
-  if (codec === 'h264') {
-    return [
-      ...commonHead,
-      '-map',
-      '0:v:0',
-      '-map',
-      '0:a:0?',
-      '-c:v',
-      'copy',
-      ...audio,
-      ...out,
-    ];
-  }
-
-  return [
-    ...commonHead,
-    '-map',
-    '0:v:0',
-    '-map',
-    '0:a:0?',
-    '-c:v',
-    'libx264',
-    '-preset',
-    profile.ffmpegPreset,
-    '-profile:v',
-    'high',
-    '-pix_fmt',
-    'yuv420p',
-    '-g',
-    String(profile.fps * 2),
-    '-keyint_min',
-    String(profile.fps * 2),
-    '-sc_threshold',
-    '0',
-    '-b:v',
-    profile.rtmpVideoBitrate,
-    '-maxrate',
-    profile.rtmpMaxrate,
-    '-bufsize',
-    profile.rtmpBufsize,
-    ...audio,
-    ...out,
-  ];
 }

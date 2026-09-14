@@ -46,6 +46,8 @@ function LivePage() {
 
   if (!s.user) return null;
 
+  const liveToYoutube = s.live && s.liveDestinations.includes('youtube');
+
   const leaveToSessions = () => {
     void (async () => {
       await s.leave();
@@ -69,7 +71,9 @@ function LivePage() {
       <div className="flex-1 flex flex-col min-h-0">
         <div
           className={`flex-1 grid gap-4 p-5 min-h-0 ${
-            s.live ? 'grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(260px,320px)]' : 'grid-cols-1'
+            s.live && liveToYoutube
+              ? 'grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(260px,320px)]'
+              : 'grid-cols-1'
           }`}
         >
           <section className="min-w-0 min-h-0 flex flex-col overflow-hidden">
@@ -84,11 +88,11 @@ function LivePage() {
             </div>
           </section>
 
-          {s.live && (
+          {liveToYoutube && (
             <CommentsPanel
               isOwner={s.isRoomOwner}
-              youtubeConnected={s.youtubeConnected}
-              live={s.live}
+              youtubeConnected={s.platforms.youtube.connected}
+              live={liveToYoutube}
               sessionActive={s.commentsSessionActive}
               sessionTitle={s.commentsSessionTitle}
               bindFailed={s.commentsBindFailed}
@@ -130,14 +134,12 @@ function LivePage() {
 
       {goLiveOpen && (
         <GoLiveModal
-          youtubeConnected={s.youtubeConnected}
-          youtubeAccountLabel={s.youtubeAccountLabel}
-          defaultStreamKey={s.rtmpUrl}
+          platforms={s.platforms}
+          streamKeys={s.streamKeys}
           pending={s.recordingPending}
           onClose={() => setGoLiveOpen(false)}
-          onGoLive={(streamKey) => {
-            s.setRtmpUrl(streamKey);
-            s.goLive(streamKey);
+          onGoLive={(destinations) => {
+            s.goLive(destinations);
             setGoLiveOpen(false);
           }}
         />

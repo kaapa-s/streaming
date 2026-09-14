@@ -8,7 +8,7 @@ Live program is a 1080p canvas (studio preview + headless recorder). Later we wi
 
 - Honor the existing Scene-strip buttons: `focus`, `pip-left`, `pip-right`, `grid`.
 - Keep today’s **presentation** look while a screen is **on the scene** (not a fifth button).
-- Same picture on studio preview and recorded/YouTube output.
+- Same picture on studio preview and recorded/live output.
 - Click a **camera** source to choose who is featured.
 - Structure the solver so an offline renderer can reuse it with ISO files.
 
@@ -371,7 +371,7 @@ Warmup: recorder starts at default `focus` until the first owner POST. After joi
 1. **`layoutSolve` + unit tests** in `shared/canvas-compositor` (no canvas). Cover 0–5 cameras, pip L/R, grid 1–4, presentation 1–3 cameras + screen, featured fallback, two screens.
 2. **Compositor renderer** uses placements; keep overlay + audio mix. Extend `/compositor-dev` with the four buttons, featured picker, and screen toggle.
 3. **Studio**: lift state, wire preview, click-to-feature, owner-only.
-4. **API + `__setLayout`** so recording/YouTube match preview.
+4. **API + `__setLayout`** so recording/live output match preview.
 5. **Session-log scene lines** on record start and layout change.
 
 ## Files (expected)

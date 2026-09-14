@@ -26,6 +26,11 @@ export class GoLiveDto {
   rtmpUrl?: string;
 
   @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  rtmpUrls?: string[];
+
+  @IsOptional()
   @IsString()
   resolution?: string;
 

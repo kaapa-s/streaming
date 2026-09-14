@@ -49,7 +49,7 @@ function NewRecordingPage() {
     <div className="max-w-xl">
       <h1 className="text-2xl font-semibold tracking-tight text-ink">New recording</h1>
       <p className="mt-2 text-sm text-ink-muted leading-relaxed">
-        Start a session to record locally. You can go live to YouTube later from studio.
+        Start a session to record locally. You can go live later from studio.
       </p>
 
       <form

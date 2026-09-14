@@ -10,8 +10,13 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { CommentsService } from '../comments/comments.service';
 import { Recording, Room } from '../entities';
+import type { PlatformProvider } from '../platforms/platform-ids';
+import { PlatformConnectionStore } from '../platforms/platform-connection.store';
+import { normalizeOutboundRtmp } from '../platforms/outbound-rtmp';
 import { RoomsService } from '../rooms/rooms.service';
 import { CompositorClient } from './compositor.client';
+import { resolveDestinations } from './destinations';
+import type { StartRecordingDto } from './recordings.dto';
 import { S3PresignService } from './s3-presign.service';
 import { parseResolution, type StreamResolution } from '@streaming/stream-quality';
 
@@ -29,19 +34,34 @@ export class RecordingsService {
     private readonly recordings: Repository<Recording>,
     @Inject(forwardRef(() => CommentsService))
     private readonly comments: CommentsService,
+    private readonly platforms: PlatformConnectionStore,
   ) {}
 
   async start(
     room: Room,
-    rtmpUrl?: string,
-    resolutionInput?: string,
-  ): Promise<{ room: string; live: boolean; resolution: StreamResolution }> {
+    userId: string,
+    body: StartRecordingDto,
+  ): Promise<{
+    room: string;
+    live: boolean;
+    resolution: StreamResolution;
+    destinations: PlatformProvider[];
+  }> {
     const slug = room.slug;
     if (this.activeIds.has(slug)) {
       throw new BadRequestException(`already recording room "${slug}"`);
     }
 
-    const resolution = parseResolution(resolutionInput);
+    const destinations = resolveDestinations(body);
+    for (const dest of destinations) {
+      await this.platforms.assertConnected(userId, dest.platform);
+    }
+    const rtmpUrls = destinations.map((dest) =>
+      normalizeOutboundRtmp(dest.streamKey, dest.platform),
+    );
+    const destinationIds = destinations.map((dest) => dest.platform);
+
+    const resolution = parseResolution(body.resolution);
     const token = this.rooms.issueCompositorJoinToken(slug);
 
     const row = await this.recordings.save(
@@ -59,18 +79,19 @@ export class RecordingsService {
 
     try {
       const result = await this.compositor.goLive(slug, {
-        rtmpUrl,
+        rtmpUrls: rtmpUrls.length ? rtmpUrls : undefined,
         resolution,
         token,
       });
       await this.recordings.update(row.id, { status: 'recording' });
-      if (rtmpUrl) {
+      if (destinationIds.includes('youtube')) {
         this.comments.bindForLiveRoom(slug, room.ownerId);
       }
       return {
         room: result.room,
         live: result.live,
         resolution: parseResolution(result.resolution),
+        destinations: destinationIds,
       };
     } catch (err) {
       this.activeIds.delete(slug);

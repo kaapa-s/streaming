@@ -3,13 +3,14 @@
 A StreamYard-style proof of concept: speakers join a browser studio, media flows
 through a mediasoup SFU, and a dedicated **compositor** service runs a warm
 Chromium pool that joins the room as a hidden compositor, records the program
-feed to `.webm`, optionally pushes live to YouTube via ffmpeg/RTMP, and uploads
-finished files to S3.
+feed to `.webm`, optionally pushes live to one or more RTMP destinations
+(YouTube, Facebook, LinkedIn, Instagram, X) via ffmpeg, and uploads finished
+files to S3.
 
 ## Architecture
 
-- `server/` — NestJS + Postgres/TypeORM auth, rooms API, recording orchestration, S3 presign, YouTube OAuth + live comments
-- `compositor/` — warm Chromium pool, local `/compositor` recorder page, `/ws/recording` sink, ffmpeg → YouTube, S3 PUT
+- `server/` — NestJS + Postgres/TypeORM auth, rooms API, recording orchestration, S3 presign, platform OAuth + YouTube live comments
+- `compositor/` — warm Chromium pool, local `/compositor` recorder page, `/ws/recording` sink, ffmpeg → RTMP destinations, S3 PUT
 - `sfu/` — mediasoup worker + `/ws/signaling` (join tokens only; no DB)
 - `shared/join-token/` — HMAC issue/verify used by API and SFU
 - `shared/canvas-compositor/` / `shared/sfu-client/` / `shared/stream-quality/` — browser + stream profile libs shared by studio and recorder
@@ -32,7 +33,7 @@ Headless Chromium loads the recorder from the compositor itself
 - Node.js 22+
 - Docker (for Postgres)
 - macOS/Linux with build basics (mediasoup ships prebuilt workers for common platforms)
-- `ffmpeg` on `PATH` (required only for YouTube Live) — e.g. `brew install ffmpeg`
+- `ffmpeg` on `PATH` (required only for live RTMP; needs RTMPS/OpenSSL for Facebook and Instagram) — e.g. `brew install ffmpeg`
 
 ### One command
 
@@ -64,13 +65,19 @@ Ensure `SFU_JOIN_SECRET` matches in `server/.env` and `sfu/.env`, and
 4. Talk/move for a bit, click **Stop recording**.
 5. Play the file under `compositor/recordings/` (when S3 is configured, the local `.webm` is renamed `*.uploaded.webm` then deleted after a successful upload; use the S3 download URL instead).
 
-### Go live on YouTube
+### Go live
 
-1. In [YouTube Studio](https://studio.youtube.com) → **Create** → **Go live**, create a stream
-   and copy the **Stream key** (or the full RTMP URL + key).
-2. Paste the key into the RTMP field (`rtmp://a.rtmp.youtube.com/live2/<key>` or just the key).
-3. Click **Go live** — records locally and ffmpeg pushes to YouTube.
+1. Connect destinations in **Settings** (OAuth identity). This pass does **not** create broadcasts via platform APIs.
+2. Create a live stream in each platform’s own tool and copy the stream key / RTMP URL:
+   - **YouTube** — YouTube Studio → Go live (bare key or full URL)
+   - **Facebook** — Live Producer / Meta Business Suite (`rtmps://live-api-s.facebook.com:443/rtmp/<key>`)
+   - **Instagram** — Instagram Live Producer (professional account). Not the Instagram mobile Live button.
+   - **LinkedIn** — LinkedIn Live (account must already have Live access); paste the **full** RTMP URL including key
+   - **X** — Media Studio / Live; paste the **full** RTMP URL including key
+3. In studio, **Go live ▾**, select one or more destinations, paste keys (prefilled from Settings), click **Go live**. ffmpeg encodes once and fans out (tee); one dead destination does not stop the others.
 4. Click **Stop live** when done.
+
+Comments are **YouTube-only**. The chat panel appears only when YouTube is among the live destinations.
 
 ### YouTube live comments
 
@@ -113,6 +120,10 @@ iterate on layout without mediasoup or the Nest server.
 - `COMPOSITOR_INTERNAL_SECRET` — shared secret for internal compositor API
 - `WEB_ORIGIN` — studio origin for OAuth redirects (default `https://localhost:5173`)
 - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_OAUTH_REDIRECT_URI` — YouTube Live Chat OAuth
+- `FACEBOOK_APP_ID` / `FACEBOOK_APP_SECRET` / `FACEBOOK_OAUTH_REDIRECT_URI` — Facebook Login (identity)
+- `INSTAGRAM_OAUTH_REDIRECT_URI` — Instagram Login (identity; may reuse `FACEBOOK_APP_ID` / `FACEBOOK_APP_SECRET`)
+- `LINKEDIN_CLIENT_ID` / `LINKEDIN_CLIENT_SECRET` / `LINKEDIN_OAUTH_REDIRECT_URI` — LinkedIn OpenID
+- `X_CLIENT_ID` / `X_CLIENT_SECRET` / `X_OAUTH_REDIRECT_URI` — X OAuth 2.0 + PKCE
 - `TOKEN_ENCRYPTION_KEY` — encrypts stored platform OAuth tokens
 - `SFU_PUBLIC_WS_URL` — optional direct signaling URL
 - `AWS_REGION` / `S3_BUCKET` / `S3_PREFIX` — optional S3 upload; `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` only when not using an EC2 IAM role
@@ -180,8 +191,13 @@ cp .env.example .env
 #   COMPOSITOR_URL=https://compositor.kaapa.pl
 #   MEDIASOUP_ANNOUNCED_IP=<sfu-eip>
 #   Optional S3: AWS_REGION + S3_BUCKET (+ access keys locally; on EC2 prefer IAM role)
-#   Optional YouTube chat: GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET /
-#     GOOGLE_OAUTH_REDIRECT_URI / WEB_ORIGIN / TOKEN_ENCRYPTION_KEY
+#   Optional destination OAuth (identity; stream keys still pasted):
+#     GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_OAUTH_REDIRECT_URI
+#     FACEBOOK_APP_ID / FACEBOOK_APP_SECRET / FACEBOOK_OAUTH_REDIRECT_URI
+#     INSTAGRAM_OAUTH_REDIRECT_URI (optional INSTAGRAM_APP_ID / INSTAGRAM_APP_SECRET)
+#     LINKEDIN_CLIENT_ID / LINKEDIN_CLIENT_SECRET / LINKEDIN_OAUTH_REDIRECT_URI
+#     X_CLIENT_ID / X_CLIENT_SECRET / X_OAUTH_REDIRECT_URI
+#     WEB_ORIGIN / TOKEN_ENCRYPTION_KEY
 # Same SFU_JOIN_SECRET and COMPOSITOR_INTERNAL_SECRET across boxes that need them.
 ```
 

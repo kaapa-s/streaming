@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { Button } from '../../../components/Button';
+import { PlatformConnectionCard } from '../../../components/studio/PlatformConnectionCard';
+import { PLATFORM_META, PLATFORM_PROVIDERS } from '../../../lib/platforms';
 import { ensureAuthenticated } from '../../../studio/studioStage';
 import { useStudio } from '../../../studio/useStudio';
 
@@ -28,61 +29,28 @@ function SettingsPage() {
         </div>
       </section>
 
-      <section className="mt-8">
-        <h2 className="text-sm font-semibold tracking-wide uppercase text-ink-subtle">YouTube</h2>
-        <div className="mt-3 rounded-xl border border-border bg-surface-raised p-5 flex flex-col gap-4 shadow-sm">
-          {s.youtubeConnected ? (
-            <>
-              <p className="text-sm text-ink">
-                Connected as{' '}
-                <span className="font-semibold">{s.youtubeAccountLabel ?? 'YouTube channel'}</span>
-              </p>
-              <Button
-                className="self-start"
-                loading={s.youtubePending}
-                onClick={s.disconnectYoutube}
-              >
-                Disconnect
-              </Button>
-
-              <label className="flex flex-col gap-2 pt-2 border-t border-border">
-                <span className="text-sm font-medium text-ink">Default stream key (optional)</span>
-                <input
-                  className="rounded-lg border border-border bg-surface px-3.5 py-2.5 text-ink outline-none focus:border-accent font-mono text-sm"
-                  type="text"
-                  autoComplete="off"
-                  spellCheck={false}
-                  placeholder="rtmp://… / stream key"
-                  value={s.rtmpUrl}
-                  onChange={(e) => s.setRtmpUrl(e.target.value)}
-                  disabled={s.streamControlsLocked}
-                  title="Paste rtmp://a.rtmp.youtube.com/live2/<key> or just the stream key"
-                />
-                <span className="text-xs text-ink-subtle leading-relaxed">
-                  Saved for Go live — not used for local recording.
-                </span>
-              </label>
-            </>
-          ) : (
-            <>
-              <p className="text-sm text-ink">
-                Status: <span className="font-medium">Not connected</span>
-              </p>
-              <p className="text-sm text-ink-muted leading-relaxed">
-                Connect your channel to enable Go live options (stream key, live chat).
-              </p>
-              <Button
-                variant="primary"
-                className="self-start"
-                loading={s.youtubePending}
-                onClick={s.connectYoutube}
-              >
-                Connect YouTube
-              </Button>
-            </>
-          )}
-        </div>
-      </section>
+      {PLATFORM_PROVIDERS.map((id) => {
+        const meta = PLATFORM_META[id];
+        const status = s.platforms[id];
+        return (
+          <PlatformConnectionCard
+            key={id}
+            title={meta.label}
+            connected={status.connected}
+            accountLabel={status.accountLabel ?? meta.accountFallback}
+            pending={s.platformPending === id}
+            streamKey={s.streamKeys[id]}
+            onStreamKeyChange={(value) => s.setStreamKey(id, value)}
+            onConnect={() => s.connectPlatform(id)}
+            onDisconnect={() => s.disconnectPlatform(id)}
+            connectLabel={meta.connectLabel}
+            helperDisconnected={meta.disconnectedHelp}
+            helperConnected={meta.connectedHelp}
+            keyPlaceholder={meta.keyPlaceholder}
+            streamControlsLocked={s.streamControlsLocked}
+          />
+        );
+      })}
 
       {s.error && <p className="mt-4 text-sm text-danger">{s.error}</p>}
     </div>

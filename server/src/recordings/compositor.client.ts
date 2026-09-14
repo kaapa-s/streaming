@@ -47,7 +47,7 @@ export class CompositorClient {
 
   async goLive(
     slug: string,
-    body: { rtmpUrl?: string; resolution?: string; token?: string },
+    body: { rtmpUrl?: string; rtmpUrls?: string[]; resolution?: string; token?: string },
   ): Promise<CompositorGoLiveResult> {
     return this.request('POST', `/internal/rooms/${encodeURIComponent(slug)}/go-live`, body);
   }

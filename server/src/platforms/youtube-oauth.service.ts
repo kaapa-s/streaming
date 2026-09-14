@@ -1,14 +1,9 @@
-import {
-  BadRequestException,
-  Injectable,
-  Logger,
-  ServiceUnavailableException,
-} from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { PlatformConnection } from '../entities/platform-connection.entity';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { PlatformConnectionStore } from './platform-connection.store';
+import { oauthErrorMessage, oauthRedirect, parseOAuthJson, jsonString } from './oauth-http';
 import { signOAuthState, verifyOAuthState } from './oauth-state';
-import { decryptSecret, encryptSecret } from './token-crypto';
+import { requireEnv } from './env';
+import { encryptSecret } from './token-crypto';
 
 const YOUTUBE_SCOPES = [
   'https://www.googleapis.com/auth/youtube.force-ssl',
@@ -33,41 +28,25 @@ interface ChannelSnippet {
 
 @Injectable()
 export class YoutubeOAuthService {
+  readonly provider = 'youtube' as const;
   private readonly logger = new Logger(YoutubeOAuthService.name);
 
-  constructor(
-    @InjectRepository(PlatformConnection)
-    private readonly connections: Repository<PlatformConnection>,
-  ) {}
+  constructor(private readonly connections: PlatformConnectionStore) {}
 
   private clientId(): string {
-    const id = process.env.GOOGLE_CLIENT_ID?.trim();
-    if (!id) throw new ServiceUnavailableException('GOOGLE_CLIENT_ID is not configured');
-    return id;
+    return requireEnv('GOOGLE_CLIENT_ID');
   }
 
   private clientSecret(): string {
-    const secret = process.env.GOOGLE_CLIENT_SECRET?.trim();
-    if (!secret) {
-      throw new ServiceUnavailableException('GOOGLE_CLIENT_SECRET is not configured');
-    }
-    return secret;
+    return requireEnv('GOOGLE_CLIENT_SECRET');
   }
 
   private redirectUri(): string {
-    const uri = process.env.GOOGLE_OAUTH_REDIRECT_URI?.trim();
-    if (!uri) {
-      throw new ServiceUnavailableException('GOOGLE_OAUTH_REDIRECT_URI is not configured');
-    }
-    return uri;
-  }
-
-  private webOrigin(): string {
-    return (process.env.WEB_ORIGIN?.trim() || 'https://localhost:5173').replace(/\/$/, '');
+    return requireEnv('GOOGLE_OAUTH_REDIRECT_URI');
   }
 
   buildConnectUrl(userId: string): { url: string } {
-    const state = signOAuthState(userId);
+    const state = signOAuthState(userId, { provider: 'youtube' });
     const params = new URLSearchParams({
       client_id: this.clientId(),
       redirect_uri: this.redirectUri(),
@@ -84,64 +63,57 @@ export class YoutubeOAuthService {
   }
 
   async handleCallback(code: string | undefined, state: string | undefined): Promise<string> {
-    const studioUrl = `${this.webOrigin()}/settings`;
     try {
       if (!code || !state) throw new BadRequestException('missing code or state');
-      const userId = verifyOAuthState(state);
+      const payload = verifyOAuthState(state);
+      if (payload.provider && payload.provider !== 'youtube') {
+        throw new BadRequestException('oauth state provider mismatch');
+      }
       const tokens = await this.exchangeCode(code);
       const channel = await this.fetchChannel(tokens.access_token);
-      await this.upsertConnection(userId, tokens, channel);
-      return `${studioUrl}?youtube=connected`;
+      await this.connections.upsert({
+        userId: payload.userId,
+        provider: 'youtube',
+        externalAccountId: channel.id,
+        accountLabel: channel.title,
+        accessToken: tokens.access_token,
+        refreshToken: tokens.refresh_token,
+        expiresIn: tokens.expires_in,
+        scopes: tokens.scope ?? YOUTUBE_SCOPES,
+      });
+      return oauthRedirect('youtube', true);
     } catch (err) {
       this.logger.warn(`YouTube OAuth callback failed: ${String(err)}`);
-      const msg = encodeURIComponent(
-        err instanceof Error ? err.message : 'YouTube connect failed',
-      );
-      return `${studioUrl}?youtube=error&message=${msg}`;
+      return oauthRedirect('youtube', false, oauthErrorMessage(err, 'YouTube connect failed'));
     }
   }
 
-  async status(userId: string): Promise<{
-    connected: boolean;
-    accountLabel?: string;
-    externalAccountId?: string;
-  }> {
-    const row = await this.connections.findOne({
-      where: { userId, provider: 'youtube' },
-    });
-    if (!row) return { connected: false };
-    return {
-      connected: true,
-      accountLabel: row.accountLabel ?? undefined,
-      externalAccountId: row.externalAccountId,
-    };
+  status(userId: string) {
+    return this.connections.status(userId, 'youtube');
   }
 
-  async disconnect(userId: string): Promise<{ ok: true }> {
-    await this.connections.delete({ userId, provider: 'youtube' });
-    return { ok: true };
+  disconnect(userId: string) {
+    return this.connections.disconnect(userId, 'youtube');
   }
 
   async getValidAccessToken(userId: string): Promise<string> {
-    const row = await this.connections.findOne({
-      where: { userId, provider: 'youtube' },
-    });
+    const row = await this.connections.find(userId, 'youtube');
     if (!row) {
       throw new BadRequestException('YouTube is not connected');
     }
 
     const skewMs = 60_000;
     if (row.expiresAt.getTime() - skewMs > Date.now()) {
-      return decryptSecret(row.accessTokenEnc);
+      return this.connections.decryptAccessToken(row);
     }
 
-    if (!row.refreshTokenEnc) {
+    const refreshToken = this.connections.decryptRefreshToken(row);
+    if (!refreshToken) {
       throw new BadRequestException(
         'YouTube access expired and no refresh token is stored — reconnect YouTube',
       );
     }
 
-    const refreshToken = decryptSecret(row.refreshTokenEnc);
     const tokens = await this.refreshAccessToken(refreshToken);
     row.accessTokenEnc = encryptSecret(tokens.access_token);
     row.expiresAt = new Date(Date.now() + tokens.expires_in * 1000);
@@ -166,11 +138,22 @@ export class YoutubeOAuthService {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body,
     });
+    const data = await parseOAuthJson(res);
     if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new BadRequestException(`token exchange failed: ${text.slice(0, 200)}`);
+      throw new BadRequestException(
+        `token exchange failed: ${jsonString(data, 'error') ?? JSON.stringify(data).slice(0, 200)}`,
+      );
     }
-    return (await res.json()) as TokenResponse;
+    const access_token = jsonString(data, 'access_token');
+    const expires_in = typeof data.expires_in === 'number' ? data.expires_in : 3600;
+    if (!access_token) throw new BadRequestException('token exchange failed: missing access_token');
+    return {
+      access_token,
+      expires_in,
+      refresh_token: jsonString(data, 'refresh_token'),
+      scope: jsonString(data, 'scope'),
+      token_type: jsonString(data, 'token_type') ?? 'Bearer',
+    };
   }
 
   private async refreshAccessToken(refreshToken: string): Promise<TokenResponse> {
@@ -185,11 +168,22 @@ export class YoutubeOAuthService {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body,
     });
+    const data = await parseOAuthJson(res);
     if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new BadRequestException(`token refresh failed: ${text.slice(0, 200)}`);
+      throw new BadRequestException(
+        `token refresh failed: ${jsonString(data, 'error') ?? JSON.stringify(data).slice(0, 200)}`,
+      );
     }
-    return (await res.json()) as TokenResponse;
+    const access_token = jsonString(data, 'access_token');
+    const expires_in = typeof data.expires_in === 'number' ? data.expires_in : 3600;
+    if (!access_token) throw new BadRequestException('token refresh failed: missing access_token');
+    return {
+      access_token,
+      expires_in,
+      refresh_token: jsonString(data, 'refresh_token'),
+      scope: jsonString(data, 'scope'),
+      token_type: jsonString(data, 'token_type') ?? 'Bearer',
+    };
   }
 
   private async fetchChannel(
@@ -200,49 +194,16 @@ export class YoutubeOAuthService {
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
+    const data = (await parseOAuthJson(res)) as ChannelSnippet & Record<string, unknown>;
     if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new BadRequestException(`channels.list failed: ${text.slice(0, 200)}`);
+      throw new BadRequestException(
+        `channels.list failed: ${jsonString(data, 'error') ?? JSON.stringify(data).slice(0, 200)}`,
+      );
     }
-    const data = (await res.json()) as ChannelSnippet;
     const item = data.items?.[0];
     if (!item?.id) {
       throw new BadRequestException('No YouTube channel found for this Google account');
     }
     return { id: item.id, title: item.snippet?.title ?? item.id };
-  }
-
-  private async upsertConnection(
-    userId: string,
-    tokens: TokenResponse,
-    channel: { id: string; title: string },
-  ): Promise<void> {
-    let row = await this.connections.findOne({
-      where: { userId, provider: 'youtube' },
-    });
-    if (!row) {
-      row = this.connections.create({
-        userId,
-        provider: 'youtube',
-        externalAccountId: channel.id,
-        accountLabel: channel.title,
-        accessTokenEnc: encryptSecret(tokens.access_token),
-        refreshTokenEnc: tokens.refresh_token
-          ? encryptSecret(tokens.refresh_token)
-          : null,
-        expiresAt: new Date(Date.now() + tokens.expires_in * 1000),
-        scopes: tokens.scope ?? YOUTUBE_SCOPES,
-      });
-    } else {
-      row.externalAccountId = channel.id;
-      row.accountLabel = channel.title;
-      row.accessTokenEnc = encryptSecret(tokens.access_token);
-      if (tokens.refresh_token) {
-        row.refreshTokenEnc = encryptSecret(tokens.refresh_token);
-      }
-      row.expiresAt = new Date(Date.now() + tokens.expires_in * 1000);
-      row.scopes = tokens.scope ?? row.scopes;
-    }
-    await this.connections.save(row);
   }
 }

@@ -4,6 +4,11 @@ import type { LiveComment } from '../hooks/useLiveComments';
 import type { RemotePeer } from '@streaming/sfu-client';
 import type { AuthUser } from '../lib/auth';
 import type { CameraPreset } from '@streaming/canvas-compositor';
+import type {
+  AllPlatformStatus,
+  OutboundDestination,
+  PlatformProvider,
+} from '../lib/platforms';
 
 export type StudioValue = {
   error: string;
@@ -45,22 +50,22 @@ export type StudioValue = {
   previewRef: (node: HTMLDivElement | null) => void;
   recording: boolean;
   live: boolean;
+  liveDestinations: PlatformProvider[];
   recordingInfo: string;
   finishedRecording: FinishedRecording | null;
   setFinishedRecording: (value: FinishedRecording | null) => void;
-  rtmpUrl: string;
-  setRtmpUrl: (value: string) => void;
+  streamKeys: Record<PlatformProvider, string>;
+  setStreamKey: (platform: PlatformProvider, value: string) => void;
   recordingPending: boolean;
   startRecording: () => void;
-  goLive: (streamKey: string) => void;
+  goLive: (destinations: OutboundDestination[]) => void;
   stopRecording: () => void;
   toggleRecording: () => void;
   streamControlsLocked: boolean;
-  youtubeConnected: boolean;
-  youtubeAccountLabel?: string;
-  youtubePending: boolean;
-  connectYoutube: () => void;
-  disconnectYoutube: () => void;
+  platforms: AllPlatformStatus;
+  platformPending: PlatformProvider | null;
+  connectPlatform: (provider: PlatformProvider) => void;
+  disconnectPlatform: (provider: PlatformProvider) => void;
   comments: LiveComment[];
   commentsSessionActive: boolean;
   commentsSessionTitle?: string;

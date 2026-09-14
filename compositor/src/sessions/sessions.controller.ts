@@ -27,6 +27,7 @@ export class SessionsController {
   goLive(@Param('slug') slug: string, @Body() body: GoLiveDto) {
     return this.sessions.goLive(slug, {
       rtmpUrl: body.rtmpUrl,
+      rtmpUrls: body.rtmpUrls,
       resolution: body.resolution,
       token: body.token,
     });

@@ -3,6 +3,7 @@ import { JwtAuthGuard } from '../auth/auth.guards';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { AuthUser } from '../auth/jwt.strategy';
 import { RoomsService } from '../rooms/rooms.service';
+import { StartRecordingDto, StopRecordingDto } from './recordings.dto';
 import { RecordingsService } from './recordings.service';
 
 @Controller('recordings')
@@ -14,21 +15,15 @@ export class RecordingsController {
   ) {}
 
   @Post('start')
-  async start(
-    @CurrentUser() user: AuthUser,
-    @Body() body: { room?: string; rtmpUrl?: string; resolution?: string },
-  ) {
-    const slug = body?.room ?? 'main';
+  async start(@CurrentUser() user: AuthUser, @Body() body: StartRecordingDto) {
+    const slug = body.room ?? 'main';
     const { room } = await this.rooms.requireMembershipBySlug(slug, user.id);
-    return this.recordings.start(room, body?.rtmpUrl, body?.resolution);
+    return this.recordings.start(room, user.id, body);
   }
 
   @Post('stop')
-  async stop(
-    @CurrentUser() user: AuthUser,
-    @Body() body: { room?: string },
-  ) {
-    const slug = body?.room ?? 'main';
+  async stop(@CurrentUser() user: AuthUser, @Body() body: StopRecordingDto) {
+    const slug = body.room ?? 'main';
     const { room } = await this.rooms.requireMembershipBySlug(slug, user.id);
     return this.recordings.stop(room);
   }
