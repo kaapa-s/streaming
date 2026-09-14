@@ -11,7 +11,7 @@ export interface RemoteAudioPeer {
 }
 
 export interface RemoteAudioPlayer {
-  setPeers: (peers: RemoteAudioPeer[]) => void;
+  setPeers: (peers: RemoteAudioPeer[], blockedTrackIds?: Iterable<string>) => void;
   stop: () => void;
 }
 
@@ -22,6 +22,7 @@ function trackFingerprint(tracks: MediaStreamTrack[]): string {
 export function createRemoteAudioPlayer(): RemoteAudioPlayer {
   const elements = new Map<string, HTMLAudioElement>();
   const listeners = new Map<string, { stream: MediaStream; onChange: () => void }>();
+  let blocked = new Set<string>();
 
   const bind = (id: string, stream: MediaStream) => {
     let audio = elements.get(id);
@@ -31,7 +32,11 @@ export function createRemoteAudioPlayer(): RemoteAudioPlayer {
       elements.set(id, audio);
     }
 
-    const tracks = stream.getAudioTracks().filter((t) => t.readyState !== 'ended');
+    const live = stream.getAudioTracks().filter((t) => t.readyState !== 'ended');
+    if (live.some((t) => blocked.has(t.id))) {
+      console.error('[remote-audio] refused local mic track — that is speaker feedback');
+    }
+    const tracks = live.filter((t) => !blocked.has(t.id));
     const prev = audio.srcObject;
     if (prev instanceof MediaStream) {
       if (trackFingerprint(prev.getAudioTracks()) === trackFingerprint(tracks)) {
@@ -52,7 +57,8 @@ export function createRemoteAudioPlayer(): RemoteAudioPlayer {
     }
   };
 
-  const setPeers = (peers: RemoteAudioPeer[]) => {
+  const setPeers = (peers: RemoteAudioPeer[], blockedTrackIds?: Iterable<string>) => {
+    blocked = new Set(blockedTrackIds);
     const seen = new Set<string>();
 
     for (const peer of peers) {

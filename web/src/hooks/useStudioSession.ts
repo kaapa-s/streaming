@@ -23,9 +23,12 @@ export function useStudioSession({
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [localScreenStream, setLocalScreenStream] = useState<MediaStream | null>(null);
   const [remotePeers, setRemotePeers] = useState<RemotePeer[]>([]);
+  const [localAudioTrackIds, setLocalAudioTrackIds] = useState<string[]>([]);
 
   const sfuRef = useRef<SfuClient | null>(null);
   const joiningRef = useRef(false);
+  /** Full getUserMedia (cam+mic) — publish only. Never attach this to a media element. */
+  const captureRef = useRef<MediaStream | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const localScreenStreamRef = useRef<MediaStream | null>(null);
   localStreamRef.current = localStream;
@@ -43,10 +46,12 @@ export function useStudioSession({
   const stopPublishing = () => {
     sfuRef.current?.close();
     sfuRef.current = null;
-    localStreamRef.current?.getTracks().forEach((t) => t.stop());
+    captureRef.current?.getTracks().forEach((t) => t.stop());
+    captureRef.current = null;
     localStreamRef.current = null;
     localScreenStreamRef.current?.getTracks().forEach((t) => t.stop());
     localScreenStreamRef.current = null;
+    setLocalAudioTrackIds([]);
   };
 
   const leave = async () => {
@@ -68,7 +73,8 @@ export function useStudioSession({
     return () => {
       sfuRef.current?.close();
       sfuRef.current = null;
-      localStreamRef.current?.getTracks().forEach((t) => t.stop());
+      captureRef.current?.getTracks().forEach((t) => t.stop());
+      captureRef.current = null;
       localStreamRef.current = null;
       localScreenStreamRef.current?.getTracks().forEach((t) => t.stop());
       localScreenStreamRef.current = null;
@@ -88,7 +94,7 @@ export function useStudioSession({
       }
       const { joinToken, room: joinedRoom, sfuUrl, role } = await joinRoom(room);
       setRoomRole(role);
-      const stream = await navigator.mediaDevices.getUserMedia({
+      const capture = await navigator.mediaDevices.getUserMedia({
         video: {
           width: { ideal: 1920 },
           height: { ideal: 1080 },
@@ -100,13 +106,19 @@ export function useStudioSession({
           autoGainControl: true,
         },
       });
-      localStreamRef.current = stream;
-      setLocalStream(stream);
+      captureRef.current = capture;
+      // Preview/tiles/compositor must never see mic tracks. Binding the full
+      // getUserMedia stream to <video> (even muted) leaks your voice to the
+      // speakers — built-in mic+speakers then howl. Publish `capture` only.
+      const preview = new MediaStream(capture.getVideoTracks());
+      localStreamRef.current = preview;
+      setLocalStream(preview);
+      setLocalAudioTrackIds(capture.getAudioTracks().map((t) => t.id));
 
       const sfu = new SfuClient({ onPeersChanged: (peers) => setRemotePeers([...peers]) });
       sfuRef.current = sfu;
-      await sfu.join(joinedRoom.slug, user.name, 'speaker', joinToken, sfuUrl);
-      await sfu.publish(stream);
+      await sfu.join(joinedRoom.slug, user.name, 'speaker', joinToken, sfuUrl, user.id);
+      await sfu.publish(capture);
       setLocalPeerId(sfu.peerId);
       setJoined(true);
       setJoining(false);
@@ -186,6 +198,7 @@ export function useStudioSession({
     localPeerId,
     localStream,
     localScreenStream,
+    localAudioTrackIds,
     remotePeers,
     join,
     leave,

@@ -52,6 +52,13 @@ describe('chromeGpuArgs', () => {
     assert.ok(args.includes('--ignore-gpu-blocklist'));
     assert.ok(args.includes('--enable-accelerated-2d-canvas'));
   });
+
+  it('can request Vulkan ANGLE for headless NVIDIA', () => {
+    const args = chromeGpuArgs(true, 'vulkan');
+    assert.ok(args.includes('--use-angle=vulkan'));
+    assert.ok(args.includes('--disable-vulkan-surface'));
+    assert.ok(args.some((a) => a.includes('VulkanFromANGLE')));
+  });
 });
 
 describe('isSwiftShaderRenderer', () => {

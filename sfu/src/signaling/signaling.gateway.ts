@@ -37,6 +37,7 @@ function producerInfo(member: Peer, producer: types.Producer) {
     producerId: producer.id,
     peerId: member.id,
     peerName: member.name,
+    userId: member.userId,
     kind: producer.kind,
     appData: { source: resolveMediaSource(producer.appData) },
   };

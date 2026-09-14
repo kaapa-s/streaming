@@ -41,9 +41,25 @@ export function detectGpu(
   return { enabled: false, reason: 'no GPU device in container' };
 }
 
+export type ChromeGpuBackend = 'gl' | 'vulkan';
+
+const VAAPI_FEATURES =
+  'VaapiVideoDecoder,VaapiVideoEncoder,VaapiIgnoreDriverChecks,AcceleratedVideoDecodeLinuxGL,AcceleratedVideoEncoder,CanvasOopRasterization';
+
 /** Chromium flags so ANGLE uses the host GPU instead of SwiftShader. */
-export function chromeGpuArgs(enabled: boolean): string[] {
+export function chromeGpuArgs(
+  enabled: boolean,
+  backend: ChromeGpuBackend = 'gl',
+): string[] {
   if (!enabled) return [];
+  const angle =
+    backend === 'vulkan'
+      ? ['--use-gl=angle', '--use-angle=vulkan', '--disable-vulkan-surface']
+      : ['--use-gl=angle', '--use-angle=gl'];
+  const features =
+    backend === 'vulkan'
+      ? `Vulkan,DefaultANGLEVulkan,VulkanFromANGLE,${VAAPI_FEATURES}`
+      : VAAPI_FEATURES;
   return [
     '--enable-gpu',
     '--ignore-gpu-blocklist',
@@ -52,9 +68,8 @@ export function chromeGpuArgs(enabled: boolean): string[] {
     '--enable-accelerated-2d-canvas',
     '--enable-accelerated-video-decode',
     '--enable-accelerated-video-encode',
-    '--use-gl=angle',
-    '--use-angle=gl',
-    '--enable-features=VaapiVideoDecoder,VaapiVideoEncoder,VaapiIgnoreDriverChecks,AcceleratedVideoDecodeLinuxGL,AcceleratedVideoEncoder,CanvasOopRasterization',
+    ...angle,
+    `--enable-features=${features}`,
     '--disable-features=UseChromeOSDirectVideoDecoder',
   ];
 }
@@ -87,4 +102,19 @@ export function probeGpuRendererInPage(): string {
   const vendor = String(gl.getParameter(ext.UNMASKED_VENDOR_WEBGL));
   const renderer = String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL));
   return `${vendor} / ${renderer}`;
+}
+
+/** Runs on chrome://gpu via page.evaluate. Keep free of Node closures. */
+export function summarizeChromeGpuPage(): string {
+  const text =
+    (globalThis as { document?: { body?: { innerText?: string } } }).document?.body
+      ?.innerText ?? '';
+  if (!text.trim()) return 'chrome://gpu empty';
+  const interesting =
+    /GL_RENDERER|GL_VENDOR|GL_VERSION|Canvas|Rasterization|Video Decode|Video Encode|WebGL|Vulkan|SwiftShader|NVIDIA|ANGLE|Software only|Hardware accelerated|Display type|GPU0/i;
+  const lines = text
+    .split('\n')
+    .map((line) => line.replace(/\s+/g, ' ').trim())
+    .filter((line) => line.length > 0 && interesting.test(line));
+  return lines.slice(0, 50).join(' || ') || `unparsed (${text.length} chars)`;
 }

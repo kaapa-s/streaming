@@ -24,6 +24,8 @@ export type MediaSource = 'camera' | 'screen';
 export interface RemotePeer {
   id: string;
   name: string;
+  /** Account id from the join token — same user on two laptops is still "you". */
+  userId?: string;
   /** Camera + mic tracks. */
   stream: MediaStream;
   /** Screen-share video, when this peer is sharing. */
@@ -39,6 +41,7 @@ interface ProducerInfo {
   producerId: string;
   peerId: string;
   peerName: string;
+  userId?: string;
   kind: 'audio' | 'video';
   appData?: { source?: MediaSource };
 }
@@ -105,6 +108,8 @@ function resolveSource(info: ProducerInfo): MediaSource {
  */
 export class SfuClient {
   peerId = '';
+  /** Join-token userId; skip consuming this account's other devices (feedback). */
+  private localUserId = '';
 
   private ws: WebSocket | undefined;
   private device = createDevice();
@@ -131,6 +136,7 @@ export class SfuClient {
     role: SfuRole = 'speaker',
     joinToken?: string,
     sfuUrl?: string,
+    localUserId?: string,
   ): Promise<void> {
     if (!joinToken) throw new Error('join token required');
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -157,6 +163,7 @@ export class SfuClient {
 
     const joined = await this.request<JoinResult>('join', { room, name, role, token: joinToken });
     this.peerId = joined.peerId;
+    this.localUserId = localUserId ?? '';
 
     await this.device.load({ routerRtpCapabilities: joined.routerRtpCapabilities });
     this.recvTransport = await this.createTransport('recv');
@@ -262,6 +269,8 @@ export class SfuClient {
   private async consumeProducer(info: ProducerInfo): Promise<void> {
     // Never play our own published tracks back (would cause immediate feedback).
     if (info.peerId === this.peerId) return;
+    // Same account, other laptop/tab — still you. Playing it is speaker howling.
+    if (this.localUserId && info.userId === this.localUserId) return;
     if (!this.recvTransport) throw new Error('recv transport missing');
     const source = resolveSource(info);
     const data = await this.request<ConsumeResult>('consume', {
@@ -278,8 +287,15 @@ export class SfuClient {
 
     let peer = this.peers.get(info.peerId);
     if (!peer) {
-      peer = { id: info.peerId, name: info.peerName, stream: new MediaStream() };
+      peer = {
+        id: info.peerId,
+        name: info.peerName,
+        ...(info.userId ? { userId: info.userId } : {}),
+        stream: new MediaStream(),
+      };
       this.peers.set(info.peerId, peer);
+    } else if (info.userId && !peer.userId) {
+      peer.userId = info.userId;
     }
 
     if (source === 'screen') {
