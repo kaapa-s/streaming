@@ -5,7 +5,7 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import puppeteer, { type Browser } from 'puppeteer';
-import { chromeGpuArgs, detectGpu, isSwiftShaderRenderer } from './gpu';
+import { chromeGpuArgs, detectGpu, isSwiftShaderRenderer, probeGpuRendererInPage } from './gpu';
 
 interface PoolSlot {
   browser: Browser;
@@ -112,16 +112,7 @@ export class BrowserPoolService implements OnModuleInit, OnModuleDestroy {
   private async probeRenderer(browser: Browser): Promise<string> {
     const page = await browser.newPage();
     try {
-      return await page.evaluate(() => {
-        const canvas = document.createElement('canvas');
-        const gl = canvas.getContext('webgl2') ?? canvas.getContext('webgl');
-        if (!gl) return 'no-webgl';
-        const ext = gl.getExtension('WEBGL_debug_renderer_info');
-        if (!ext) return String(gl.getParameter(gl.RENDERER));
-        const vendor = String(gl.getParameter(ext.UNMASKED_VENDOR_WEBGL));
-        const renderer = String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL));
-        return `${vendor} / ${renderer}`;
-      });
+      return await page.evaluate(probeGpuRendererInPage);
     } catch (err) {
       return `probe-failed: ${String(err)}`;
     } finally {
