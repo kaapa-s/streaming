@@ -2,15 +2,18 @@ import { OnGatewayConnection, WebSocketGateway } from '@nestjs/websockets';
 import { spawn, type ChildProcess } from 'child_process';
 import { createWriteStream } from 'fs';
 import type { IncomingMessage } from 'http';
+import type { Writable } from 'stream';
 import type { WebSocket } from 'ws';
 import { SessionsService } from '../sessions/sessions.service';
 import type { SessionLog } from './session-log';
+import { buildNvencFfmpegArgs } from './nvenc';
+import { i420FrameSize, parseRawPacket } from './raw-pipe';
 import { buildFfmpegArgs, redactFfmpegArg } from './rtmp';
 import { parseRecorderCodec, STREAM_PROFILES } from '@streaming/stream-quality';
 
 /**
- * Binary sink on /ws/recording?room=X&codec=h264|vp9|vp8 — compositor streams
- * MediaRecorder chunks here. File always; RTMP via ffmpeg when live.
+ * Binary sink on /ws/recording?room=X&codec=h264|vp9|vp8|raw — compositor streams
+ * MediaRecorder chunks (or raw I420/PCM for NVENC) here. File always; RTMP via ffmpeg when live.
  */
 @WebSocketGateway({ path: '/ws/recording' })
 export class RecordingGateway implements OnGatewayConnection {
@@ -19,7 +22,9 @@ export class RecordingGateway implements OnGatewayConnection {
   handleConnection(socket: WebSocket, request: IncomingMessage): void {
     const url = new URL(request.url ?? '/', 'http://localhost');
     const room = url.searchParams.get('room') ?? 'main';
-    const codec = parseRecorderCodec(url.searchParams.get('codec'));
+    const codecParam = url.searchParams.get('codec');
+    const raw = codecParam === 'raw';
+    const codec = raw ? 'h264' : parseRecorderCodec(codecParam);
 
     let sink;
     try {
@@ -34,13 +39,25 @@ export class RecordingGateway implements OnGatewayConnection {
     const profile = STREAM_PROFILES[resolution];
     const live = rtmpUrls.length > 0;
 
-    if (live && codec !== 'h264') {
+    if (live && !raw && codec !== 'h264') {
       const msg =
         `live RTMP requires H.264 recorder output (got ${codec}) — ` +
         'refusing sink to avoid libx264 re-encode';
       console.error(`[recording] ${msg} room=${room}`);
       sessionLog?.write(msg);
       socket.close();
+      return;
+    }
+
+    if (raw) {
+      this.handleRawNvenc(socket, {
+        room,
+        file,
+        rtmpUrls,
+        sessionLog,
+        live,
+        resolution,
+      });
       return;
     }
 
@@ -105,6 +122,110 @@ export class RecordingGateway implements OnGatewayConnection {
       console.log(`[recording] finished ${file}`);
     });
   }
+
+  private handleRawNvenc(
+    socket: WebSocket,
+    opts: {
+      room: string;
+      file: string;
+      rtmpUrls: string[];
+      sessionLog: SessionLog | undefined;
+      live: boolean;
+      resolution: '1080p';
+    },
+  ): void {
+    const { room, file, rtmpUrls, sessionLog, live, resolution } = opts;
+    const profile = STREAM_PROFILES[resolution];
+    const expectedVideo = i420FrameSize(profile.width, profile.height);
+    const bin = process.env.FFMPEG_PATH ?? 'ffmpeg';
+    const args = buildNvencFfmpegArgs(profile, file, rtmpUrls);
+    const ffmpeg = spawn(bin, args, { stdio: ['pipe', 'ignore', 'pipe', 'pipe'] });
+    this.sessions.attachFfmpeg(room, ffmpeg);
+    attachFfmpegLogging(room, ffmpeg, sessionLog);
+
+    const audioIn = extraStdin(ffmpeg, 3);
+    const mode = live ? 'nvenc+aac+tee' : 'nvenc+webm';
+    const banner =
+      `NVENC ${resolution} mode=${mode} file=${file} ` +
+      `destinations=${rtmpUrls.length} @ ${profile.rtmpVideoBitrate} for room ${room}`;
+    console.log(`[recording] ${banner}`);
+    sessionLog?.write(`sink connected codec=raw resolution=${resolution} file=${file}`);
+    sessionLog?.write(banner);
+    sessionLog?.write(`ffmpeg args: ${args.map(redactFfmpegArg).join(' ')}`);
+
+    let bytesIn = 0;
+    let videoFrames = 0;
+    let audioPackets = 0;
+    let skippedVideo = 0;
+    let windowBytes = 0;
+    let windowStartedAt = Date.now();
+
+    socket.on('message', (data, isBinary) => {
+      if (!isBinary) return;
+      const buf = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
+      const packet = parseRawPacket(buf);
+      if (!packet) return;
+      bytesIn += packet.payload.length;
+      windowBytes += packet.payload.length;
+      if (packet.kind === 'video') {
+        if (packet.payload.length !== expectedVideo) {
+          skippedVideo += 1;
+          if (skippedVideo <= 3 || skippedVideo % 120 === 0) {
+            sessionLog?.write(
+              `nvenc skip video bytes=${packet.payload.length} expected=${expectedVideo} n=${skippedVideo}`,
+            );
+          }
+          return;
+        }
+        videoFrames += 1;
+        writePipe(ffmpeg.stdin, packet.payload, sessionLog, 'video');
+      } else {
+        audioPackets += 1;
+        writePipe(audioIn, packet.payload, sessionLog, 'audio');
+      }
+      const now = Date.now();
+      const elapsedMs = now - windowStartedAt;
+      if (elapsedMs >= 10_000) {
+        const kbps = ((windowBytes * 8) / (elapsedMs / 1000) / 1000).toFixed(0);
+        sessionLog?.write(
+          `nvenc ingress window_s=${(elapsedMs / 1000).toFixed(1)} ` +
+            `video_frames=${videoFrames} audio_packets=${audioPackets} ` +
+            `kbps=${kbps} total_bytes=${bytesIn}`,
+        );
+        windowBytes = 0;
+        windowStartedAt = now;
+      }
+    });
+
+    socket.on('close', () => {
+      if (ffmpeg.stdin && !ffmpeg.stdin.destroyed) ffmpeg.stdin.end();
+      if (audioIn && !audioIn.destroyed) audioIn.end();
+      sessionLog?.write(
+        `sink closed codec=raw video_frames=${videoFrames} audio_packets=${audioPackets} ` +
+          `skipped_video=${skippedVideo} total_bytes=${bytesIn}`,
+      );
+      console.log(`[recording] finished ${file} (nvenc)`);
+    });
+  }
+}
+
+function extraStdin(child: ChildProcess, fd: number): Writable | undefined {
+  const stream = child.stdio[fd];
+  if (stream && typeof stream === 'object' && 'write' in stream) {
+    return stream as Writable;
+  }
+  return undefined;
+}
+
+function writePipe(
+  dest: Writable | null | undefined,
+  payload: Buffer,
+  sessionLog: SessionLog | undefined,
+  label: string,
+): void {
+  if (!dest || dest.destroyed) return;
+  const ok = dest.write(payload);
+  if (!ok) sessionLog?.write(`ffmpeg ${label} backpressure (write returned false)`);
 }
 
 function attachFfmpegLogging(

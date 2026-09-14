@@ -1,7 +1,9 @@
 export {};
 
 declare global {
-  var __startRecording: ((opts?: { requireH264?: boolean }) => Promise<void>) | undefined;
+  var __startRecording:
+    | ((opts?: { requireH264?: boolean; encode?: 'nvenc' | 'mediarecorder' }) => Promise<void>)
+    | undefined;
   var __stopRecording: (() => Promise<void>) | undefined;
   var __setOverlay:
     | ((overlay: { author: string; text: string; until?: number }) => void)

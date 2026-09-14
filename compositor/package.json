@@ -9,6 +9,7 @@
     "start": "node dist/main.js",
     "typecheck": "tsc --noEmit",
     "test": "node --require ts-node/register --test src/recordings/*.spec.ts src/browser/*.spec.ts",
+    "probe:gpu": "ts-node --transpile-only src/browser/probe-local-gpu.ts",
     "lint": "oxlint src"
   },
   "dependencies": {

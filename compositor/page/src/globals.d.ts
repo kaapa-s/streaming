@@ -2,6 +2,7 @@ export {};
 
 export interface StartRecordingOptions {
   requireH264?: boolean;
+  encode?: 'nvenc' | 'mediarecorder';
 }
 
 export interface CommentOverlayPayload {

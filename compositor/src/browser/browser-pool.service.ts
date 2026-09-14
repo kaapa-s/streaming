@@ -6,16 +6,20 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import puppeteer, { type Browser } from 'puppeteer';
+import { detectNvenc } from '../recordings/nvenc';
 import {
+  assertHardwareGpuCompositing,
   assertHardwareGpuRenderer,
-  chromeGpuArgs,
   detectGpu,
-  hardwareGpuRequiredError,
   isSoftwareGpuRenderer,
   probeGpuRendererInPage,
   summarizeChromeGpuPage,
   type ChromeGpuBackend,
+  type GpuEncodeMode,
+  type GpuFeatureStatus,
 } from './gpu';
+import { probeGpuFeatureStatus } from './gpu-cdp';
+import { compositorChromeLaunchOptions } from './launch-options';
 
 interface PoolSlot {
   browser: Browser;
@@ -29,12 +33,17 @@ export class BrowserPoolService implements OnModuleInit, OnModuleDestroy {
   private gpuRenderer: string | undefined;
   private gpuBackend: ChromeGpuBackend = 'gl';
   private gpuPageSummary: string | undefined;
+  private gpuFeatureStatus: GpuFeatureStatus | undefined;
+  private gpuEncode: GpuEncodeMode = 'mediarecorder';
 
   gpuStatus(): {
     enabled: boolean;
     reason: string;
     renderer?: string;
     backend?: ChromeGpuBackend;
+    compositing?: string;
+    featureStatus?: GpuFeatureStatus;
+    encode: GpuEncodeMode;
     chromeGpu?: string;
   } {
     const detection = detectGpu();
@@ -42,6 +51,9 @@ export class BrowserPoolService implements OnModuleInit, OnModuleDestroy {
       ...detection,
       renderer: this.gpuRenderer,
       backend: this.gpuBackend,
+      compositing: this.gpuFeatureStatus?.gpu_compositing,
+      featureStatus: this.gpuFeatureStatus,
+      encode: this.gpuEncode,
       chromeGpu: this.gpuPageSummary,
     };
   }
@@ -49,13 +61,17 @@ export class BrowserPoolService implements OnModuleInit, OnModuleDestroy {
   async onModuleInit(): Promise<void> {
     const size = Math.max(1, Number(process.env.COMPOSITOR_POOL_SIZE ?? 1) || 1);
     const gpu = detectGpu();
-    this.logger.log(`warming Chromium pool size=${size} gpu=${gpu.enabled} (${gpu.reason})`);
+    this.gpuEncode = detectNvenc(gpu) ? 'nvenc' : 'mediarecorder';
+    this.logger.log(
+      `warming Chromium pool size=${size} gpu=${gpu.enabled} (${gpu.reason}) encode=${this.gpuEncode}`,
+    );
     for (let i = 0; i < size; i++) {
       const browser = await this.launchBrowser();
       this.slots.push({ browser, busy: false });
     }
     this.logger.log(
-      `Chromium pool ready (${this.slots.length} browsers) renderer=${this.gpuRenderer ?? 'unknown'}`,
+      `Chromium pool ready (${this.slots.length} browsers) renderer=${this.gpuRenderer ?? 'unknown'} ` +
+        `compositing=${this.gpuFeatureStatus?.gpu_compositing ?? 'n/a'} encode=${this.gpuEncode}`,
     );
   }
 
@@ -111,15 +127,17 @@ export class BrowserPoolService implements OnModuleInit, OnModuleDestroy {
     const first = await this.tryLaunchWithBackend(preferred, true);
     if (first) {
       const firstRenderer = await this.probeRenderer(first);
-      if (!isSoftwareGpuRenderer(firstRenderer)) {
-        return this.acceptGpuBrowser(first, gpu, preferred, firstRenderer);
-      }
-      await first.close().catch(() => undefined);
       if (preferred === 'vulkan') {
-        throw hardwareGpuRequiredError(gpu, firstRenderer, 'vulkan');
+        return this.acceptGpuBrowser(first, gpu, 'vulkan', firstRenderer);
+      }
+      if (!isSoftwareGpuRenderer(firstRenderer)) {
+        const accepted = await this.tryAcceptGpuBrowser(first, gpu, preferred, firstRenderer);
+        if (accepted) return accepted;
+      } else {
+        await first.close().catch(() => undefined);
       }
       this.logger.warn(
-        `ANGLE GL is ${firstRenderer}; retrying Chromium with Vulkan (typical on Tesla/headless NVIDIA)`,
+        `ANGLE GL is ${firstRenderer} (or software compositing); retrying Chromium with Vulkan`,
       );
     } else if (preferred === 'vulkan') {
       throw new Error(`Chromium Vulkan launch failed (${gpu.reason})`);
@@ -144,6 +162,22 @@ export class BrowserPoolService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  private async tryAcceptGpuBrowser(
+    browser: Browser,
+    gpu: { enabled: boolean; reason: string },
+    backend: ChromeGpuBackend,
+    renderer: string,
+  ): Promise<Browser | undefined> {
+    try {
+      await this.captureGpuDiagnostics(browser, gpu, backend, renderer);
+      return browser;
+    } catch (err) {
+      this.logger.warn(`ANGLE ${backend} rejected: ${String(err)}`);
+      await browser.close().catch(() => undefined);
+      return undefined;
+    }
+  }
+
   private async acceptGpuBrowser(
     browser: Browser,
     gpu: { enabled: boolean; reason: string },
@@ -160,30 +194,7 @@ export class BrowserPoolService implements OnModuleInit, OnModuleDestroy {
   }
 
   private launchWithBackend(backend: ChromeGpuBackend, gpuEnabled: boolean): Promise<Browser> {
-    return puppeteer.launch({
-      timeout: 30_000,
-      // Puppeteer adds --mute-audio by default. That zeroes the Web Audio graph
-      // the recorder mixes into MediaRecorder — YouTube/RTMP gets video, no audio.
-      // Studio feedback is unaffected (client-side video-only tiles).
-      // Only drop --disable-gpu when we actually want the host GPU. Leaving it
-      // ignored on CPU boxes makes headless Chrome try (and sometimes crash) GPU init.
-      ignoreDefaultArgs: gpuEnabled ? ['--mute-audio', '--disable-gpu'] : ['--mute-audio'],
-      args: [
-        '--no-sandbox',
-        '--autoplay-policy=no-user-gesture-required',
-        '--use-fake-ui-for-media-stream',
-        // Headless tabs are treated as backgrounded; throttling the compositor
-        // draw/audio graph produces the same crackles as a starved main thread.
-        '--disable-background-timer-throttling',
-        '--disable-renderer-backgrounding',
-        '--disable-backgrounding-occluded-windows',
-        ...chromeGpuArgs(gpuEnabled, backend),
-        // Local SFU may use HTTPS/WSS with a self-signed or mkcert cert.
-        ...(process.env.NODE_ENV !== 'production'
-          ? ['--ignore-certificate-errors']
-          : []),
-      ],
-    });
+    return puppeteer.launch(compositorChromeLaunchOptions(gpuEnabled, backend));
   }
 
   private async captureGpuDiagnostics(
@@ -192,11 +203,18 @@ export class BrowserPoolService implements OnModuleInit, OnModuleDestroy {
     backend: ChromeGpuBackend,
     renderer?: string,
   ): Promise<void> {
-    this.gpuBackend = backend;
-    this.gpuRenderer = renderer ?? (await this.probeRenderer(browser));
+    const resolvedRenderer = renderer ?? (await this.probeRenderer(browser));
+    const featureStatus = await probeGpuFeatureStatus(browser);
     this.gpuPageSummary = await this.probeChromeGpuPage(browser);
-    assertHardwareGpuRenderer(gpu, this.gpuRenderer, backend);
-    this.logger.log(`Chromium GPU renderer: ${this.gpuRenderer} (ANGLE ${backend})`);
+    assertHardwareGpuRenderer(gpu, resolvedRenderer, backend);
+    assertHardwareGpuCompositing(gpu, backend, featureStatus);
+    this.gpuBackend = backend;
+    this.gpuRenderer = resolvedRenderer;
+    this.gpuFeatureStatus = featureStatus;
+    this.logger.log(
+      `Chromium GPU renderer: ${resolvedRenderer} (ANGLE ${backend}) ` +
+        `compositing=${featureStatus.gpu_compositing ?? 'unknown'}`,
+    );
     if (this.gpuPageSummary) {
       this.logger.log(`chrome://gpu ${this.gpuPageSummary}`);
     }

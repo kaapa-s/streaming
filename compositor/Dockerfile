@@ -34,14 +34,18 @@ WORKDIR /app/compositor
 ENV NODE_ENV=production \
     PUPPETEER_SKIP_DOWNLOAD=true \
     PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
+    FFMPEG_PATH=/opt/ffmpeg/bin/ffmpeg
 
 # Tiny COPY so BuildKit cannot start chromium apt until `build` finished.
 COPY --from=build /app/compositor/package.json /tmp/build-sentinel
 
+# Debian ffmpeg is built without NVENC. BtbN gpl includes h264_nvenc + libx264 + openssl (RTMPS).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \
-    ffmpeg \
+    ca-certificates \
+    curl \
+    xz-utils \
     fonts-liberation \
     libatk-bridge2.0-0 \
     libgtk-3-0 \
@@ -56,6 +60,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libva2 \
     libva-drm2 \
     libvulkan1 \
+  && curl -fsSL -o /tmp/ffmpeg.tar.xz \
+    "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz" \
+  && mkdir -p /opt/ffmpeg \
+  && tar -xJf /tmp/ffmpeg.tar.xz -C /opt/ffmpeg --strip-components=1 \
+  && ln -sf /opt/ffmpeg/bin/ffmpeg /usr/local/bin/ffmpeg \
+  && ln -sf /opt/ffmpeg/bin/ffprobe /usr/local/bin/ffprobe \
+  && /opt/ffmpeg/bin/ffmpeg -hide_banner -encoders | grep -q h264_nvenc \
+  && rm -f /tmp/ffmpeg.tar.xz \
   && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/build-sentinel
 
 COPY --from=build /app/compositor/node_modules ./node_modules

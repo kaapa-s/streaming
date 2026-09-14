@@ -47,11 +47,21 @@ export type ChromeGpuBackend = 'gl' | 'vulkan';
 export function chromeGpuArgs(
   enabled: boolean,
   backend: ChromeGpuBackend = 'gl',
+  platform: NodeJS.Platform = process.platform,
 ): string[] {
   if (!enabled) return [];
+  // macOS: default Metal. NVIDIA ANGLE/Vulkan flags crash or disable the GPU process.
+  if (platform === 'darwin') {
+    return [
+      '--enable-gpu',
+      '--ignore-gpu-blocklist',
+      '--enable-gpu-rasterization',
+      '--enable-accelerated-2d-canvas',
+    ];
+  }
   const angle =
     backend === 'vulkan'
-      ? ['--use-gl=angle', '--use-angle=vulkan', '--disable-vulkan-surface']
+      ? ['--use-gl=angle', '--use-angle=vulkan']
       : ['--use-gl=angle', '--use-angle=gl'];
   // Canvas/raster only. VAAPI (and LIBVA_DRIVER_NAME=nvidia) is an Intel/AMD
   // path — on Tesla it can crash MediaRecorder and fail go-live with 503.
@@ -103,6 +113,43 @@ export function assertHardwareGpuRenderer(
   if (isSoftwareGpuRenderer(renderer)) {
     throw hardwareGpuRequiredError(gpu, renderer, backend);
   }
+}
+
+export type GpuEncodeMode = 'nvenc' | 'mediarecorder';
+
+/** CDP `SystemInfo.getInfo` gpu.featureStatus (chrome://gpu Feature Status). */
+export type GpuFeatureStatus = Record<string, string>;
+
+export function isGpuCompositingEnabled(status: string | undefined): boolean {
+  return typeof status === 'string' && status.startsWith('enabled');
+}
+
+export function softwareCompositingError(
+  gpu: GpuDetection,
+  backend: ChromeGpuBackend,
+  compositing: string | undefined,
+): Error {
+  return new Error(
+    `Chromium gpu_compositing=${compositing ?? 'unknown'} (${gpu.reason}, ANGLE ${backend}). ` +
+      'Need enabled (not disabled_software). Drop --disable-vulkan-surface; ' +
+      'do not add Xvfb unless this still fails on the Tesla.',
+  );
+}
+
+export function assertHardwareGpuCompositing(
+  gpu: GpuDetection,
+  backend: ChromeGpuBackend,
+  featureStatus: GpuFeatureStatus,
+): void {
+  if (!gpu.enabled) return;
+  const compositing = featureStatus.gpu_compositing;
+  if (isGpuCompositingEnabled(compositing)) return;
+  if (featureStatus.probe_error) {
+    throw new Error(
+      `Chromium GPU compositing probe failed (${gpu.reason}, ANGLE ${backend}): ${featureStatus.probe_error}`,
+    );
+  }
+  throw softwareCompositingError(gpu, backend, compositing);
 }
 
 interface PageCanvas {

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createCompositor } from '@streaming/canvas-compositor';
 import { SfuClient } from '@streaming/sfu-client';
 import { parseResolution, pickRecorderFormat, STREAM_PROFILES } from '@streaming/stream-quality';
+import { startNvencPipe } from './nvenc-pipe';
 
 /**
  * Hidden recorder page, loaded by the compositor service's headless Chromium.
@@ -57,9 +58,13 @@ export function CompositorPage() {
 
       let recorder: MediaRecorder | undefined;
       let ws: WebSocket | undefined;
+      let nvencPipe: { stop: () => void } | undefined;
 
-      window.__startRecording = async (opts?: { requireH264?: boolean }) => {
+      window.__startRecording = async (opts?: { requireH264?: boolean; encode?: 'nvenc' | 'mediarecorder' }) => {
         if (recorder && recorder.state !== 'inactive') {
+          throw new Error('already recording');
+        }
+        if (nvencPipe) {
           throw new Error('already recording');
         }
         const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -68,9 +73,12 @@ export function CompositorPage() {
           `${proto}//${location.host}/ws/recording` +
             `?room=${encodeURIComponent(room)}`;
 
-        const { mimeType, codec } = pickRecorderFormat({
-          requireH264: opts?.requireH264,
-        });
+        const useNvenc = opts?.encode === 'nvenc';
+        const { mimeType, codec } = useNvenc
+          ? { mimeType: 'raw/i420', codec: 'raw' as const }
+          : pickRecorderFormat({
+              requireH264: opts?.requireH264,
+            });
         const sinkWithCodec = sinkUrl.includes('?')
           ? `${sinkUrl}&codec=${encodeURIComponent(codec)}`
           : `${sinkUrl}?room=${encodeURIComponent(room)}&codec=${encodeURIComponent(codec)}`;
@@ -86,6 +94,17 @@ export function CompositorPage() {
         const audioTracks = compositor.stream.getAudioTracks();
         if (audioTracks.length === 0) {
           console.error('[compositor] output stream has no audio track — RTMP will be silent');
+        }
+
+        if (useNvenc) {
+          nvencPipe = startNvencPipe(compositor.stream, ws);
+          setStatus(`recording room "${room}" @ ${resolution} (nvenc raw)`);
+          console.log(
+            `[compositor] recording started for room ${room} @ ${resolution} ` +
+              `${profile.width}x${profile.height} encode=nvenc codec=raw ` +
+              `audioTracks=${audioTracks.length}`,
+          );
+          return;
         }
 
         recorder = new MediaRecorder(compositor.stream, {
@@ -108,6 +127,8 @@ export function CompositorPage() {
       window.__stopRecording = () =>
         new Promise<void>((resolve) => {
           const finish = () => {
+            nvencPipe?.stop();
+            nvencPipe = undefined;
             setTimeout(() => {
               ws?.close();
               ws = undefined;
@@ -117,6 +138,10 @@ export function CompositorPage() {
               resolve();
             }, 300);
           };
+          if (nvencPipe && (!recorder || recorder.state === 'inactive')) {
+            finish();
+            return;
+          }
           if (!recorder || recorder.state === 'inactive') {
             finish();
             return;

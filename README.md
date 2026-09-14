@@ -137,7 +137,8 @@ iterate on layout without mediasoup or the Nest server.
 - `RECORDING_SINK_URL` — MediaRecorder WebSocket (local `ws://127.0.0.1:3002/ws/recording`)
 - `SFU_PUBLIC_WS_URL` — SFU signaling for the headless page (local `ws://localhost:3001/ws/signaling`)
 - `FFMPEG_PATH` — optional
-- `COMPOSITOR_GPU` — `1` force GPU Chromium flags, `0` force CPU. Unset autodectects `/dev/nvidia0` or `/dev/dri`. Production Docker needs `compose.gpu.yml` so those devices exist.
+- `COMPOSITOR_GPU` — `1` force GPU Chromium flags, `0` force CPU. Unset autodectects `/dev/nvidia0` or `/dev/dri`. Production Docker needs `compose.gpu.yml` so those devices exist. Local Mac: set `1` and run `./scripts/verify-compositor-gpu-local.sh` (headed Chrome, Apple GPU compositing).
+- `COMPOSITOR_NVENC` — `0` forces Chrome MediaRecorder even if ffmpeg has `h264_nvenc`.
 
 **sfu** (`sfu/.env`)
 
@@ -286,6 +287,6 @@ into `recordings/diagnostics/host-stats.log`.
 - **ACME / cert issue fails:** TXT `_acme-challenge.<domain>` propagated before Enter
 - **Nginx won't start (missing cert):** `./scripts/issue-cert.sh web|sfu|compositor`, then deploy
 - **Choppy YouTube A/V:** undersized compositor instance; check session + host-stats logs
-- **GPU at 0% / compositor CPU pegged:** Chrome is on SwiftShader. Run `./scripts/verify-compositor-gpu.sh` on the compositor box. Host needs NVIDIA driver + [nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html), then `./scripts/deploy.sh compositor` (loads `compose.gpu.yml`). Confirm logs show `Chromium GPU renderer: NVIDIA …` not `SwiftShader`. MediaRecorder H.264 is still a Chrome software encode — GPU takes canvas raster + video decode.
+- **GPU at 0% / compositor CPU pegged:** Chromium is not compositing on the GPU. Run `./scripts/verify-compositor-gpu.sh` on the compositor box (or `./scripts/verify-compositor-gpu-local.sh` on a Mac). Host needs NVIDIA driver + [nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html), then `./scripts/deploy.sh compositor` (loads `compose.gpu.yml`). Confirm health `gpu.compositing` starts with `enabled` and renderer is NVIDIA, not SwiftShader. `--disable-vulkan-surface` forces software compositing even when the probe shows NVIDIA. Live H.264 is ffmpeg `h264_nvenc` when `gpu.encode=nvenc`; otherwise Chrome MediaRecorder (CPU) → ffmpeg copy.
 - **Compositor `deploy.sh` hang / host freeze during build:** BuildKit was racing Chromium apt with the Node build stage; pull latest Dockerfile (sentinel serializes them). Check `free -h` / `df -h` — compositor wants ≥4GB RAM; an 8GB disk is enough for rebuilds once leftover `.webm` files are gone (first Chromium image build is tighter)
 - **`No space left on device` during compositor build:** Chromium+ffmpeg image is large. `deploy.sh` prunes build cache / unused images (without `--volumes`, so certs/recordings survive), then sweeps leftover `*.webm` (keeping session logs and diagnostics) before building while the old stack is still up, then swaps and prunes again. After S3 success, local files are renamed `*.uploaded.webm` and deleted immediately. Rebuilds abort only if less than ~1GB is free; expand EBS if a first-time Chromium build still fills the disk

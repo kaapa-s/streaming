@@ -137,24 +137,35 @@ else
 fi
 
 section "6. Chromium command line"
+# Convert /proc cmdline NULs to spaces in the container, then again on the host
+# so bash command substitution does not warn about leftover null bytes.
 CMDLINES="$("${COMPOSE[@]}" exec -T compositor sh -c '
   found=0
   for f in /proc/[0-9]*/cmdline; do
-    cmd=$(tr "\0" " " < "$f" 2>/dev/null) || continue
-    case "$cmd" in
-      *chrom*) echo "$cmd"; found=1 ;;
+    cmd=$(tr "\000" " " < "$f" 2>/dev/null) || continue
+    exe=${cmd%% *}
+    case "$exe" in
+      */chromium|*/chromium-browser|*/chrome|*/google-chrome)
+        echo "$cmd"
+        found=1
+        ;;
     esac
   done
   [ "$found" = 1 ] || echo "(no chromium process — pool not started?)"
-' 2>/dev/null || echo "(exec failed)")"
+' 2>/dev/null | tr "\000" " " || echo "(exec failed)")"
 echo "$CMDLINES" | fold -s -w 120 | sed 's/^/        /'
 if echo "$CMDLINES" | grep -qi chrom; then
   pass "Chromium is running"
 else
   warn "no Chromium process (container up but pool not launched)"
 fi
-if echo "$CMDLINES" | grep -q -- '--disable-gpu'; then
+# Exact argv token. `grep --disable-gpu` also matches --disable-gpu-sandbox
+# (which we set on purpose) and Chromium's own --disable-gpu-compositing on
+# some utility renderers.
+if echo "$CMDLINES" | grep -Eq '(^|[[:space:]])--disable-gpu([[:space:]]|$)'; then
   fail "Chromium args include --disable-gpu"
+elif echo "$CMDLINES" | grep -qi chrom; then
+  pass "Chromium args do not include --disable-gpu"
 fi
 if echo "$CMDLINES" | grep -q -- '--enable-gpu'; then
   pass "Chromium args include --enable-gpu"
@@ -163,6 +174,14 @@ elif echo "$CMDLINES" | grep -qi chrom; then
 fi
 if echo "$CMDLINES" | grep -q -- '--use-angle'; then
   pass "Chromium args include --use-angle"
+fi
+if echo "$CMDLINES" | grep -q -- '--disable-vulkan-surface'; then
+  fail "Chromium args include --disable-vulkan-surface (forces readback compositing)"
+elif echo "$CMDLINES" | grep -qi chrom; then
+  pass "Chromium args do not include --disable-vulkan-surface"
+fi
+if echo "$CMDLINES" | grep -q -- '--disable-gpu-compositing'; then
+  fail "a Chromium process has --disable-gpu-compositing (software compositor)"
 fi
 
 section "7. Compositor logs (renderer)"
@@ -200,6 +219,20 @@ if [[ -n "$HEALTH" ]]; then
   else
     warn "health has no gpu field (old image)"
   fi
+  if echo "$HEALTH" | grep -q '"compositing":"disabled_software"'; then
+    fail "health.gpu.compositing is disabled_software"
+  elif echo "$HEALTH" | grep -q '"compositing":"enabled'; then
+    pass "health.gpu.compositing is enabled"
+  elif echo "$HEALTH" | grep -q '"compositing"'; then
+    warn "health.gpu.compositing is not enabled"
+  else
+    warn "health has no gpu.compositing (old image)"
+  fi
+  if echo "$HEALTH" | grep -q '"encode":"nvenc"'; then
+    pass "health.gpu.encode is nvenc"
+  elif echo "$HEALTH" | grep -q '"encode":"mediarecorder"'; then
+    warn "health.gpu.encode is mediarecorder (NVENC ffmpeg missing, or COMPOSITOR_NVENC=0)"
+  fi
 else
   warn "could not read /internal/health"
 fi
@@ -215,6 +248,12 @@ if command -v nvidia-smi >/dev/null 2>&1; then
     warn "no Chromium in nvidia-smi process list"
     note "if a session is live and this is empty, Chrome is not on the GPU"
     note "if nobody is in studio, 0% / empty process list is expected"
+  fi
+  ENC="$(nvidia-smi --query-gpu=utilization.encoder --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' ' || true)"
+  if [[ -n "$ENC" && "$ENC" != "0" && "$ENC" != "[N/A]" ]]; then
+    pass "nvidia-smi encoder utilization is ${ENC}%"
+  else
+    note "encoder % is 0 unless a session is live on the NVENC path (health.gpu.encode=nvenc)"
   fi
 fi
 

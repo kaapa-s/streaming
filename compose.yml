@@ -150,6 +150,7 @@ services:
       RECORDING_SINK_URL: ws://127.0.0.1:3002/ws/recording
       PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
       PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "true"
+      FFMPEG_PATH: /opt/ffmpeg/bin/ffmpeg
     volumes:
       - recordings:/app/compositor/recordings
     shm_size: "512m"

@@ -221,7 +221,8 @@ export class SessionsService {
     const resolution = parseResolution(opts.resolution ?? entry?.resolution);
     const normalized = collectRtmpUrls(opts).map((url) => normalizeRtmpUrl(url));
     const live = normalized.length > 0;
-    if (live) assertFfmpegAvailable();
+    const gpu = this.pool.gpuStatus();
+    if (live || gpu.encode === 'nvenc') assertFfmpegAvailable();
 
     if (!entry) {
       if (!opts.token) {
@@ -250,14 +251,14 @@ export class SessionsService {
 
     const stamp = sessionStamp();
     const sessionLog = new SessionLog(this.dir, room, stamp);
-    const gpu = this.pool.gpuStatus();
     sessionLog.write(
       `go-live room=${room} resolution=${resolution} ` +
         `live=${live} rtmp=${live ? normalized.map(redactRtmp).join(',') : 'none'} ` +
         `profile=${STREAM_PROFILES[resolution].width}x${STREAM_PROFILES[resolution].height}`,
     );
     sessionLog.write(
-      `gpu enabled=${gpu.enabled} reason=${gpu.reason} renderer=${gpu.renderer ?? 'unknown'}`,
+      `gpu enabled=${gpu.enabled} reason=${gpu.reason} renderer=${gpu.renderer ?? 'unknown'} ` +
+        `compositing=${gpu.compositing ?? 'n/a'} encode=${gpu.encode} backend=${gpu.backend ?? 'n/a'}`,
     );
 
     entry.state = 'recording';
@@ -268,11 +269,14 @@ export class SessionsService {
     entry.file = undefined;
 
     try {
-      await entry.page.evaluate(async (requireH264: boolean) => {
-        const start = globalThis.__startRecording;
-        if (!start) throw new Error('__startRecording not available');
-        await start({ requireH264 });
-      }, live);
+      await entry.page.evaluate(
+        async (opts: { requireH264: boolean; encode: 'nvenc' | 'mediarecorder' }) => {
+          const start = globalThis.__startRecording;
+          if (!start) throw new Error('__startRecording not available');
+          await start(opts);
+        },
+        { requireH264: live, encode: gpu.encode },
+      );
       await this.writeSceneSnapshot(entry);
     } catch (err) {
       entry.state = 'warm';
