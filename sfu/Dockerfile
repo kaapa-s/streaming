@@ -19,7 +19,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 COPY shared/join-token /app/shared/join-token
-RUN cd /app/shared/join-token && npm ci && npm run build
+COPY shared/stream-quality /app/shared/stream-quality
+RUN cd /app/shared/join-token && npm ci && npm run build \
+  && cd /app/shared/stream-quality && npm ci && npm run build
 
 COPY sfu/package.json sfu/package-lock.json /app/sfu/
 WORKDIR /app/sfu
@@ -41,6 +43,7 @@ WORKDIR /app/sfu
 COPY --from=build /app/sfu/node_modules ./node_modules
 COPY --from=build /app/sfu/dist ./dist
 COPY --from=build /app/shared/join-token /app/shared/join-token
+COPY --from=build /app/shared/stream-quality /app/shared/stream-quality
 EXPOSE 3001
 EXPOSE 40000-40100/udp
 EXPOSE 40000-40100/tcp
