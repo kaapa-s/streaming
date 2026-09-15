@@ -3,11 +3,7 @@ import type { RemotePeer } from '@streaming/sfu-client';
 import { createRemoteAudioPlayer, type RemoteAudioPlayer } from '../lib/remoteAudio';
 
 /** Plays remote mics only — never pass the local stream (feedback loop). */
-export function useRemoteAudio(
-  joined: boolean,
-  remotePeers: RemotePeer[],
-  localPeerId: string | null,
-) {
+export function useRemoteAudio(joined: boolean, remotePeers: RemotePeer[]) {
   const remoteAudioRef = useRef<RemoteAudioPlayer | null>(null);
 
   useEffect(() => {
@@ -18,8 +14,14 @@ export function useRemoteAudio(
     }
     const player = remoteAudioRef.current ?? createRemoteAudioPlayer();
     remoteAudioRef.current = player;
-    player.setPeers(remotePeers.filter((peer) => peer.id !== localPeerId));
-  }, [joined, remotePeers, localPeerId]);
+    // Diagnostics: if a peer is missing here (or shows 0 audio tracks) the problem is
+    // upstream in signaling/consume, not the playback. See also '[sfu] consume failed'.
+    console.debug(
+      '[remote-audio] playing',
+      remotePeers.map((p) => `${p.name}#${p.id.slice(0, 8)}:${p.stream.getAudioTracks().length}`),
+    );
+    player.setPeers(remotePeers);
+  }, [joined, remotePeers]);
 
   useEffect(() => {
     return () => {

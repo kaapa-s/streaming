@@ -10,7 +10,6 @@ type MediaSource = 'camera' | 'screen';
 
 interface Peer {
   id: string;
-  userId: string;
   name: string;
   role: PeerRole;
   room: string;
@@ -83,11 +82,7 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
   handleDisconnect(socket: WebSocket): void {
     const peer = this.peers.get(socket);
     if (!peer) return;
-    this.dropPeer(peer);
-  }
-
-  private dropPeer(peer: Peer, reason?: string): void {
-    if (!this.peers.delete(peer.socket)) return;
+    this.peers.delete(socket);
 
     for (const transport of peer.transports.values()) transport.close();
 
@@ -97,11 +92,7 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
       if (room.size === 0) this.rooms.delete(peer.room);
       else this.broadcast(peer.room, peer, 'peerLeft', { peerId: peer.id });
     }
-    if (peer.socket.readyState === peer.socket.OPEN) peer.socket.close();
-    console.log(
-      `[signaling] ${peer.name} (${peer.id}) left room ${peer.room}` +
-        (reason ? ` — ${reason}` : ''),
-    );
+    console.log(`[signaling] ${peer.name} (${peer.id}) left room ${peer.room}`);
   }
 
   private async handleRequest(socket: WebSocket, msg: RequestMessage): Promise<unknown> {
@@ -122,20 +113,8 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
       }
       const router = await this.mediasoup.getRouter(room);
 
-      // One speaker per user per room. A second tab / HMR remount publishes
-      // the same mic under a new peerId; other clients treat it as remote and
-      // play it — instant feedback (you hear yourself typing).
-      if (role === 'speaker') {
-        for (const prev of [...(this.rooms.get(room) ?? [])]) {
-          if (prev.role !== 'speaker' || prev.userId !== claims.userId) continue;
-          if (prev.socket === socket) continue;
-          this.dropPeer(prev, 'replaced by new speaker session');
-        }
-      }
-
       const peer: Peer = {
         id: randomUUID(),
-        userId: claims.userId,
         name,
         role,
         room,
@@ -197,6 +176,10 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
           peer.producers.delete(producer.id);
         });
         this.broadcast(peer.room, peer, 'newProducer', producerInfo(peer, producer));
+        console.log(
+          `[signaling] ${peer.name} (${peer.id}) produced ${producer.kind}/${resolveMediaSource(data.appData)} ` +
+            `producer=${producer.id} in room ${peer.room}`,
+        );
         return { id: producer.id };
       }
 
@@ -224,6 +207,10 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
           paused: true,
         });
         peer.consumers.set(consumer.id, consumer);
+        console.log(
+          `[signaling] ${peer.name} (${peer.id}) consuming producer=${producerId} ` +
+            `consumer=${consumer.id} in room ${peer.room}`,
+        );
         consumer.on('producerclose', () => {
           peer.consumers.delete(consumer.id);
           this.send(peer.socket, { event: 'consumerClosed', data: { consumerId: consumer.id } });
