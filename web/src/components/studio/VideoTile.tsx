@@ -9,6 +9,7 @@ export function VideoTile({
   selected,
   onSelect,
   onRemove,
+  removeTitle = 'Remove',
 }: {
   stream: MediaStream;
   label: string;
@@ -16,6 +17,7 @@ export function VideoTile({
   selected?: boolean;
   onSelect?: () => void;
   onRemove?: () => void;
+  removeTitle?: string;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -81,8 +83,8 @@ export function VideoTile({
         <button
           type="button"
           onClick={onRemove}
-          aria-label={`Remove ${label}`}
-          title="Remove"
+          aria-label={`${removeTitle} — ${label}`}
+          title={removeTitle}
           className="absolute top-1.5 right-1.5 z-10 flex size-6 items-center justify-center rounded-md bg-black/70 text-white hover:bg-black"
         >
           <X size={14} strokeWidth={2} />

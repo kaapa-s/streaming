@@ -16,6 +16,8 @@ type SceneStripProps = {
   featuredId: string | null;
   sceneScreenIds: string[];
   canEditLayout: boolean;
+  /** Owner only — removes someone from the room for good. */
+  onRemovePeer?: (userId: string) => void;
   onCameraPreset: (preset: CameraPreset) => void;
   onFeature: (sourceId: string) => void;
   onToggleSceneScreen: (sourceId: string) => void;
@@ -33,6 +35,7 @@ export function SceneStrip({
   featuredId,
   sceneScreenIds,
   canEditLayout,
+  onRemovePeer,
   onCameraPreset,
   onFeature,
   onToggleSceneScreen,
@@ -97,6 +100,7 @@ export function SceneStrip({
             )}
             {remotePeers.map((peer) => {
               const cameraId = sourceId(peer.id, 'camera');
+              const userId = peer.userId;
               return (
                 <VideoTile
                   key={peer.id}
@@ -104,6 +108,16 @@ export function SceneStrip({
                   label={peer.name}
                   selected={featuredId === cameraId}
                   onSelect={canEditLayout ? () => onFeature(cameraId) : undefined}
+                  onRemove={
+                    onRemovePeer && userId
+                      ? () => {
+                          if (window.confirm(`Remove ${peer.name} from this room?`)) {
+                            onRemovePeer(userId);
+                          }
+                        }
+                      : undefined
+                  }
+                  removeTitle="Remove from room"
                 />
               );
             })}

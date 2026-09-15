@@ -33,6 +33,15 @@ export type StudioValue = {
   join: () => Promise<void>;
   leave: () => Promise<void>;
   roomRole: 'owner' | 'speaker' | 'viewer' | null;
+  /** null on the auth shell, where no room is in scope. */
+  roomSlug: string | null;
+  roomTitle: string;
+  /** Set when the host removed you or ended the stream; holds the reason. */
+  removedFromRoom: string | null;
+  clearRemovedFromRoom: () => void;
+  kickUser: (userId: string) => void;
+  endStream: () => Promise<void>;
+  endPending: boolean;
   localPeerId: string | null;
   localStream: MediaStream | null;
   localScreenStream: MediaStream | null;

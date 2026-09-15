@@ -1,12 +1,11 @@
-import { IsArray, IsIn, IsString, Matches, MinLength, ValidateIf } from 'class-validator';
+import { IsArray, IsIn, IsString, MaxLength, MinLength, ValidateIf } from 'class-validator';
 
 export class CreateRoomDto {
+  /** Human name only — the slug is server-minted so the invite link stays unguessable. */
   @IsString()
   @MinLength(1)
-  @Matches(/^[a-zA-Z0-9_-]+$/, {
-    message: 'slug must be alphanumeric, hyphen, or underscore',
-  })
-  declare slug: string;
+  @MaxLength(80)
+  declare title: string;
 }
 
 export class SetLayoutDto {

@@ -9,7 +9,8 @@ const queryClient = new QueryClient();
 
 const router = createRouter({
   routeTree,
-  context: { queryClient },
+  // studioHandle is filled in by the nearest studio layout route.
+  context: { queryClient, studioHandle: undefined },
 });
 
 declare module '@tanstack/react-router' {

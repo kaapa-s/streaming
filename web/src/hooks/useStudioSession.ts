@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { SfuClient, type RemotePeer } from '@streaming/sfu-client';
-import { clearSession, joinRoom, type AuthUser } from '../lib/auth';
+import { clearSession, type AuthUser } from '../lib/auth';
+import { joinRoom, removeMember } from '../lib/rooms';
 import { useAsyncAction } from './useAsyncAction';
 
 type UseStudioSessionArgs = {
   user: AuthUser | null;
-  room: string;
+  /** null on the auth shell, where there is no room to join. */
+  room: string | null;
   setError: (message: string) => void;
   onUnauthorized: () => void;
 };
@@ -24,8 +26,12 @@ export function useStudioSession({
   const [localScreenStream, setLocalScreenStream] = useState<MediaStream | null>(null);
   const [remotePeers, setRemotePeers] = useState<RemotePeer[]>([]);
   const [localAudioTrackIds, setLocalAudioTrackIds] = useState<string[]>([]);
+  const [roomTitle, setRoomTitle] = useState('');
+  const [removedFromRoom, setRemovedFromRoom] = useState<string | null>(null);
 
   const sfuRef = useRef<SfuClient | null>(null);
+  /** Users the owner has removed, so a reconnecting peer gets kicked again. */
+  const removedUserIds = useRef(new Set<string>());
   const joiningRef = useRef(false);
   /** Full getUserMedia (cam+mic) — publish only. Never attach this to a media element. */
   const captureRef = useRef<MediaStream | null>(null);
@@ -63,6 +69,7 @@ export function useStudioSession({
     setLocalPeerId(null);
     setJoined(false);
     setRoomRole(null);
+    removedUserIds.current.clear();
     joiningRef.current = false;
     setJoining(false);
   };
@@ -82,7 +89,7 @@ export function useStudioSession({
   }, []);
 
   const join = async () => {
-    if (!user || joiningRef.current) return;
+    if (!user || !room || joiningRef.current) return;
     joiningRef.current = true;
     setJoining(true);
     setError('');
@@ -92,8 +99,10 @@ export function useStudioSession({
           'Camera/mic unavailable: this page must be served over HTTPS (or localhost). Open the https:// URL Vite prints.',
         );
       }
-      const { joinToken, room: joinedRoom, sfuUrl, role } = await joinRoom(room);
-      setRoomRole(role);
+      // Camera first, then the join: the join token is short-lived, and someone
+      // sitting on the permission prompt would otherwise expire it before the
+      // SFU ever sees it. It also avoids creating a membership row for someone
+      // who then denies the camera.
       const capture = await navigator.mediaDevices.getUserMedia({
         video: {
           width: { ideal: 1920 },
@@ -115,7 +124,17 @@ export function useStudioSession({
       setLocalStream(preview);
       setLocalAudioTrackIds(capture.getAudioTracks().map((t) => t.id));
 
-      const sfu = new SfuClient({ onPeersChanged: (peers) => setRemotePeers([...peers]) });
+      const { joinToken, room: joinedRoom, sfuUrl, role } = await joinRoom(room);
+      setRoomRole(role);
+      setRoomTitle(joinedRoom.title);
+
+      const sfu = new SfuClient({
+        onPeersChanged: (peers) => setRemotePeers([...peers]),
+        onKicked: (reason) => {
+          setRemovedFromRoom(reason);
+          void leave();
+        },
+      });
       sfuRef.current = sfu;
       await sfu.join(joinedRoom.slug, user.name, 'speaker', joinToken, sfuUrl, user.id);
       await sfu.publish(capture);
@@ -134,6 +153,40 @@ export function useStudioSession({
       setError(err instanceof Error ? err.message : String(err));
     }
   };
+
+  /**
+   * Remove someone from the room. The API call is the durable half and must
+   * land first — the signaling kick only drops the socket, so doing it first
+   * would let the target reconnect with a fresh token before the row is marked.
+   */
+  const kickUser = async (userId: string) => {
+    if (!room || !userId) return;
+    setError('');
+    try {
+      await removeMember(room, userId);
+      removedUserIds.current.add(userId);
+      await sfuRef.current?.kick(userId).catch(() => undefined);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  /** Closes the room at the media layer. The API teardown is a separate call. */
+  const closeRoomMedia = async () => {
+    await sfuRef.current?.closeRoom().catch(() => undefined);
+  };
+
+  // If a removed user reconnects before their ban expires — or the socket kick
+  // failed outright — drop them again as soon as they reappear.
+  useEffect(() => {
+    if (!joined || removedUserIds.current.size === 0) return;
+    for (const peer of remotePeers) {
+      const userId = peer.userId;
+      if (userId && removedUserIds.current.has(userId)) {
+        void sfuRef.current?.kick(userId).catch(() => undefined);
+      }
+    }
+  }, [joined, remotePeers]);
 
   const stopScreenShare = () => {
     void runScreen(async () => {
@@ -195,6 +248,11 @@ export function useStudioSession({
     joined,
     joining,
     roomRole,
+    roomTitle,
+    removedFromRoom,
+    clearRemovedFromRoom: () => setRemovedFromRoom(null),
+    kickUser,
+    closeRoomMedia,
     localPeerId,
     localStream,
     localScreenStream,

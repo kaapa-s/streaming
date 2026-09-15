@@ -9,7 +9,7 @@ import { YoutubeLiveChatAdapter } from './youtube-live-chat.adapter';
 const owner: AuthUser = { id: 'owner-1', email: 'owner@example.com', name: 'Owner' };
 
 class FakeRooms {
-  async requireMembershipBySlug(slug: string, _userId: string) {
+  async requireActiveMembershipBySlug(slug: string, _userId: string) {
     return {
       room: { slug: slug.trim().toLowerCase(), id: 'room-1', ownerId: owner.id },
       member: { role: 'owner' as const },

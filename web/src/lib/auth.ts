@@ -166,13 +166,5 @@ export async function apiFetch(input: string, init: RequestInit = {}): Promise<R
   return res;
 }
 
-export async function joinRoom(slug: string): Promise<{
-  room: { id: string; slug: string };
-  role: 'owner' | 'speaker' | 'viewer';
-  joinToken: string;
-  sfuUrl?: string;
-}> {
-  const res = await apiFetch(`/api/rooms/${encodeURIComponent(slug)}/join`, { method: 'POST' });
-  if (!res.ok) throw new Error(await parseError(res));
-  return res.json();
-}
+/** Shared with lib/rooms.ts so every API helper surfaces the same error text. */
+export const parseApiError = parseError;

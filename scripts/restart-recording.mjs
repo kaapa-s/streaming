@@ -35,7 +35,14 @@ for (const raw of process.argv.slice(2)) {
 }
 
 const API = (args.get('api') ?? process.env.STREAMING_API_URL ?? 'https://streaming.kaapa.pl').replace(/\/$/, '');
-const ROOM = args.get('room') ?? process.env.STREAMING_ROOM ?? 'main';
+// No default room: slugs are random per stream now, so a fallback would only
+// ever act on the wrong room.
+const ROOM = args.get('room') ?? process.env.STREAMING_ROOM;
+if (!ROOM) {
+  console.error('usage: restart-recording.mjs --room=<slug> [--api=<url>] [--resolution=...]');
+  console.error('       (or set STREAMING_ROOM). Find live slugs via GET /api/recordings.');
+  process.exit(1);
+}
 const RESOLUTION = args.get('resolution');
 const WAIT_MS = Number(args.get('wait') ?? 3000);
 

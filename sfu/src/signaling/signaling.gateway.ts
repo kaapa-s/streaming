@@ -1,9 +1,11 @@
+import { OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { OnGatewayConnection, OnGatewayDisconnect, WebSocketGateway } from '@nestjs/websockets';
 import { verifyJoinToken } from '@streaming/join-token';
 import { randomUUID } from 'crypto';
 import type { types } from 'mediasoup';
 import type { WebSocket } from 'ws';
 import { MediasoupService } from '../mediasoup/mediasoup.service';
+import { RoomBans } from './room-bans';
 
 type PeerRole = 'speaker' | 'compositor';
 type MediaSource = 'camera' | 'screen';
@@ -13,6 +15,8 @@ interface Peer {
   userId: string;
   name: string;
   role: PeerRole;
+  /** Room owner: may kick others and close the room. Carried by the join token. */
+  canManage: boolean;
   room: string;
   socket: WebSocket;
   transports: Map<string, types.WebRtcTransport>;
@@ -49,18 +53,34 @@ interface RequestMessage {
   data: Record<string, unknown>;
 }
 
+const BAN_PRUNE_INTERVAL_MS = 15 * 60 * 1000;
+
 /**
  * JSON protocol over /ws/signaling:
  *   client -> server : { id, method, data }         (request)
  *   server -> client : { id, ok, data | error }     (response)
- *   server -> client : { event, data }              (push: newProducer, peerLeft)
+ *   server -> client : { event, data }              (push: newProducer, peerLeft, kicked)
  */
 @WebSocketGateway({ path: '/ws/signaling' })
-export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class SignalingGateway
+  implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit, OnModuleDestroy
+{
   private peers = new Map<WebSocket, Peer>();
   private rooms = new Map<string, Set<Peer>>();
+  private bans = new RoomBans();
+  private pruneTimer?: NodeJS.Timeout;
 
   constructor(private readonly mediasoup: MediasoupService) {}
+
+  onModuleInit(): void {
+    this.pruneTimer = setInterval(() => this.bans.prune(), BAN_PRUNE_INTERVAL_MS);
+    this.pruneTimer.unref();
+  }
+
+  onModuleDestroy(): void {
+    if (this.pruneTimer) clearInterval(this.pruneTimer);
+    this.pruneTimer = undefined;
+  }
 
   handleConnection(socket: WebSocket): void {
     socket.on('message', (raw, isBinary) => {
@@ -121,6 +141,16 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
       if (data.role != null && data.role !== role) {
         throw new Error('join token role mismatch');
       }
+
+      // The API is the authority on both of these, but it has no channel to this
+      // process — so a token issued before the room ended, or before its holder
+      // was kicked, would still open a session. These cover that window; the
+      // token's own short TTL closes it for good.
+      if (this.bans.isClosed(room)) throw new Error('room closed');
+      if (role === 'speaker' && this.bans.isBanned(room, claims.userId)) {
+        throw new Error('removed from this room');
+      }
+
       const router = await this.mediasoup.getRouter(room);
 
       // One speaker per user per room. A second tab / HMR remount publishes
@@ -139,6 +169,7 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
         userId: claims.userId,
         name,
         role,
+        canManage: claims.canManage === true,
         room,
         socket,
         transports: new Map(),
@@ -242,6 +273,50 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
         if (!consumer) throw new Error('unknown consumer');
         await consumer.resume();
         return {};
+      }
+
+      // Kicks by userId, not peerId: one person can hold several sockets (a
+      // second tab, a reconnect mid-kick), and userId is the key the API's
+      // durable removal uses too.
+      case 'kickPeer': {
+        if (!peer.canManage) throw new Error('not allowed');
+        const userId = String(data.userId ?? '');
+        if (!userId) throw new Error('userId required');
+        if (userId === peer.userId) throw new Error('cannot kick yourself');
+
+        this.bans.ban(peer.room, userId);
+        let kicked = 0;
+        for (const target of [...(this.rooms.get(peer.room) ?? [])]) {
+          if (target.role !== 'speaker' || target.userId !== userId) continue;
+          this.send(target.socket, {
+            event: 'kicked',
+            data: { reason: 'removed by host' },
+          });
+          this.dropPeer(target, 'kicked by owner');
+          kicked += 1;
+        }
+        return { kicked };
+      }
+
+      // Ends the room at the media layer. Drops the compositor too — it is a
+      // peer like any other, and leaving it consuming an empty room would hold
+      // its Chromium slot open.
+      case 'closeRoom': {
+        if (!peer.canManage) throw new Error('not allowed');
+        const room = peer.room;
+        this.bans.close(room);
+        let dropped = 0;
+        for (const target of [...(this.rooms.get(room) ?? [])]) {
+          if (target !== peer) {
+            this.send(target.socket, {
+              event: 'kicked',
+              data: { reason: 'the host ended this stream' },
+            });
+          }
+          this.dropPeer(target, 'room closed by owner');
+          dropped += 1;
+        }
+        return { dropped };
       }
 
       default:

@@ -4,6 +4,8 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  OnModuleDestroy,
+  OnModuleInit,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync } from 'fs';
@@ -49,7 +51,18 @@ interface RoomSession {
   stamp?: string;
   /** File path kept after stop until upload or release. */
   pendingFile?: string;
+  /** Last time anything touched this room — drives the warm-session reaper. */
+  lastTouchedAt: number;
 }
+
+/**
+ * How long a warm (non-recording) session may sit idle before its Chromium is
+ * reclaimed. Rooms are created per stream now, so a host who opens a room and
+ * closes the tab would otherwise hold a pool slot forever — and the pool is
+ * only 1-2 browsers wide, with no queue behind it.
+ */
+const WARM_IDLE_MS = Number(process.env.COMPOSITOR_WARM_IDLE_MS ?? 10 * 60 * 1000);
+const REAP_INTERVAL_MS = 60_000;
 
 export interface RecordingSink {
   file: string;
@@ -59,7 +72,7 @@ export interface RecordingSink {
 }
 
 @Injectable()
-export class SessionsService {
+export class SessionsService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(SessionsService.name);
   private readonly dir = path.resolve(process.cwd(), 'recordings');
   private readonly sessions = new Map<string, RoomSession>();
@@ -69,8 +82,47 @@ export class SessionsService {
     Promise<{ room: string; resolution: StreamResolution; state: 'warm' }>
   >();
 
+  private reapTimer?: NodeJS.Timeout;
+
   constructor(private readonly pool: BrowserPoolService) {
     mkdirSync(this.dir, { recursive: true });
+  }
+
+  onModuleInit(): void {
+    this.reapTimer = setInterval(() => void this.reapIdleWarmSessions(), REAP_INTERVAL_MS);
+    this.reapTimer.unref();
+  }
+
+  onModuleDestroy(): void {
+    if (this.reapTimer) clearInterval(this.reapTimer);
+    this.reapTimer = undefined;
+  }
+
+  /** Keeps a session out of the reaper's way. */
+  private touch(room: string): void {
+    const entry = this.sessions.get(room);
+    if (entry) entry.lastTouchedAt = Date.now();
+  }
+
+  /**
+   * Releases warm sessions nobody has touched recently. Recording sessions are
+   * never reaped. Safe because goLive re-warms transparently when there is no
+   * entry — a reaped room just pays the warmup cost again at go-live.
+   */
+  private async reapIdleWarmSessions(): Promise<number> {
+    const cutoff = Date.now() - WARM_IDLE_MS;
+    const stale = [...this.sessions.entries()].filter(
+      ([, entry]) => entry.state === 'warm' && entry.lastTouchedAt <= cutoff,
+    );
+    for (const [room] of stale) {
+      this.logger.log(`reaping idle warm session room=${room}`);
+      try {
+        await this.releaseRoom(room, { keepPending: false });
+      } catch (err) {
+        this.logger.warn(`reap failed for room ${room}: ${String(err)}`);
+      }
+    }
+    return stale.length;
   }
 
   health() {
@@ -133,6 +185,7 @@ export class SessionsService {
       if (existing.state === 'recording') {
         throw new BadRequestException(`room "${room}" is already recording`);
       }
+      this.touch(room);
       return { room, resolution: existing.resolution, state: 'warm' };
     }
     const inFlight = this.warming.get(room);
@@ -196,6 +249,7 @@ export class SessionsService {
         browser,
         page,
         resolution,
+        lastTouchedAt: Date.now(),
       });
       this.logger.log(`warmed room=${room} resolution=${resolution}`);
       return { room, resolution, state: 'warm' };
@@ -262,6 +316,7 @@ export class SessionsService {
     );
 
     entry.state = 'recording';
+    entry.lastTouchedAt = Date.now();
     entry.rtmpUrls = live ? normalized : undefined;
     entry.stamp = stamp;
     entry.sessionLog = sessionLog;
@@ -360,6 +415,7 @@ export class SessionsService {
     const room = slug.trim().toLowerCase();
     const entry = this.sessions.get(room);
     if (!entry) throw new NotFoundException(`no active session for room "${room}"`);
+    entry.lastTouchedAt = Date.now();
     await entry.page.evaluate((payload) => {
       if (payload === null) {
         globalThis.__clearOverlay?.();
@@ -376,6 +432,7 @@ export class SessionsService {
     const room = slug.trim().toLowerCase();
     const entry = this.sessions.get(room);
     if (!entry) throw new NotFoundException(`no active session for room "${room}"`);
+    entry.lastTouchedAt = Date.now();
     await entry.page.evaluate((payload) => {
       const set = globalThis.__setLayout;
       if (!set) throw new Error('__setLayout not available');

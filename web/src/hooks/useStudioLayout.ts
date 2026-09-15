@@ -35,7 +35,7 @@ function sameIds(a: string[], b: string[]): boolean {
 }
 
 type UseStudioLayoutArgs = {
-  room: string;
+  room: string | null;
   isOwner: boolean;
   joined: boolean;
   localPeerId: string | null;
@@ -80,7 +80,7 @@ export function useStudioLayout({
   }, [joined, localPeerId, localStream, localScreenStream, remotePeers]);
 
   useEffect(() => {
-    if (!joined || !isOwner) return;
+    if (!joined || !isOwner || !room) return;
     void apiFetch(`/api/rooms/${encodeURIComponent(room)}/layout`, {
       method: 'POST',
       body: JSON.stringify({

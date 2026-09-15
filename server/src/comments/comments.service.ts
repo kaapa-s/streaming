@@ -66,7 +66,7 @@ export class CommentsService {
   constructor(
     @Inject(RoomsService)
     private readonly rooms: {
-      requireMembershipBySlug(
+      requireActiveMembershipBySlug(
         slug: string,
         userId: string,
       ): Promise<{ room: { slug: string }; member: { role: string } }>;
@@ -79,7 +79,7 @@ export class CommentsService {
   ) {}
 
   private async requireOwner(slug: string, user: AuthUser) {
-    const { room, member } = await this.rooms.requireMembershipBySlug(slug, user.id);
+    const { room, member } = await this.rooms.requireActiveMembershipBySlug(slug, user.id);
     if (member.role !== 'owner') {
       throw new ForbiddenException('only the room owner can manage live comments');
     }

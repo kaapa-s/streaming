@@ -23,7 +23,8 @@ export function CompositorPage() {
 
     const run = async () => {
       const params = new URLSearchParams(location.search);
-      const room = params.get('room') ?? 'main';
+      const room = params.get('room');
+      if (!room) throw new Error('missing room');
       const token = params.get('token');
       if (!token) throw new Error('missing join token');
       const sfuUrl = params.get('sfuUrl') ?? undefined;

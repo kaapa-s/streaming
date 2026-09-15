@@ -1,39 +1,36 @@
 import { createFileRoute, useBlocker, useNavigate } from '@tanstack/react-router';
 import { useRef, useState } from 'react';
-import { CommentsPanel } from '../../components/studio/CommentsPanel';
-import { GoLiveModal } from '../../components/studio/GoLiveModal';
-import { RecordingFinishedModal } from '../../components/studio/RecordingFinishedModal';
-import { SceneStrip } from '../../components/studio/SceneStrip';
-import { StudioHeader } from '../../components/studio/StudioHeader';
-import { useLocalStorageState } from '../../hooks/useLocalStorageState';
-import { SESSION_NAME_KEY } from '../../lib/sessionName';
-import { keepStudioSearch } from '../../lib/studioSearch';
-import { ensureLiveSession } from '../../studio/studioStage';
-import { useStudio } from '../../studio/useStudio';
+import { CommentsPanel } from '../../../components/studio/CommentsPanel';
+import { GoLiveModal } from '../../../components/studio/GoLiveModal';
+import { RecordingFinishedModal } from '../../../components/studio/RecordingFinishedModal';
+import { SceneStrip } from '../../../components/studio/SceneStrip';
+import { StudioHeader } from '../../../components/studio/StudioHeader';
+import { ensureLiveSession } from '../../../studio/studioStage';
+import { useStudio } from '../../../studio/useStudio';
 
-export const Route = createFileRoute('/_studio/live')({
-  beforeLoad: ({ context }) => {
-    ensureLiveSession(context.studioHandle);
+export const Route = createFileRoute('/r/$slug/live')({
+  beforeLoad: ({ context, params, location }) => {
+    ensureLiveSession(context.studioHandle, params.slug, location.href);
   },
   component: LivePage,
 });
 
 function LivePage() {
+  const { slug } = Route.useParams();
   const s = useStudio();
   const navigate = useNavigate();
-  const [sessionName] = useLocalStorageState(SESSION_NAME_KEY, 'Studio session');
   const [goLiveOpen, setGoLiveOpen] = useState(false);
 
   const activeSessionRef = useRef(false);
   activeSessionRef.current = s.recording || s.live;
 
-  // Block in-app navigation away from /live during an active session
+  // Block in-app navigation away from the studio during an active session
   useBlocker({
     // useBlocker enables beforeunload by default; only warn while recording/live
     enableBeforeUnload: () => activeSessionRef.current,
     shouldBlockFn: ({ next }) => {
       if (!activeSessionRef.current) return false;
-      if (next.pathname === '/live') return false;
+      if (next.pathname === `/r/${slug}/live`) return false;
       const confirmed = window.confirm(
         'You have an active recording session. Are you sure you want to leave?',
       );
@@ -47,18 +44,31 @@ function LivePage() {
   if (!s.user) return null;
 
   const liveToYoutube = s.live && s.liveDestinations.includes('youtube');
+  const inviteUrl = `${location.origin}/r/${slug}`;
 
+  // Just navigate: useBlocker above intercepts this while recording/live, and
+  // unmounting the room layout tears the session down. Calling leave() first
+  // would flip `joined` and let the route guard redirect us to the pre-join
+  // screen before this navigation lands.
   const leaveToSessions = () => {
+    void navigate({ to: '/new' });
+  };
+
+  // Owner only: closes the room for everyone and frees the compositor slot.
+  const endStream = () => {
+    if (!window.confirm('End this stream for everyone? The invite link will stop working.')) {
+      return;
+    }
     void (async () => {
-      await s.leave();
-      await navigate({ to: '/join', search: keepStudioSearch });
+      await s.endStream();
+      await navigate({ to: '/new' });
     })();
   };
 
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden bg-surface text-ink">
       <StudioHeader
-        sessionName={sessionName || 'Studio session'}
+        sessionName={s.roomTitle || 'Studio session'}
         recording={s.recording}
         live={s.live}
         recordingPending={s.recordingPending}
@@ -66,6 +76,10 @@ function LivePage() {
         onStop={s.stopRecording}
         onOpenGoLive={() => setGoLiveOpen(true)}
         onLeaveSessions={leaveToSessions}
+        isOwner={s.isRoomOwner}
+        inviteUrl={inviteUrl}
+        onEndStream={endStream}
+        endPending={s.endPending}
       />
 
       <div className="flex-1 flex flex-col min-h-0">
@@ -123,6 +137,7 @@ function LivePage() {
           onCameraPreset={s.setCameraPreset}
           onFeature={s.setFeatured}
           onToggleSceneScreen={s.toggleSceneScreen}
+          onRemovePeer={s.isRoomOwner ? s.kickUser : undefined}
         />
       </div>
 

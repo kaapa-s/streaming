@@ -1,19 +1,24 @@
 import { Link, createFileRoute } from '@tanstack/react-router';
 import { useEffect } from 'react';
 import { Button } from '../../components/Button';
-import { keepStudioSearch } from '../../lib/studioSearch';
+import { parseRedirect } from '../../lib/redirectTo';
 import { ensureLoggedOut } from '../../studio/studioStage';
 import { useStudio } from '../../studio/useStudio';
 
 export const Route = createFileRoute('/_studio/signup')({
-  beforeLoad: ({ context }) => {
-    ensureLoggedOut(context.studioHandle);
+  validateSearch: (search: Record<string, unknown>) => {
+    const to = parseRedirect(search.redirect);
+    return to ? { redirect: to } : {};
+  },
+  beforeLoad: ({ context, search }) => {
+    ensureLoggedOut(context.studioHandle, search);
   },
   component: SignupPage,
 });
 
 function SignupPage() {
   const s = useStudio();
+  const search = Route.useSearch();
 
   useEffect(() => {
     s.setAuthMode('register');
@@ -91,7 +96,7 @@ function SignupPage() {
         <p className="mt-5 text-sm text-ink-muted">
           <Link
             to="/login"
-            search={keepStudioSearch}
+            search={search}
             className="font-semibold text-accent hover:text-accent-hover"
           >
             ← Already have an account

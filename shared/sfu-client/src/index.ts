@@ -35,6 +35,8 @@ export interface RemotePeer {
 export interface SfuCallbacks {
   /** Fired whenever the set of remote peers or their tracks change. */
   onPeersChanged: (peers: RemotePeer[]) => void;
+  /** The host removed you, or ended the stream. The socket is closing. */
+  onKicked?: (reason: string) => void;
 }
 
 interface ProducerInfo {
@@ -78,6 +80,7 @@ type SignalingEvent =
   | { event: 'newProducer'; data: ProducerInfo }
   | { event: 'peerLeft'; data: { peerId: string } }
   | { event: 'consumerClosed'; data: { consumerId: string } }
+  | { event: 'kicked'; data: { reason: string } }
   | { event: string; data: unknown };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -375,7 +378,31 @@ export class SfuClient {
         }
         break;
       }
+      case 'kicked': {
+        const data = msg.data;
+        const reason =
+          isRecord(data) && typeof data.reason === 'string' ? data.reason : 'removed by host';
+        this.callbacks.onKicked?.(reason);
+        break;
+      }
     }
+  }
+
+  /**
+   * Owner only. Drops every socket this user holds in the room and blocks their
+   * token for a short window. This is the immediate half of a kick — the
+   * durable half is the API marking the membership removed, and it must land
+   * first, or the target simply rejoins with a fresh token.
+   */
+  async kick(userId: string): Promise<number> {
+    const result = await this.request<{ kicked: number }>('kickPeer', { userId });
+    return result.kicked;
+  }
+
+  /** Owner only. Ends the room at the media layer: drops everyone, including the recorder. */
+  async closeRoom(): Promise<number> {
+    const result = await this.request<{ dropped: number }>('closeRoom', {});
+    return result.dropped;
   }
 
   private request<T = unknown>(method: string, data: Record<string, unknown>): Promise<T> {

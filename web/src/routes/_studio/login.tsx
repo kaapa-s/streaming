@@ -1,19 +1,25 @@
 import { Link, createFileRoute } from '@tanstack/react-router';
 import { useEffect } from 'react';
 import { Button } from '../../components/Button';
-import { keepStudioSearch } from '../../lib/studioSearch';
+import { parseRedirect } from '../../lib/redirectTo';
 import { ensureLoggedOut } from '../../studio/studioStage';
 import { useStudio } from '../../studio/useStudio';
 
 export const Route = createFileRoute('/_studio/login')({
-  beforeLoad: ({ context }) => {
-    ensureLoggedOut(context.studioHandle);
+  // `redirect` carries an invitee back to the room they clicked into.
+  validateSearch: (search: Record<string, unknown>) => {
+    const to = parseRedirect(search.redirect);
+    return to ? { redirect: to } : {};
+  },
+  beforeLoad: ({ context, search }) => {
+    ensureLoggedOut(context.studioHandle, search);
   },
   component: LoginPage,
 });
 
 function LoginPage() {
   const s = useStudio();
+  const search = Route.useSearch();
 
   useEffect(() => {
     s.setAuthMode('login');
@@ -68,7 +74,7 @@ function LoginPage() {
           No account?{' '}
           <Link
             to="/signup"
-            search={keepStudioSearch}
+            search={search}
             className="font-semibold text-accent hover:text-accent-hover"
           >
             Sign up →

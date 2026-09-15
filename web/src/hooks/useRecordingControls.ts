@@ -10,7 +10,7 @@ import {
 import { useAsyncAction } from './useAsyncAction';
 import { useLocalStorageState } from './useLocalStorageState';
 
-export function useRecordingControls(room: string, setError: (message: string) => void) {
+export function useRecordingControls(room: string | null, setError: (message: string) => void) {
   const [recording, setRecording] = useState(false);
   const [live, setLive] = useState(false);
   const [liveDestinations, setLiveDestinations] = useState<PlatformProvider[]>([]);
@@ -66,6 +66,7 @@ export function useRecordingControls(room: string, setError: (message: string) =
     action: 'start' | 'stop',
     opts?: { destinations?: OutboundDestination[] },
   ) => {
+    if (!room) return;
     void run(async () => {
       setError('');
       try {

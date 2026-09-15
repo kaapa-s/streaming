@@ -1,44 +1,52 @@
 import { redirect } from '@tanstack/react-router';
 import { getStoredUser } from '../lib/auth';
-import { keepStudioSearch, liveStudioSearch } from '../lib/studioSearch';
+import { safeRedirect } from '../lib/redirectTo';
 import type { StudioHandle } from './studioHandle';
 
-function readUser(studioHandle: StudioHandle) {
-  return studioHandle.tryGet()?.user ?? getStoredUser();
+function readUser(studioHandle: StudioHandle | undefined) {
+  return studioHandle?.tryGet()?.user ?? getStoredUser();
 }
 
-function readJoined(studioHandle: StudioHandle) {
-  return studioHandle.tryGet()?.joined ?? false;
+function readJoined(studioHandle: StudioHandle | undefined) {
+  return studioHandle?.tryGet()?.joined ?? false;
 }
 
-/** Public auth pages — only for signed-out users. */
-export function ensureLoggedOut(studioHandle: StudioHandle): void {
+/** Public auth pages — only for signed-out users. Honours `?redirect=`. */
+export function ensureLoggedOut(
+  studioHandle: StudioHandle | undefined,
+  search: { redirect?: string },
+): void {
   if (readUser(studioHandle)) {
-    throw redirect({ to: '/join', replace: true, search: keepStudioSearch });
+    throw redirect({ to: safeRedirect(search.redirect), replace: true });
   }
 }
 
-/** Authenticated app shell (New recording, Settings). */
-export function ensureAuthenticated(studioHandle: StudioHandle): void {
+/**
+ * Anything behind a login. Carries the current path through as `?redirect=` so
+ * someone opening an invite link while signed out lands back on the room.
+ */
+export function ensureAuthenticated(
+  studioHandle: StudioHandle | undefined,
+  href?: string,
+): void {
   if (!readUser(studioHandle)) {
-    throw redirect({ to: '/login', replace: true, search: keepStudioSearch });
+    throw redirect({
+      to: '/login',
+      replace: true,
+      search: href ? { redirect: href } : undefined,
+    });
   }
 }
 
-/** `/join` — signed in, not yet in the SFU session. */
-export function ensureJoinLobby(studioHandle: StudioHandle): void {
-  ensureAuthenticated(studioHandle);
-  if (readJoined(studioHandle)) {
-    throw redirect({ to: '/live', replace: true, search: liveStudioSearch });
-  }
-}
-
-/** `/live` — signed in and joined. */
-export function ensureLiveSession(studioHandle: StudioHandle): void {
-  if (!readUser(studioHandle)) {
-    throw redirect({ to: '/login', replace: true, search: keepStudioSearch });
-  }
+/** `/r/$slug/live` — signed in and already through the pre-join screen. */
+export function ensureLiveSession(
+  studioHandle: StudioHandle | undefined,
+  slug: string,
+  href?: string,
+): void {
+  ensureAuthenticated(studioHandle, href);
   if (!readJoined(studioHandle)) {
-    throw redirect({ to: '/join', replace: true, search: keepStudioSearch });
+    // A refresh lands here: the camera grant is gone, so go back and re-join.
+    throw redirect({ to: '/r/$slug', params: { slug }, replace: true });
   }
 }

@@ -10,6 +10,11 @@ type StudioHeaderProps = {
   onStop: () => void;
   onOpenGoLive: () => void;
   onLeaveSessions: () => void;
+  isOwner: boolean;
+  /** Shareable room link — the slug in it is the only thing gating entry. */
+  inviteUrl: string;
+  onEndStream: () => void;
+  endPending: boolean;
 };
 
 export function StudioHeader({
@@ -21,8 +26,25 @@ export function StudioHeader({
   onStop,
   onOpenGoLive,
   onLeaveSessions,
+  isOwner,
+  inviteUrl,
+  onEndStream,
+  endPending,
 }: StudioHeaderProps) {
   const elapsed = useElapsedLabel(recording);
+  const [copied, setCopied] = useState(false);
+
+  const copyInvite = () => {
+    void (async () => {
+      try {
+        await navigator.clipboard.writeText(inviteUrl);
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 2000);
+      } catch {
+        // Clipboard can be blocked; the link is still visible in the address bar.
+      }
+    })();
+  };
 
   return (
     <header className="border-b border-border bg-surface-raised px-5 py-3 flex flex-col gap-3">
@@ -65,6 +87,16 @@ export function StudioHeader({
         {!live && (
           <Button disabled={recordingPending} onClick={onOpenGoLive}>
             Go live ▾
+          </Button>
+        )}
+
+        <Button onClick={copyInvite} className="ml-auto">
+          {copied ? 'Link copied' : 'Copy invite link'}
+        </Button>
+
+        {isOwner && (
+          <Button variant="danger" loading={endPending} onClick={onEndStream}>
+            End stream
           </Button>
         )}
       </div>

@@ -2,13 +2,12 @@ import { Link, Outlet, createFileRoute } from '@tanstack/react-router';
 import type { LucideIcon } from 'lucide-react';
 import { Settings, Video } from 'lucide-react';
 import { Button } from '../../components/Button';
-import { keepStudioSearch } from '../../lib/studioSearch';
 import { ensureAuthenticated } from '../../studio/studioStage';
 import { useStudio } from '../../studio/useStudio';
 
 export const Route = createFileRoute('/_studio/_app')({
-  beforeLoad: ({ context }) => {
-    ensureAuthenticated(context.studioHandle);
+  beforeLoad: ({ context, location }) => {
+    ensureAuthenticated(context.studioHandle, location.href);
   },
   component: AppShell,
 });
@@ -27,7 +26,7 @@ function AppShell() {
         </div>
 
         <nav className="flex flex-col gap-1">
-          <ShellNavLink to="/join" label="New recording" icon={Video} />
+          <ShellNavLink to="/new" label="New stream" icon={Video} />
         </nav>
 
         <div className="mt-auto flex flex-col gap-1">
@@ -58,14 +57,13 @@ function ShellNavLink({
   label,
   icon: Icon,
 }: {
-  to: '/join' | '/settings';
+  to: '/new' | '/settings';
   label: string;
   icon: LucideIcon;
 }) {
   return (
     <Link
       to={to}
-      search={keepStudioSearch}
       activeOptions={{ exact: true }}
       className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium text-ink-muted transition-colors hover:bg-surface-muted hover:text-ink [&.active]:bg-surface-muted [&.active]:text-ink"
     >

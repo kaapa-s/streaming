@@ -7,6 +7,14 @@ export interface JoinTokenPayload {
   userId: string;
   name: string;
   role: JoinPeerRole;
+  /**
+   * Room owner privileges (kick / close). Deliberately a separate claim rather
+   * than a `role` value: `role` is asserted as 'speaker' | 'compositor' here and
+   * mirrored as the SFU's PeerRole, and the SFU's anti-feedback dedupe keys on
+   * `role === 'speaker'` — an owner under a new role value would stop being
+   * deduped and bring the mic-feedback bug back.
+   */
+  canManage?: boolean;
   exp: number;
 }
 
@@ -25,10 +33,17 @@ function sign(body: string): string {
   return createHmac('sha256', secret()).update(body).digest('base64url');
 }
 
-/** Short-lived HMAC token for SFU signaling join (shared secret with SFU process). */
+/**
+ * Short-lived HMAC token for SFU signaling join (shared secret with SFU process).
+ *
+ * The default TTL is deliberately short: the SFU has no DB, so a token stays a
+ * valid bearer credential for its whole lifetime — including for someone the
+ * owner has just kicked. The SFU ban set covers this window; the short TTL
+ * closes it. Long-lived service tokens pass `ttlSeconds` explicitly.
+ */
 export function issueJoinToken(
   payload: Omit<JoinTokenPayload, 'exp'>,
-  ttlSeconds = 60 * 60,
+  ttlSeconds = 600,
 ): string {
   const full: JoinTokenPayload = {
     ...payload,
@@ -62,5 +77,8 @@ export function verifyJoinToken(token: string): JoinTokenPayload {
   if (payload.role !== 'speaker' && payload.role !== 'compositor') {
     throw new Error('invalid join token role');
   }
+  // Normalize so callers can treat it as a plain boolean. The HMAC covers the
+  // claim, so a forged `canManage` fails the signature check above.
+  payload.canManage = payload.canManage === true;
   return payload;
 }

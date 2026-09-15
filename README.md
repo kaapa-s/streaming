@@ -17,9 +17,18 @@ files to S3.
 - `web/` — React (Vite) studio UI (+ `/compositor-dev` layout playground)
 
 Auth: register/login (JWT + refresh tokens). Speakers get a short-lived join token
-from `POST /api/rooms/:slug/join` before SFU signaling. Join also **warms** a
-compositor tab (SFU subscribe + render, no MediaRecorder). Go live / Start
-recording calls the compositor to start capture (+ optional RTMP).
+from `POST /api/rooms/:slug/join` before SFU signaling. The owner's join also
+**warms** a compositor tab (SFU subscribe + render, no MediaRecorder). Go live /
+Start recording calls the compositor to start capture (+ optional RTMP).
+
+Rooms: one per stream. `POST /api/rooms` mints a random 24-char hex slug — the
+invite link `/r/<slug>` is the only thing gating entry, so anyone signed in who
+has the link joins as a speaker. The owner can remove a participant
+(`DELETE /api/rooms/:slug/members/:userId`, plus a `kickPeer` over signaling to
+drop them immediately) and ends the stream with `POST /api/rooms/:slug/end`,
+which closes the room, stops any recording, and frees the compositor slot.
+Rooms are ephemeral: once closed the link returns 410. Abandoned warm sessions
+are reaped after `COMPOSITOR_WARM_IDLE_MS`.
 
 Locally, Vite proxies `/ws/signaling` → SFU, `/api` → API, `/ws/recording` → compositor.
 Headless Chromium loads the recorder from the compositor itself
@@ -59,11 +68,14 @@ Ensure `SFU_JOIN_SECRET` matches in `server/.env` and `sfu/.env`, and
 
 ### Try it
 
-1. Open https://localhost:5173, register an account, join room `main`.
-2. Open a second browser/profile, register another user, join the same room.
+1. Open https://localhost:5173, register an account, click **New stream**, name it, **Create room**.
+2. Copy the invite link from the studio header. Open a second browser/profile, register
+   another user, and paste the link — they join as a speaker.
 3. Click **Start recording** — the warmed compositor starts MediaRecorder.
 4. Talk/move for a bit, click **Stop recording**.
 5. Play the file under `compositor/recordings/` (when S3 is configured, the local `.webm` is renamed `*.uploaded.webm` then deleted after a successful upload; use the S3 download URL instead).
+6. Click **End stream** — the room closes, its link stops working, and the compositor's
+   Chromium slot is released.
 
 ### Go live
 
@@ -274,7 +286,7 @@ docker compose --env-file .env --profile compositor ps
 docker stats   # during a test recording
 ./scripts/verify-compositor-gpu.sh   # compositor box: NVIDIA + Chromium renderer
 
-# Two browsers → register → join same room → Start recording → Stop recording
+# Two browsers → register → create room, join by invite link → Start/Stop recording
 docker compose --env-file .env --profile compositor exec compositor ls /app/compositor/recordings
 # After S3 upload the .webm is gone; *.session.log remains
 ```

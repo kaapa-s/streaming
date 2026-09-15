@@ -168,7 +168,42 @@ export class RecordingsService {
     }
   }
 
-  /** Trigger compositor warmup after a speaker joins the studio. */
+  /**
+   * Teardown for "end stream". Every step is best-effort and independent: all
+   * three pieces of state here (activeIds, the compositor session, the comments
+   * poller) live in memory, so an API restart mid-stream leaves any of them
+   * empty and ending the room must still succeed.
+   */
+  async endRoom(room: Room): Promise<{ stopped: boolean; file?: string; downloadUrl?: string }> {
+    const slug = room.slug;
+    let stopped = false;
+    let file: string | undefined;
+    let downloadUrl: string | undefined;
+
+    if (this.activeIds.has(slug)) {
+      try {
+        const result = await this.stop(room);
+        stopped = true;
+        file = result.file;
+        downloadUrl = result.downloadUrl;
+      } catch (err) {
+        this.logger.error(`stop during room end failed for ${slug}: ${String(err)}`);
+      }
+    }
+
+    // Releases the Chromium slot whether the session was recording or only warm.
+    try {
+      await this.compositor.stop(slug);
+    } catch {
+      /* no session for this room — nothing to release */
+    }
+
+    this.comments.stopSession(slug);
+    this.logger.log(`ended room=${slug} stoppedRecording=${stopped}`);
+    return { stopped, file, downloadUrl };
+  }
+
+  /** Trigger compositor warmup after the owner joins the studio. */
   warmupRoom(slug: string, resolution?: string): void {
     const token = this.rooms.issueCompositorJoinToken(slug);
     this.compositor.warmupInBackground(slug, token, resolution);

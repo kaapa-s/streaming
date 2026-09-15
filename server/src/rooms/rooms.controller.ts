@@ -1,4 +1,15 @@
-import { Body, Controller, ForbiddenException, Get, Inject, Logger, Param, Post, UseGuards, forwardRef } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Inject,
+  Logger,
+  Param,
+  Post,
+  UseGuards,
+  forwardRef,
+} from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/auth.guards';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { AuthUser } from '../auth/jwt.strategy';
@@ -20,24 +31,44 @@ export class RoomsController {
   ) {}
 
   @Post()
-  create(@Body() body: CreateRoomDto, @CurrentUser() user: AuthUser) {
-    return this.rooms.create(body.slug, user);
+  async create(@Body() body: CreateRoomDto, @CurrentUser() user: AuthUser) {
+    const room = await this.rooms.create(body.title, user);
+    return { id: room.id, slug: room.slug, title: room.title };
   }
 
+  /** Pre-join screen. Knowing the slug is the gate; membership is not required. */
   @Get(':slug')
-  getBySlug(@Param('slug') slug: string) {
-    return this.rooms.findBySlug(slug);
+  describe(@Param('slug') slug: string, @CurrentUser() user: AuthUser) {
+    return this.rooms.describeForJoiner(slug, user);
   }
 
-  @Post(':id/join')
-  async joinById(@Param('id') id: string, @CurrentUser() user: AuthUser) {
-    // UUID → by id; otherwise treat as slug for studio UX (?room=main).
-    const result = isUuid(id)
-      ? await this.rooms.joinById(id, user)
-      : await this.rooms.joinBySlug(id, user);
-    // Warm compositor Chromium for this room (idle SFU join, no recording yet).
-    this.recordings.warmupRoom(result.room.slug);
+  @Post(':slug/join')
+  async join(@Param('slug') slug: string, @CurrentUser() user: AuthUser) {
+    const result = await this.rooms.joinBySlug(slug, user);
+    // Warm compositor Chromium, but only for the owner: the pool is fixed-size
+    // and only the owner can start the recording, so a guest joining should
+    // never be the thing that claims (or exhausts) a browser slot.
+    if (result.role === 'owner') {
+      this.recordings.warmupRoom(result.room.slug);
+    }
     return result;
+  }
+
+  @Delete(':slug/members/:userId')
+  removeMember(
+    @Param('slug') slug: string,
+    @Param('userId') userId: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.rooms.removeMember(slug, userId, user);
+  }
+
+  /** Ends the stream: closes the room and tears down recording + compositor slot. */
+  @Post(':slug/end')
+  async end(@Param('slug') slug: string, @CurrentUser() user: AuthUser) {
+    const room = await this.rooms.close(slug, user);
+    const teardown = await this.recordings.endRoom(room);
+    return { slug: room.slug, closedAt: room.closedAt, ...teardown };
   }
 
   @Post(':slug/layout')
@@ -46,10 +77,7 @@ export class RoomsController {
     @CurrentUser() user: AuthUser,
     @Body() body: SetLayoutDto,
   ) {
-    const { member } = await this.rooms.requireMembershipBySlug(slug, user.id);
-    if (member.role !== 'owner') {
-      throw new ForbiddenException('only the room owner can change layout');
-    }
+    await this.rooms.requireOwnerBySlug(slug, user.id);
     try {
       await this.compositor.setLayout(slug, {
         cameraPreset: body.cameraPreset,
@@ -61,10 +89,4 @@ export class RoomsController {
     }
     return { ok: true };
   }
-}
-
-function isUuid(value: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-    value,
-  );
 }

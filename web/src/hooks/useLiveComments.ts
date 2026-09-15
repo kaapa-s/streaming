@@ -15,7 +15,7 @@ export type LiveComment = {
 type ChatBindStatus = 'connecting' | 'active' | 'failed';
 
 type UseLiveCommentsArgs = {
-  room: string;
+  room: string | null;
   live: boolean;
   isOwner: boolean;
   youtubeConnected: boolean;
@@ -100,7 +100,7 @@ export function useLiveComments({
   };
 
   useEffect(() => {
-    if (!live || !isOwner || !youtubeConnected) {
+    if (!live || !isOwner || !youtubeConnected || !room) {
       stopStream();
       setSessionActive(false);
       setSessionPending(false);
@@ -239,7 +239,7 @@ export function useLiveComments({
 
   const sendReply = async () => {
     const text = replyText.trim();
-    if (!text || !isOwner) return;
+    if (!text || !isOwner || !room) return;
     setReplyPending(true);
     setError('');
     try {
@@ -257,7 +257,7 @@ export function useLiveComments({
   };
 
   const pinComment = async (comment: LiveComment) => {
-    if (!isOwner) return;
+    if (!isOwner || !room) return;
     setError('');
     const until = Date.now() + 10_000;
     setPreviewOverlay({ author: comment.author, text: comment.text, until });
@@ -280,6 +280,7 @@ export function useLiveComments({
 
   const clearOverlay = async () => {
     clearPinned();
+    if (!room) return;
     try {
       await apiFetch(`/api/rooms/${encodeURIComponent(room)}/overlay`, {
         method: 'POST',

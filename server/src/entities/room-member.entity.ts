@@ -30,6 +30,17 @@ export class RoomMember {
   @Column({ type: 'varchar' })
   declare role: RoomRole;
 
+  /**
+   * Soft delete, not a row delete: UNIQUE(roomId, userId) plus auto-admit on
+   * join means a removed row would just be reinserted the moment the kicked
+   * user re-POSTs /join.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  declare removedAt: Date | null;
+
+  @Column({ type: 'uuid', nullable: true })
+  declare removedById: string | null;
+
   @ManyToOne(() => Room, (room) => room.members, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'roomId' })
   declare room: Room;

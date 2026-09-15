@@ -27,7 +27,14 @@ export class RecordingGateway implements OnGatewayConnection {
 
   handleConnection(socket: WebSocket, request: IncomingMessage): void {
     const url = new URL(request.url ?? '/', 'http://localhost');
-    const room = url.searchParams.get('room') ?? 'main';
+    // No default: a sink that guesses its room would silently splice one
+    // stream's frames into another room's recording.
+    const room = url.searchParams.get('room');
+    if (!room) {
+      console.error('[recording] reject sink: missing room param');
+      socket.close();
+      return;
+    }
     const codecParam = url.searchParams.get('codec');
     const raw = codecParam === 'raw';
     const codec = raw ? 'h264' : parseRecorderCodec(codecParam);

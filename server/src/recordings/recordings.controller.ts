@@ -14,17 +14,20 @@ export class RecordingsController {
     private readonly rooms: RoomsService,
   ) {}
 
+  // Owner-only: with public invite links, any speaker being able to start a
+  // recording (or a live stream to the owner's RTMP destinations) is a hole.
   @Post('start')
   async start(@CurrentUser() user: AuthUser, @Body() body: StartRecordingDto) {
-    const slug = body.room ?? 'main';
-    const { room } = await this.rooms.requireMembershipBySlug(slug, user.id);
+    const { room } = await this.rooms.requireOwnerBySlug(body.room, user.id);
     return this.recordings.start(room, user.id, body);
   }
 
   @Post('stop')
   async stop(@CurrentUser() user: AuthUser, @Body() body: StopRecordingDto) {
-    const slug = body.room ?? 'main';
-    const { room } = await this.rooms.requireMembershipBySlug(slug, user.id);
+    // allowClosed: ending the room closes it before the stop lands.
+    const { room } = await this.rooms.requireOwnerBySlug(body.room, user.id, {
+      allowClosed: true,
+    });
     return this.recordings.stop(room);
   }
 

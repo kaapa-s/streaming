@@ -1,6 +1,5 @@
 import { Link } from '@tanstack/react-router';
 import { useMemo, useState } from 'react';
-import { keepStudioSearch } from '../../lib/studioSearch';
 import {
   PLATFORM_META,
   PLATFORM_PROVIDERS,
@@ -70,7 +69,7 @@ export function GoLiveModal({
             </p>
             <div className="flex gap-2 justify-end">
               <Button onClick={onClose}>Cancel</Button>
-              <Link to="/settings" search={keepStudioSearch}>
+              <Link to="/settings">
                 <Button variant="primary">Open Settings</Button>
               </Link>
             </div>
@@ -108,7 +107,7 @@ export function GoLiveModal({
                       ) : (
                         <Link
                           to="/settings"
-                          search={keepStudioSearch}
+                         
                           className="ml-auto text-sm text-accent hover:underline"
                         >
                           Connect in Settings

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { endRoom } from '../lib/rooms';
 import type { StudioValue } from '../studio/studioHandle';
 import { useLiveComments } from './useLiveComments';
 import { usePlatformConnections } from './usePlatformConnections';
@@ -9,8 +10,14 @@ import { useStudioAuth } from './useStudioAuth';
 import { useStudioLayout } from './useStudioLayout';
 import { useStudioSession } from './useStudioSession';
 
-export function useStudioController(room: string): StudioValue {
+/**
+ * `room` is null on the auth shell (login / new stream / settings), where there
+ * is nothing to join yet. The room-scoped hooks all no-op in that state, so the
+ * shell still gets auth and platform connections from one controller.
+ */
+export function useStudioController(room: string | null): StudioValue {
   const [error, setError] = useState('');
+  const [endPending, setEndPending] = useState(false);
   const auth = useStudioAuth(setError);
   const session = useStudioSession({
     user: auth.user,
@@ -88,6 +95,35 @@ export function useStudioController(room: string): StudioValue {
       await session.leave();
     },
     roomRole: session.roomRole,
+    roomSlug: room,
+    roomTitle: session.roomTitle,
+    removedFromRoom: session.removedFromRoom,
+    clearRemovedFromRoom: session.clearRemovedFromRoom,
+    kickUser: (userId) => {
+      void session.kickUser(userId);
+    },
+    endPending,
+    // Deliberately does NOT call session.leave(): flipping `joined` here would
+    // trip the /live route guard into redirecting to the pre-join screen, racing
+    // the caller's own navigation. The caller navigates away instead, and
+    // unmounting the room layout runs useStudioSession's cleanup, which closes
+    // the SFU client and stops the camera/mic tracks. resetUi must still run
+    // first, or useBlocker would prompt about an "active session" on the way out.
+    endStream: async () => {
+      if (!room || endPending) return;
+      setEndPending(true);
+      try {
+        // API first: it closes the room, stops any recording and frees the
+        // compositor slot. The signaling close then drops everyone still on it.
+        await endRoom(room);
+        await session.closeRoomMedia();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setEndPending(false);
+        recording.resetUi();
+      }
+    },
     localPeerId: session.localPeerId,
     localStream: session.localStream,
     localScreenStream: session.localScreenStream,
