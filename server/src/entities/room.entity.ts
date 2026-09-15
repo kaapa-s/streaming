@@ -10,7 +10,6 @@ import {
 import { Recording } from './recording.entity';
 import { RoomMember } from './room-member.entity';
 import { User } from './user.entity';
-import type { RoomLayout } from '../rooms/room-layout';
 
 @Entity('rooms')
 export class Room {
@@ -26,13 +25,6 @@ export class Room {
   @ManyToOne(() => User, (user) => user.ownedRooms, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'ownerId' })
   declare owner: User;
-
-  /**
-   * Last scene the owner picked. Null until they change anything; the API falls
-   * back to DEFAULT_ROOM_LAYOUT so late-joining speakers still mirror a real scene.
-   */
-  @Column({ type: 'jsonb', nullable: true })
-  declare layout: RoomLayout | null;
 
   @CreateDateColumn()
   declare createdAt: Date;

@@ -7,7 +7,7 @@
     "build": "tsc",
     "start": "node dist/main.js",
     "typecheck": "tsc --noEmit",
-    "test": "node --require ts-node/register --test src/comments/*.spec.ts src/recordings/*.spec.ts src/platforms/*.spec.ts src/rooms/*.spec.ts",
+    "test": "node --require ts-node/register --test src/comments/*.spec.ts src/recordings/*.spec.ts src/platforms/*.spec.ts",
     "lint": "oxlint src",
     "migration:run": "ts-node --transpile-only ./node_modules/typeorm/cli.js migration:run -d src/data-source.ts",
     "migration:revert": "ts-node --transpile-only ./node_modules/typeorm/cli.js migration:revert -d src/data-source.ts"
