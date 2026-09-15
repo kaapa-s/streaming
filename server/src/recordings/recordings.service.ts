@@ -84,6 +84,7 @@ export class RecordingsService {
         token,
       });
       await this.recordings.update(row.id, { status: 'recording' });
+      await this.syncLayoutToCompositor(slug);
       if (destinationIds.includes('youtube')) {
         this.comments.bindForLiveRoom(slug, room.ownerId);
       }
@@ -171,6 +172,25 @@ export class RecordingsService {
   /** Trigger compositor warmup after a speaker joins the studio. */
   warmupRoom(slug: string, resolution?: string): void {
     const token = this.rooms.issueCompositorJoinToken(slug);
-    this.compositor.warmupInBackground(slug, token, resolution);
+    void this.compositor
+      .warmup(slug, { token, resolution })
+      .then(async () => {
+        // A fresh recorder session starts on the default scene; the room may
+        // already have one the owner picked. Layout pushes that arrive before the
+        // session exists are dropped, so re-apply it here.
+        await this.syncLayoutToCompositor(slug);
+      })
+      .catch((err) => {
+        this.logger.warn(`warmup failed for room ${slug}: ${String(err)}`);
+      });
+  }
+
+  /** Best-effort: make the recorder match the scene stored on the room. */
+  private async syncLayoutToCompositor(slug: string): Promise<void> {
+    try {
+      await this.compositor.setLayout(slug, await this.rooms.layoutBySlug(slug));
+    } catch (err) {
+      this.logger.warn(`layout sync failed for room ${slug}: ${String(err)}`);
+    }
   }
 }

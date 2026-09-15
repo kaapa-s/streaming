@@ -9,6 +9,16 @@ import { Repository } from 'typeorm';
 import { issueJoinToken } from '@streaming/join-token';
 import { Room, RoomMember, type RoomRole } from '../entities';
 import type { AuthUser } from '../auth/jwt.strategy';
+import {
+  defaultRoomLayout,
+  normalizeRoomLayout,
+  type RoomLayout,
+} from './room-layout';
+
+function roomLayoutOf(room: Room): RoomLayout {
+  // normalizeRoomLayout guards legacy/hand-edited jsonb rows; defaultRoomLayout is fresh.
+  return room.layout ? normalizeRoomLayout(room.layout) : defaultRoomLayout();
+}
 
 function optionalSfuUrl(): string | undefined {
   const value = process.env.SFU_PUBLIC_WS_URL?.trim();
@@ -129,5 +139,28 @@ export class RoomsService {
       role: 'compositor',
       // Recording sessions can run longer than a studio join.
     }, 60 * 60 * 6);
+  }
+
+  /** Stored scene for a room, without a membership check (internal/compositor use). */
+  async layoutBySlug(slug: string): Promise<RoomLayout> {
+    const room = await this.findBySlug(slug);
+    return roomLayoutOf(room);
+  }
+
+  /** Stored scene for a room. Any member may read it — everyone mirrors the owner. */
+  async getLayout(slug: string, userId: string): Promise<RoomLayout> {
+    const { room } = await this.requireMembershipBySlug(slug, userId);
+    return roomLayoutOf(room);
+  }
+
+  /** Persist the owner's scene. Returns the normalized layout for the caller to forward. */
+  async setLayout(slug: string, userId: string, layout: unknown): Promise<RoomLayout> {
+    const { room, member } = await this.requireMembershipBySlug(slug, userId);
+    if (member.role !== 'owner') {
+      throw new ForbiddenException('only the room owner can change layout');
+    }
+    const next = normalizeRoomLayout(layout);
+    await this.rooms.update({ id: room.id }, { layout: next });
+    return next;
   }
 }

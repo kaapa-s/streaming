@@ -1,4 +1,4 @@
-import { Body, Controller, ForbiddenException, Get, Inject, Logger, Param, Post, UseGuards, forwardRef } from '@nestjs/common';
+import { Body, Controller, Get, Inject, Logger, Param, Post, UseGuards, forwardRef } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/auth.guards';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { AuthUser } from '../auth/jwt.strategy';
@@ -6,6 +6,7 @@ import { CompositorClient } from '../recordings/compositor.client';
 import { RecordingsService } from '../recordings/recordings.service';
 import { CreateRoomDto, SetLayoutDto } from './dto/rooms.dto';
 import { RoomsService } from './rooms.service';
+import type { RoomLayout } from './room-layout';
 
 @Controller('rooms')
 @UseGuards(JwtAuthGuard)
@@ -40,23 +41,28 @@ export class RoomsController {
     return result;
   }
 
+  /**
+   * Current scene. Non-owner speakers poll this so their program preview follows
+   * whatever the owner last put on air.
+   */
+  @Get(':slug/layout')
+  getLayout(@Param('slug') slug: string, @CurrentUser() user: AuthUser): Promise<RoomLayout> {
+    return this.rooms.getLayout(slug, user.id);
+  }
+
   @Post(':slug/layout')
   async setLayout(
     @Param('slug') slug: string,
     @CurrentUser() user: AuthUser,
     @Body() body: SetLayoutDto,
-  ) {
-    const { member } = await this.rooms.requireMembershipBySlug(slug, user.id);
-    if (member.role !== 'owner') {
-      throw new ForbiddenException('only the room owner can change layout');
-    }
+  ): Promise<{ ok: true }> {
+    // Owner-only; also persists so later joiners mirror the same scene.
+    const layout = await this.rooms.setLayout(slug, user.id, body);
     try {
-      await this.compositor.setLayout(slug, {
-        cameraPreset: body.cameraPreset,
-        featuredId: body.featuredId,
-        sceneScreenIds: body.sceneScreenIds,
-      });
+      await this.compositor.setLayout(slug, layout);
     } catch (err) {
+      // The recorder being unreachable must not break the studio, and other
+      // speakers still follow the stored layout.
       this.logger.warn(`compositor layout failed for ${slug}: ${String(err)}`);
     }
     return { ok: true };

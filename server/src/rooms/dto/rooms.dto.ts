@@ -1,4 +1,12 @@
-import { IsArray, IsIn, IsString, Matches, MinLength, ValidateIf } from 'class-validator';
+import {
+  IsArray,
+  IsIn,
+  IsString,
+  Matches,
+  MinLength,
+  ValidateIf,
+} from 'class-validator';
+import { CAMERA_PRESETS, type CameraPreset } from '../room-layout';
 
 export class CreateRoomDto {
   @IsString()
@@ -10,8 +18,8 @@ export class CreateRoomDto {
 }
 
 export class SetLayoutDto {
-  @IsIn(['focus', 'pip-left', 'pip-right', 'grid'])
-  declare cameraPreset: 'focus' | 'pip-left' | 'pip-right' | 'grid';
+  @IsIn(CAMERA_PRESETS)
+  declare cameraPreset: CameraPreset;
 
   @ValidateIf((_, value) => value !== null)
   @IsString()

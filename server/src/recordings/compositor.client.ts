@@ -1,4 +1,4 @@
-import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
+import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 
 export interface CompositorWarmupResult {
   room: string;
@@ -20,8 +20,6 @@ export interface CompositorStopResult {
 
 @Injectable()
 export class CompositorClient {
-  private readonly logger = new Logger(CompositorClient.name);
-
   private baseUrl(): string {
     const url = process.env.COMPOSITOR_URL?.trim();
     if (!url) {
@@ -86,13 +84,6 @@ export class CompositorClient {
 
   async health(): Promise<{ freeSlots: number; activeRooms: number }> {
     return this.request('GET', '/internal/health');
-  }
-
-  /** Best-effort warmup; logs and swallows errors so studio join is not blocked. */
-  warmupInBackground(slug: string, token: string, resolution?: string): void {
-    void this.warmup(slug, { token, resolution }).catch((err) => {
-      this.logger.warn(`warmup failed for room ${slug}: ${String(err)}`);
-    });
   }
 
   private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
