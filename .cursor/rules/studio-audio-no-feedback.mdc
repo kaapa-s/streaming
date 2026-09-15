@@ -36,14 +36,19 @@ drops a session to kill feedback is wrong — it breaks inbound audio for that p
 
 ## If someone reports hearing themselves / typing
 
-The local mic is reaching speakers. Usual causes: full `MediaStream` bound to a media
-element, studio `mixAudio: true`, or a duplicate producer of the same track. Do not add
-a "monitor" of the local mic to "fix" it, and do not kick peer sessions to fix it.
+First rule: **prove it is a software loop before changing any code.** Check the SFU
+produce logs for the room — if the reported "self" audio arrives as an audio producer on
+a *different peerId* (a second machine or device), the loop is acoustic and there is
+nothing to fix in this repo.
 
-Still open: feedback was **not** fixed by the reverted change, so the source is not a
-duplicate SFU session. Before changing anything, reproduce and capture:
+**Confirmed real case (2026-09):** a second computer used an iPhone as Continuity Camera,
+which is also an **audio input device**. That machine published a genuine extra mic track
+capturing the room's own speaker output. Everyone (including the owner) heard it. Not a
+bug: no peer dedup, `mixAudio` flag, or track filtering can remove a legitimately remote
+mic. Fix is physical — headphones on that machine, or don't use its mic.
 
-- SFU log lines around `joined room` / `left room` for the reporting user (how many
-  peers/producers share a name, and whether any peer leaves unexpectedly)
-- browser console `[sfu] consume failed` / `[remote-audio] play failed`
-- which peer ids appear in `remotePeers` vs `localPeerId` on the affected client
+Only if the loop is a second producer of the *same* local track, look for: full
+`MediaStream` bound to a media element, studio `mixAudio: true`. Do not add a "monitor"
+of the local mic to "fix" it, and do not kick peer sessions to fix it — that closed the
+victim's transports and silenced their inbound audio (reverted; see `Revert the studio
+audio changes`).
