@@ -42,8 +42,13 @@ export function SceneStrip({
 
   return (
     <section className="border-t border-border bg-surface-raised px-5 py-4">
-      <h2 className="text-xs font-semibold tracking-[0.12em] uppercase text-ink-subtle mb-3">
+      <h2 className="text-xs font-semibold tracking-[0.12em] uppercase text-ink-subtle mb-3 flex items-baseline gap-2.5">
         Scene
+        {!canEditLayout && (
+          <span className="normal-case tracking-normal text-[11px] font-medium text-ink-muted">
+            Following the host — their layout drives your preview and the recording.
+          </span>
+        )}
       </h2>
 
       <div className="flex flex-col gap-4">
