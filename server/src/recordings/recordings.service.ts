@@ -216,23 +216,23 @@ export class RecordingsService {
     };
   }
 
-  async media(room: Room, userId: string): Promise<{
+  async media(room: Room, userId: string): Promise<{ media: {
     status: string;
     startedAt: Date | null;
     endedAt: Date | null;
     file: string | null;
     downloadUrl?: string;
-  } | null> {
+  } | null }> {
     if (room.ownerId !== userId) throw new ForbiddenException('only the room owner can access recorded media');
     const recording = await this.recordings.findOne({ where: { roomId: room.id }, order: { createdAt: 'DESC' } });
-    if (!recording) return null;
+    if (!recording) return { media: null };
     const downloadUrl = recording.s3Key && this.s3.isConfigured()
       ? await this.s3.createDownloadUrl(recording.s3Key)
       : undefined;
-    return {
+    return { media: {
       status: recording.status, startedAt: recording.startedAt, endedAt: recording.endedAt,
       file: recording.filePath, ...(downloadUrl ? { downloadUrl } : {}),
-    };
+    } };
   }
 
   async status(): Promise<unknown> {

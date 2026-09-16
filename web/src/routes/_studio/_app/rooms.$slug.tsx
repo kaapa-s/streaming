@@ -7,6 +7,12 @@ export const Route = createFileRoute('/_studio/_app/rooms/$slug')({ component: F
 
 type Media = { status: string; startedAt: string | null; endedAt: string | null; file: string | null; downloadUrl?: string } | null;
 
+function mediaFromPayload(payload: unknown): Media {
+  if (typeof payload !== 'object' || payload === null || !('media' in payload)) return null;
+  const media = payload.media;
+  return typeof media === 'object' && media !== null ? media as Media : null;
+}
+
 function FinishedRoomPage() {
   const { slug } = Route.useParams();
   const [media, setMedia] = useState<Media>(null);
@@ -15,7 +21,14 @@ function FinishedRoomPage() {
   useEffect(() => {
     void apiFetch(`/api/rooms/${encodeURIComponent(slug)}/media`).then(async (response) => {
       if (!response.ok) throw new Error('Unable to load room media');
-      setMedia(await response.json() as Media);
+      const text = await response.text();
+      if (!text.trim()) { setMedia(null); return; }
+      try {
+        const payload: unknown = JSON.parse(text);
+        setMedia(mediaFromPayload(payload));
+      } catch {
+        throw new Error('Unable to read room media');
+      }
     }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : 'Unable to load room media')).finally(() => setLoading(false));
   }, [slug]);
 
