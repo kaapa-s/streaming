@@ -16,15 +16,13 @@ export class RecordingsController {
 
   @Post('start')
   async start(@CurrentUser() user: AuthUser, @Body() body: StartRecordingDto) {
-    const slug = body.room ?? 'main';
-    const { room } = await this.rooms.requireMembershipBySlug(slug, user.id);
+    const { room } = await this.rooms.requireMembershipBySlug(body.room, user.id);
     return this.recordings.start(room, user.id, body);
   }
 
   @Post('stop')
   async stop(@CurrentUser() user: AuthUser, @Body() body: StopRecordingDto) {
-    const slug = body.room ?? 'main';
-    const { room } = await this.rooms.requireMembershipBySlug(slug, user.id);
+    const { room } = await this.rooms.requireMembershipBySlug(body.room, user.id);
     return this.recordings.stop(room);
   }
 

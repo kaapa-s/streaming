@@ -19,7 +19,7 @@ function NewRecordingPage() {
   const s = useStudio();
   const [sessionName, setSessionName] = useLocalStorageState(SESSION_NAME_KEY, defaultSessionName());
   const [roomDraft, setRoomDraft] = useState(room);
-  const [showAdvanced, setShowAdvanced] = useState(room !== 'main');
+  const [showAdvanced, setShowAdvanced] = useState(true);
 
   useEffect(() => {
     setRoomDraft(room);
@@ -27,14 +27,15 @@ function NewRecordingPage() {
 
   // e2e: /join?room=x&auto=1 joins as soon as the lobby is ready
   useEffect(() => {
-    if (auto && s.user && !s.joined && !s.joining) void s.join();
-  }, [auto, s.user, s.joined, s.joining, s.join]);
+    if (auto && s.user && !s.joined && !s.joining && !s.error) void s.join();
+  }, [auto, s.user, s.joined, s.joining, s.error, s.join]);
 
   if (!s.user) return null;
 
   const enterStudio = (e: React.FormEvent) => {
     e.preventDefault();
-    const nextRoom = roomDraft.trim() || 'main';
+    const nextRoom = roomDraft.trim();
+    if (!nextRoom) return;
     if (nextRoom !== room) {
       void navigate({
         search: (prev) => ({ ...prev, room: nextRoom, auto: true }),
@@ -84,7 +85,7 @@ function NewRecordingPage() {
                 className="rounded-lg border border-border bg-surface px-3.5 py-2.5 text-ink outline-none focus:border-accent"
                 value={roomDraft}
                 onChange={(e) => setRoomDraft(e.target.value)}
-                placeholder="main"
+                placeholder="room slug"
                 autoComplete="off"
                 disabled={s.joining}
               />
@@ -92,7 +93,7 @@ function NewRecordingPage() {
           )}
         </div>
 
-        <Button type="submit" variant="primary" loading={s.joining} className="self-start">
+        <Button type="submit" variant="primary" loading={s.joining} disabled={!roomDraft.trim()} className="self-start">
           {s.joining ? 'Entering…' : 'Enter studio'}
         </Button>
 

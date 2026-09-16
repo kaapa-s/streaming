@@ -1,6 +1,7 @@
 import {
   Column,
   CreateDateColumn,
+  Index,
   Entity,
   JoinColumn,
   ManyToOne,
@@ -12,7 +13,13 @@ import { RoomMember } from './room-member.entity';
 import { User } from './user.entity';
 import type { RoomLayout } from '../rooms/room-layout';
 
+export type RoomStatus = 'created' | 'active' | 'finished';
+
 @Entity('rooms')
+@Index('IDX_rooms_one_active_owner', ['ownerId'], {
+  unique: true,
+  where: '"status" = \'active\'',
+})
 export class Room {
   @PrimaryGeneratedColumn('uuid')
   declare id: string;
@@ -22,6 +29,9 @@ export class Room {
 
   @Column()
   declare ownerId: string;
+
+  @Column({ type: 'varchar', default: 'created' })
+  declare status: RoomStatus;
 
   @ManyToOne(() => User, (user) => user.ownedRooms, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'ownerId' })

@@ -12,9 +12,9 @@ export class StartRecordingDestinationDto {
 }
 
 export class StartRecordingDto {
-  @IsOptional()
   @IsString()
-  room?: string;
+  @MinLength(1)
+  room!: string;
 
   /** @deprecated Prefer `destinations`. Treated as a YouTube stream key. */
   @IsOptional()
@@ -38,7 +38,7 @@ export class StartRecordingDto {
 }
 
 export class StopRecordingDto {
-  @IsOptional()
   @IsString()
-  room?: string;
+  @MinLength(1)
+  room!: string;
 }

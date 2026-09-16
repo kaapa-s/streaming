@@ -32,7 +32,7 @@ export class RoomsController {
 
   @Post(':id/join')
   async joinById(@Param('id') id: string, @CurrentUser() user: AuthUser) {
-    // UUID → by id; otherwise treat as slug for studio UX (?room=main).
+    // UUID → by id; otherwise treat as a room slug for studio UX (?room=<slug>).
     const result = isUuid(id)
       ? await this.rooms.joinById(id, user)
       : await this.rooms.joinBySlug(id, user);

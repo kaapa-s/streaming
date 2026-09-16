@@ -39,7 +39,7 @@ export class RoomsService {
     const existing = await this.rooms.findOne({ where: { slug: normalized } });
     if (existing) throw new ConflictException(`room "${normalized}" already exists`);
     const room = await this.rooms.save(
-      this.rooms.create({ slug: normalized, ownerId: owner.id }),
+      this.rooms.create({ slug: normalized, ownerId: owner.id, status: 'created' }),
     );
     await this.members.save(
       this.members.create({ roomId: room.id, userId: owner.id, role: 'owner' }),
@@ -72,8 +72,8 @@ export class RoomsService {
   }
 
   /**
-   * Join by slug: create room (caller becomes owner) if missing, else ensure speaker membership.
-   * Returns a short-lived SFU join token.
+   * Join an existing room by slug and ensure speaker membership.
+   * Rooms are created explicitly through POST /rooms, never as a join side effect.
    */
   async joinBySlug(slug: string, user: AuthUser): Promise<{
     room: { id: string; slug: string };
@@ -81,29 +81,16 @@ export class RoomsService {
     joinToken: string;
     sfuUrl?: string;
   }> {
-    const normalized = slug.trim().toLowerCase();
-    let room = await this.rooms.findOne({ where: { slug: normalized } });
-    let role: RoomRole;
-
-    if (!room) {
-      room = await this.rooms.save(
-        this.rooms.create({ slug: normalized, ownerId: user.id }),
+    const room = await this.findBySlug(slug);
+    let member = await this.members.findOne({
+      where: { roomId: room.id, userId: user.id },
+    });
+    if (!member) {
+      member = await this.members.save(
+        this.members.create({ roomId: room.id, userId: user.id, role: 'speaker' }),
       );
-      await this.members.save(
-        this.members.create({ roomId: room.id, userId: user.id, role: 'owner' }),
-      );
-      role = 'owner';
-    } else {
-      let member = await this.members.findOne({
-        where: { roomId: room.id, userId: user.id },
-      });
-      if (!member) {
-        member = await this.members.save(
-          this.members.create({ roomId: room.id, userId: user.id, role: 'speaker' }),
-        );
-      }
-      role = member.role;
     }
+    const role = member.role;
 
     const joinToken = issueJoinToken({
       roomSlug: room.slug,

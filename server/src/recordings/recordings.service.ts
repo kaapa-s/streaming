@@ -1,5 +1,7 @@
 import {
   BadRequestException,
+  ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   Logger,
@@ -7,7 +9,7 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { CommentsService } from '../comments/comments.service';
 import { Recording, Room } from '../entities';
 import type { PlatformProvider } from '../platforms/platform-ids';
@@ -20,6 +22,10 @@ import type { StartRecordingDto } from './recordings.dto';
 import { S3PresignService } from './s3-presign.service';
 import { parseResolution, type StreamResolution } from '@streaming/stream-quality';
 
+function isUniqueViolation(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === '23505';
+}
+
 @Injectable()
 export class RecordingsService {
   private readonly logger = new Logger(RecordingsService.name);
@@ -27,6 +33,7 @@ export class RecordingsService {
   private readonly activeIds = new Map<string, string>();
 
   constructor(
+    private readonly dataSource: DataSource,
     private readonly rooms: RoomsService,
     private readonly compositor: CompositorClient,
     private readonly s3: S3PresignService,
@@ -68,17 +75,43 @@ export class RecordingsService {
     const resolution = parseResolution(body.resolution);
     const token = this.rooms.issueCompositorJoinToken(slug);
 
-    const row = await this.recordings.save(
-      this.recordings.create({
-        roomId: room.id,
-        status: 'starting',
-        resolution,
-        startedAt: new Date(),
-        filePath: null,
-        s3Key: null,
-        endedAt: null,
-      }),
-    );
+    let row: Recording;
+    try {
+      row = await this.dataSource.transaction(async (manager) => {
+        const lockedRoom = await manager.findOne(Room, {
+          where: { id: room.id },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!lockedRoom) throw new NotFoundException(`room "${slug}" not found`);
+        if (lockedRoom.ownerId !== userId) {
+          throw new ForbiddenException('only the room owner can start recording');
+        }
+        if (lockedRoom.status !== 'created') {
+          throw new ConflictException(
+            `room "${slug}" cannot be activated from status "${lockedRoom.status}"`,
+          );
+        }
+
+        const recording = manager.create(Recording, {
+          roomId: lockedRoom.id,
+          status: 'starting',
+          resolution,
+          startedAt: new Date(),
+          filePath: null,
+          s3Key: null,
+          endedAt: null,
+        });
+        await manager.save(Recording, recording);
+        lockedRoom.status = 'active';
+        await manager.save(Room, lockedRoom);
+        return recording;
+      });
+    } catch (err) {
+      if (isUniqueViolation(err)) {
+        throw new ConflictException('user already owns an active room');
+      }
+      throw err;
+    }
     this.activeIds.set(slug, row.id);
 
     try {
@@ -100,7 +133,10 @@ export class RecordingsService {
       };
     } catch (err) {
       this.activeIds.delete(slug);
-      await this.recordings.update(row.id, { status: 'failed', endedAt: new Date() });
+      await this.dataSource.transaction(async (manager) => {
+        await manager.update(Recording, row.id, { status: 'failed', endedAt: new Date() });
+        await manager.update(Room, { id: room.id, status: 'active' }, { status: 'created' });
+      });
       throw err;
     }
   }
@@ -152,7 +188,17 @@ export class RecordingsService {
       updates.status = 'stopped';
     }
 
-    await this.recordings.update(recordingId, updates);
+    await this.dataSource.transaction(async (manager) => {
+      await manager.update(Recording, recordingId, updates);
+      const roomUpdate = await manager.update(
+        Room,
+        { id: room.id, status: 'active' },
+        { status: 'finished' },
+      );
+      if (roomUpdate.affected !== 1) {
+        throw new ConflictException(`room "${slug}" is no longer active`);
+      }
+    });
     this.logger.log(
       `stopped room=${slug} file=${result.file ?? 'none'} s3=${s3Key ?? 'none'}`,
     );
