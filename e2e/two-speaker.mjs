@@ -9,6 +9,7 @@
  * the harness.
  */
 import { createRequire } from 'module';
+import { spawn } from 'child_process';
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
@@ -34,9 +35,9 @@ const PHASE_LEAD_MS = 1_000;
 const RECORDING_MS = PHASE_LEAD_MS + PHASE_DURATION_MS * 3 + 1_000;
 const SCENE_INTERVAL_MS = 3_000;
 const PHASES = [
-  { name: 'BOB SOLO', active: ['Bob'] },
-  { name: 'ALICE SOLO', active: ['Alice'] },
-  { name: 'BOB + ALICE', active: ['Bob', 'Alice'] },
+  { name: 'BOB SOLO', displayName: 'BOTH ON SCREEN — BOB AUDIO', active: ['Bob'] },
+  { name: 'ALICE SOLO', displayName: 'BOTH ON SCREEN — ALICE AUDIO', active: ['Alice'] },
+  { name: 'BOB + ALICE', displayName: 'BOTH ON SCREEN — BOTH AUDIO', active: ['Bob', 'Alice'] },
 ];
 const DIAGNOSTIC_TIMEOUT_MS = 20_000;
 const AUDIO_METRIC = {
@@ -157,10 +158,13 @@ function mediaFixtureInit() {
       context.textAlign = 'center';
       context.font = 'bold 96px monospace';
       context.fillText(config.label, canvas.width / 2, 130);
-      context.font = 'bold 64px monospace';
-      context.fillText(phase?.name ?? 'WAITING FOR RECORDING', canvas.width / 2, 300);
+      context.font = 'bold 52px monospace';
+      const displayCue = phase?.displayName ?? 'WAITING FOR RECORDING';
+      const [cueLine, cueDetail] = displayCue.split(' — ');
+      context.fillText(cueLine, canvas.width / 2, 285);
+      if (cueDetail) context.fillText(cueDetail, canvas.width / 2, 350);
       context.font = '48px monospace';
-      context.fillText(`frame ${String(frame).padStart(6, '0')}`, canvas.width / 2, 390);
+      context.fillText(`frame ${String(frame).padStart(6, '0')}`, canvas.width / 2, 420);
       frame += 1;
     };
     draw();
@@ -339,6 +343,43 @@ async function measureRemoteAudio(page) {
     expectedHz: page.__speakerName === 'Alice' ? MEDIA_FIXTURES.Bob.frequencyHz : MEDIA_FIXTURES.Alice.frequencyHz,
     ownHz: page.__speakerName === 'Alice' ? MEDIA_FIXTURES.Alice.frequencyHz : MEDIA_FIXTURES.Bob.frequencyHz,
   });
+}
+
+function run(command, args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    const stderr = [];
+    child.stderr.on('data', (chunk) => stderr.push(chunk));
+    child.on('error', reject);
+    child.on('close', (code) => resolve({ code: code ?? 1, stderr: Buffer.concat(stderr).toString() }));
+  });
+}
+
+async function captureLayoutFrames(file, artifactDir, duration) {
+  const layouts = [
+    { name: 'focus', timestampSeconds: 1.5 },
+    { name: 'pip-left', timestampSeconds: 4.5 },
+    { name: 'pip-right', timestampSeconds: 7.5 },
+    { name: 'grid-side-by-side', timestampSeconds: 10.5 },
+    { name: 'presentation', timestampSeconds: 13.5 },
+  ];
+  const frames = [];
+  for (const layout of layouts) {
+    if (layout.timestampSeconds >= duration - 0.1) continue;
+    const filePath = join(artifactDir, `layout-${layout.name}.png`);
+    const result = await run(process.env.FFMPEG_PATH ?? 'ffmpeg', [
+      '-v', 'error', '-ss', String(layout.timestampSeconds), '-i', file,
+      '-frames:v', '1', '-f', 'image2', filePath,
+    ]);
+    if (result.code !== 0) throw new Error(`layout frame could not be extracted (${layout.name}): ${result.stderr}`);
+    frames.push({ ...layout, file: filePath });
+  }
+  writeFileSync(join(artifactDir, 'layout-frames.json'), JSON.stringify({
+    schemaVersion: 'quality-gate/layout-frames-v1',
+    meaning: 'Human-facing diagnostic frames captured during the scheduled compositor layouts; not a pixel-perfect pass/fail oracle.',
+    frames,
+  }, null, 2));
+  return frames;
 }
 
 function validateSceneSnapshots(file, expectedPresets, expectedSources, sceneAudioContract) {
@@ -590,6 +631,8 @@ async function main() {
   }, null, 2));
   console.log('source frame counters:', JSON.stringify(sourceFrames));
   const media = await validateRecording(body.file, artifactDir);
+  const layoutFrames = await captureLayoutFrames(body.file, artifactDir, media.summary.durationSeconds);
+  console.log(`layout evidence frames: ${layoutFrames.map((frame) => frame.name).join(', ')}`);
   console.log('recording validation:', JSON.stringify(media));
   console.log('RECORDING_VALIDATION_OK');
   if (rtmpReceiver) {

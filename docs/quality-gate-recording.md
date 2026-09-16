@@ -17,8 +17,15 @@ UI, without changing the file's encoded frame count or timestamps.
 ## Staged recording contract
 
 The recording is 17 seconds nominally: a 1 second lead-in, followed by three
-5-second phases and a 1 second stop/encoder margin. The visual-only cues are
-exactly `BOB SOLO`, `ALICE SOLO`, and `BOB + ALICE`. The deterministic tones remain
+5-second phases and a 1 second stop/encoder margin. The audio phase names remain
+`BOB SOLO`, `ALICE SOLO`, and `BOB + ALICE` for the machine audio contract, while
+the rendered fixture cue says `BOTH ON SCREEN — BOB AUDIO`,
+`BOTH ON SCREEN — ALICE AUDIO`, or `BOTH ON SCREEN — BOTH AUDIO`. This makes
+clear that solo refers to the active audio tone, not a single visible participant.
+The human-facing layout evidence is captured separately in `layout-frames.json`,
+including a dedicated `layout-grid-side-by-side.png`. The visual-only cues are
+exactly `BOTH ON SCREEN — BOB AUDIO`, `BOTH ON SCREEN — ALICE AUDIO`, and
+`BOTH ON SCREEN — BOTH AUDIO`. The deterministic tones remain
 audible and are 660 Hz for Bob and 440 Hz for Alice. Audio validation samples a
 1.5-second interior window for each phase, searches startup offsets, and checks
 presence/absence and order rather than relying on a whole-file midpoint.

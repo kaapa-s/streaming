@@ -75,7 +75,9 @@ API `http://localhost:3000/api`, web `https://localhost:5173`, SFU
 `http://localhost:3001`, and compositor `http://localhost:3002`. Override an origin
 only when deliberately running the same local stack on different ports. The gate
 starts its own loopback RTMP receiver; no RTMP server or external service is
-required.
+required. The receiver uses the same `/quality-gate` stream path for listening and
+publishing so normal publisher disconnects close the captured FLV without a misleading
+path error.
 
 A passing run ends with `Quality gate PASS` and exits 0. To emit the complete
 report as one JSON line, use `QUALITY_GATE_JSON=1 npm run quality-gate`.
@@ -90,8 +92,10 @@ e2e/e2e-artifacts/<UTC-timestamp>-<pid>-<id>/
 
 `report.json` is the summary. It records each check, measured values, thresholds,
 service origins, outcome, and artifact paths. Useful files include `browser.log`,
-`browser.error.log`, `compositor.session.log`, `ffprobe.json`,
-`media-validation.json`, `audio-analysis.json`, `phase-analysis.json`,
+`browser.error.log`, `compositor.session.log`, `layout-frames.json` and its
+`layout-*.png` human-facing layout evidence (including
+`layout-grid-side-by-side.png`), `ffprobe.json`, `media-validation.json`,
+`audio-analysis.json`, `phase-analysis.json`,
 `phase-frames.json`, `frame-change-diagnostics.json`, the timestamp/phase PNGs,
 `source-frame-counters.json`, and `rtmp/rtmp-validation.json` with its captured
 `rtmp-received.flv`. Failure runs also retain `run.json`, browser screenshots,

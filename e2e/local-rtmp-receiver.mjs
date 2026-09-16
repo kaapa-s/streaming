@@ -25,7 +25,10 @@ export async function startLocalRtmpReceiver(artifactDir) {
   child.on('error', (error) => append(diagnostics, `${error.stack ?? error}\n`));
   await new Promise((resolve) => setTimeout(resolve, 300));
   return {
-    url: `rtmp://127.0.0.1:${port}/quality-gate/local`,
+    // The server validates that local URLs contain an app and stream key. Use
+    // the same value for the stream key and listener app so ffmpeg's RTMP
+    // listener does not report a spurious "Unexpected stream" on connect.
+    url: `rtmp://127.0.0.1:${port}/quality-gate/quality-gate`,
     output,
     diagnostics,
     process: child,
