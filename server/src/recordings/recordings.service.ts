@@ -108,7 +108,12 @@ export class RecordingsService {
       });
     } catch (err) {
       if (isUniqueViolation(err)) {
-        throw new ConflictException('user already owns an active room');
+        const existing = await this.rooms.activeOwnedBy(userId);
+        throw new ConflictException(
+          existing
+            ? `user already owns an active room: ${existing.slug}`
+            : 'user already owns an active room',
+        );
       }
       throw err;
     }

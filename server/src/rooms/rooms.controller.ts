@@ -22,7 +22,13 @@ export class RoomsController {
 
   @Post()
   create(@Body() body: CreateRoomDto, @CurrentUser() user: AuthUser) {
-    return this.rooms.create(body.slug, user);
+    return this.rooms.create(body, user);
+  }
+
+  /** Authenticated owner dashboard data, including the latest recording state. */
+  @Get()
+  listOwned(@CurrentUser() user: AuthUser) {
+    return this.rooms.listOwned(user.id);
   }
 
   @Get(':slug')

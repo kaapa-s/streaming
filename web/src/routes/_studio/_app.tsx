@@ -1,6 +1,6 @@
 import { Link, Outlet, createFileRoute } from '@tanstack/react-router';
 import type { LucideIcon } from 'lucide-react';
-import { Settings, Video } from 'lucide-react';
+import { LayoutDashboard, Settings, Video } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { keepStudioSearch } from '../../lib/studioSearch';
 import { ensureAuthenticated } from '../../studio/studioStage';
@@ -27,6 +27,7 @@ function AppShell() {
         </div>
 
         <nav className="flex flex-col gap-1">
+          <ShellNavLink to="/dashboard" label="Rooms" icon={LayoutDashboard} />
           <ShellNavLink to="/join" label="New recording" icon={Video} />
         </nav>
 
@@ -58,7 +59,7 @@ function ShellNavLink({
   label,
   icon: Icon,
 }: {
-  to: '/join' | '/settings';
+  to: '/dashboard' | '/join' | '/settings';
   label: string;
   icon: LucideIcon;
 }) {

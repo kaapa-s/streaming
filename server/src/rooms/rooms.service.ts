@@ -1,5 +1,5 @@
 import {
-  ConflictException,
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -20,6 +20,12 @@ function roomLayoutOf(room: Room): RoomLayout {
   return room.layout ? normalizeRoomLayout(room.layout) : defaultRoomLayout();
 }
 
+function slugify(value: string): string {
+  const slug = value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return slug || 'room';
+}
+
 function optionalSfuUrl(): string | undefined {
   const value = process.env.SFU_PUBLIC_WS_URL?.trim();
   return value || undefined;
@@ -34,17 +40,51 @@ export class RoomsService {
     private readonly members: Repository<RoomMember>,
   ) {}
 
-  async create(slug: string, owner: AuthUser): Promise<Room> {
-    const normalized = slug.trim().toLowerCase();
-    const existing = await this.rooms.findOne({ where: { slug: normalized } });
-    if (existing) throw new ConflictException(`room "${normalized}" already exists`);
+  async create(input: { name?: string; slug?: string }, owner: AuthUser): Promise<Room> {
+    const name = input.name?.trim() || input.slug?.trim();
+    if (!name) throw new BadRequestException('room name is required');
+    const base = input.slug?.trim().toLowerCase() || slugify(name);
+    let slug = base;
+    for (let suffix = 2; suffix < 10000; suffix += 1) {
+      const existing = await this.rooms.findOne({ where: { slug } });
+      if (!existing) break;
+      slug = `${base}-${suffix}`;
+    }
     const room = await this.rooms.save(
-      this.rooms.create({ slug: normalized, ownerId: owner.id, status: 'created' }),
+      this.rooms.create({ name, slug, ownerId: owner.id, status: 'created' }),
     );
     await this.members.save(
       this.members.create({ roomId: room.id, userId: owner.id, role: 'owner' }),
     );
     return room;
+  }
+
+  async listOwned(userId: string): Promise<Array<{
+    id: string; slug: string; name: string; status: Room['status']; createdAt: Date;
+    recording: { id: string; status: string; startedAt: Date | null; endedAt: Date | null } | null;
+  }>> {
+    const rooms = await this.rooms.find({
+      where: { ownerId: userId },
+      relations: { recordings: true },
+      order: { createdAt: 'DESC' },
+    });
+    return rooms.map((room) => {
+      const recording = [...(room.recordings ?? [])].sort(
+        (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+      )[0];
+      return {
+        id: room.id, slug: room.slug, name: room.name, status: room.status,
+        createdAt: room.createdAt,
+        recording: recording ? {
+          id: recording.id, status: recording.status,
+          startedAt: recording.startedAt, endedAt: recording.endedAt,
+        } : null,
+      };
+    });
+  }
+
+  async activeOwnedBy(userId: string): Promise<Room | null> {
+    return this.rooms.findOne({ where: { ownerId: userId, status: 'active' } });
   }
 
   async findBySlug(slug: string): Promise<Room> {

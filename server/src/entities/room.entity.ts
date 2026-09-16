@@ -27,6 +27,9 @@ export class Room {
   @Column({ unique: true })
   declare slug: string;
 
+  @Column({ type: 'varchar' })
+  declare name: string;
+
   @Column()
   declare ownerId: string;
 

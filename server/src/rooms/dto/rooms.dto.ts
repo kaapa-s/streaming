@@ -1,6 +1,7 @@
 import {
   IsArray,
   IsIn,
+  IsOptional,
   IsString,
   Matches,
   MinLength,
@@ -9,12 +10,19 @@ import {
 import { CAMERA_PRESETS, type CameraPreset } from '../room-layout';
 
 export class CreateRoomDto {
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  declare name?: string;
+
+  // Kept for direct/API callers; the dashboard supplies name instead.
+  @IsOptional()
   @IsString()
   @MinLength(1)
   @Matches(/^[a-zA-Z0-9_-]+$/, {
     message: 'slug must be alphanumeric, hyphen, or underscore',
   })
-  declare slug: string;
+  declare slug?: string;
 }
 
 export class SetLayoutDto {

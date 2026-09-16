@@ -14,7 +14,7 @@ function readJoined(studioHandle: StudioHandle) {
 /** Public auth pages — only for signed-out users. */
 export function ensureLoggedOut(studioHandle: StudioHandle): void {
   if (readUser(studioHandle)) {
-    throw redirect({ to: '/join', replace: true, search: keepStudioSearch });
+    throw redirect({ to: '/dashboard', replace: true, search: keepStudioSearch });
   }
 }
 

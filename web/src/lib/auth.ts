@@ -166,6 +166,35 @@ export async function apiFetch(input: string, init: RequestInit = {}): Promise<R
   return res;
 }
 
+export interface OwnedRoom {
+  id: string;
+  slug: string;
+  name: string;
+  status: 'created' | 'active' | 'finished';
+  createdAt: string;
+  recording: {
+    id: string;
+    status: string;
+    startedAt: string | null;
+    endedAt: string | null;
+  } | null;
+}
+
+export async function listOwnedRooms(): Promise<OwnedRoom[]> {
+  const res = await apiFetch('/api/rooms');
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json() as Promise<OwnedRoom[]>;
+}
+
+export async function createRoom(name: string): Promise<OwnedRoom> {
+  const res = await apiFetch('/api/rooms', {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json() as Promise<OwnedRoom>;
+}
+
 export async function joinRoom(slug: string): Promise<{
   room: { id: string; slug: string };
   role: 'owner' | 'speaker' | 'viewer';

@@ -16,6 +16,7 @@ import { Route as StudioAppRouteImport } from './routes/_studio/_app'
 import { Route as StudioLiveRouteImport } from './routes/_studio/live'
 import { Route as StudioLoginRouteImport } from './routes/_studio/login'
 import { Route as StudioSignupRouteImport } from './routes/_studio/signup'
+import { Route as StudioAppDashboardRouteImport } from './routes/_studio/_app/dashboard'
 import { Route as StudioAppJoinRouteImport } from './routes/_studio/_app/join'
 import { Route as StudioAppSettingsRouteImport } from './routes/_studio/_app/settings'
 
@@ -52,6 +53,11 @@ const StudioSignupRoute = StudioSignupRouteImport.update({
   path: '/signup',
   getParentRoute: () => StudioRoute,
 } as any)
+const StudioAppDashboardRoute = StudioAppDashboardRouteImport.update({
+  id: '/dashboard',
+  path: '/dashboard',
+  getParentRoute: () => StudioAppRoute,
+} as any)
 const StudioAppJoinRoute = StudioAppJoinRouteImport.update({
   id: '/join',
   path: '/join',
@@ -69,6 +75,7 @@ export interface FileRoutesByFullPath {
   '/live': typeof StudioLiveRoute
   '/login': typeof StudioLoginRoute
   '/signup': typeof StudioSignupRoute
+  '/dashboard': typeof StudioAppDashboardRoute
   '/join': typeof StudioAppJoinRoute
   '/settings': typeof StudioAppSettingsRoute
 }
@@ -78,6 +85,7 @@ export interface FileRoutesByTo {
   '/live': typeof StudioLiveRoute
   '/login': typeof StudioLoginRoute
   '/signup': typeof StudioSignupRoute
+  '/dashboard': typeof StudioAppDashboardRoute
   '/join': typeof StudioAppJoinRoute
   '/settings': typeof StudioAppSettingsRoute
 }
@@ -90,6 +98,7 @@ export interface FileRoutesById {
   '/_studio/live': typeof StudioLiveRoute
   '/_studio/login': typeof StudioLoginRoute
   '/_studio/signup': typeof StudioSignupRoute
+  '/_studio/_app/dashboard': typeof StudioAppDashboardRoute
   '/_studio/_app/join': typeof StudioAppJoinRoute
   '/_studio/_app/settings': typeof StudioAppSettingsRoute
 }
@@ -101,6 +110,7 @@ export interface FileRouteTypes {
     | '/live'
     | '/login'
     | '/signup'
+    | '/dashboard'
     | '/join'
     | '/settings'
   fileRoutesByTo: FileRoutesByTo
@@ -110,6 +120,7 @@ export interface FileRouteTypes {
     | '/live'
     | '/login'
     | '/signup'
+    | '/dashboard'
     | '/join'
     | '/settings'
   id:
@@ -121,6 +132,7 @@ export interface FileRouteTypes {
     | '/_studio/live'
     | '/_studio/login'
     | '/_studio/signup'
+    | '/_studio/_app/dashboard'
     | '/_studio/_app/join'
     | '/_studio/_app/settings'
   fileRoutesById: FileRoutesById
@@ -182,6 +194,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof StudioSignupRouteImport
       parentRoute: typeof StudioRoute
     }
+    '/_studio/_app/dashboard': {
+      id: '/_studio/_app/dashboard'
+      path: '/dashboard'
+      fullPath: '/dashboard'
+      preLoaderRoute: typeof StudioAppDashboardRouteImport
+      parentRoute: typeof StudioAppRoute
+    }
     '/_studio/_app/join': {
       id: '/_studio/_app/join'
       path: '/join'
@@ -200,11 +219,13 @@ declare module '@tanstack/react-router' {
 }
 
 interface StudioAppRouteChildren {
+  StudioAppDashboardRoute: typeof StudioAppDashboardRoute
   StudioAppJoinRoute: typeof StudioAppJoinRoute
   StudioAppSettingsRoute: typeof StudioAppSettingsRoute
 }
 
 const StudioAppRouteChildren: StudioAppRouteChildren = {
+  StudioAppDashboardRoute: StudioAppDashboardRoute,
   StudioAppJoinRoute: StudioAppJoinRoute,
   StudioAppSettingsRoute: StudioAppSettingsRoute,
 }
