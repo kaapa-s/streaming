@@ -9,9 +9,10 @@
  * the harness.
  */
 import { createRequire } from 'module';
-import { mkdirSync, statSync, writeFileSync } from 'fs';
+import { cpSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
+import { validateRecording } from './recording-validation.mjs';
 
 const require = createRequire(import.meta.url);
 const repoDir = dirname(fileURLToPath(import.meta.url));
@@ -49,6 +50,7 @@ const artifactDir = join(ARTIFACT_ROOT, runId);
 const pages = [];
 let browser;
 let cleanupAccessToken;
+let recordingFile;
 
 async function register(email, password, name) {
   const res = await fetch(`${API}/auth/register`, {
@@ -347,9 +349,11 @@ async function main() {
   const body = await stop.json();
   console.log('stop:', stop.status, body);
   if (!stop.ok || !body.file) throw new Error(`recording stop failed: ${JSON.stringify(body)}`);
-  const size = statSync(body.file).size;
-  console.log(`recording: ${body.file} (${(size / 1024).toFixed(0)} KiB)`);
-  if (size < 200_000) throw new Error('recording suspiciously small');
+  recordingFile = body.file;
+  console.log(`recording: ${body.file}`);
+  const media = await validateRecording(body.file, artifactDir);
+  console.log('recording validation:', JSON.stringify(media));
+  console.log('RECORDING_VALIDATION_OK');
   console.log('E2E OK');
 }
 
@@ -370,7 +374,10 @@ try {
         },
         body: JSON.stringify({ room }),
       });
-      if (!cleanup.ok && cleanup.status !== 404) {
+      if (cleanup.ok) {
+        const cleanupBody = await cleanup.json().catch(() => ({}));
+        if (!recordingFile && cleanupBody.file) recordingFile = cleanupBody.file;
+      } else if (cleanup.status !== 404) {
         console.error(`E2E cleanup failed (${cleanup.status}): ${await cleanup.text()}`);
       }
     } catch (cleanupError) {
@@ -382,4 +389,10 @@ try {
     try { await page.close(); } catch { /* already closed */ }
   }));
   if (browser) await browser.close();
+  if (recordingFile) {
+    const sessionLog = recordingFile.replace(/\.[^.]+$/, '.session.log');
+    try { cpSync(sessionLog, join(artifactDir, 'compositor.session.log')); } catch { /* session log may be absent */ }
+    try { rmSync(recordingFile, { force: true }); } catch (cleanupError) { console.error('recording file cleanup failed:', cleanupError); }
+    try { rmSync(sessionLog, { force: true }); } catch { /* session log may be absent */ }
+  }
 }

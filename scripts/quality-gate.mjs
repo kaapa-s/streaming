@@ -86,19 +86,21 @@ const blockedReason = blockedBy.length > 0 ? `not run: preflight failed (${block
 add('browser.publish', 'Two deterministic speakers publish audio/video', productStatus, { reason: blockedReason, threshold: { speakers: 2, tracksPerSpeaker: { audio: 1, video: 1 } }, artifacts: ['browser.log', 'browser.error.log'] });
 const audioLines = [...output.matchAll(/remote audio:\s*(\{.*\})/g)].map((match) => { try { return JSON.parse(match[1]); } catch { return null; } }).filter(Boolean);
 add('studio.remote-audio', 'Bidirectional remote audio and no self-feedback', blockedBy.length > 0 ? 'blocked' : (harnessPassed && audioLines.length >= 2 ? 'passed' : 'failed'), { reason: blockedReason, measured: audioLines, threshold: { peers: 1, rmsMinimum: 0.002, expectedEnergyMinimum: 0.18, selfLeakageMaximum: 0.08, frequencyToleranceHz: 35 }, artifacts: ['browser.log'] });
-add('recording.output', 'Local compositor recording output', blockedBy.length > 0 ? 'blocked' : (harnessPassed && /recording: .*\([\d.]+ KiB\)/.test(output) ? 'passed' : 'failed'), { reason: blockedReason, measured: { recording: output.match(/recording: (.*)/)?.[1] ?? null }, threshold: { minBytes: 200000 }, artifacts: ['browser.log'] });
+const recordingValidationPassed = /RECORDING_VALIDATION_OK/.test(output);
+add('recording.output', 'Local compositor recording media output', blockedBy.length > 0 ? 'blocked' : (harnessPassed && recordingValidationPassed ? 'passed' : 'failed'), { reason: blockedReason, measured: { recording: output.match(/recording: ([^\n]+)/)?.[1] ?? null, validated: recordingValidationPassed }, threshold: { video: { codec: ['vp8', 'vp9', 'h264'], dimensions: '1920x1080', frames: 30, keyframes: 1, nonBlack: true }, audio: { codec: ['opus', 'aac'], rmsMinimum: 0.002, tonesHz: [440, 660] }, durationSeconds: { min: 3, max: 30 } }, artifacts: ['browser.log', 'ffprobe.json', 'audio-analysis.json', 'audio-analysis.log', 'representative-frame.png', 'video-frame-analysis.json', 'media-validation.json'] });
 
 const failed = checks.filter((check) => check.status !== 'passed');
 const infrastructureFailures = checks.filter((check) => check.status === 'failed' && (check.id.startsWith('preflight.') || check.id === 'infra.harness-timeout'));
 const productFailures = checks.filter((check) => check.status === 'failed' && !infrastructureFailures.includes(check));
-const recordingPath = output.match(/recording: ([^\n]+?) \([\d.]+ KiB\)/)?.[1];
+const recordingPath = output.match(/recording: ([^\n]+)/)?.[1]?.trim();
 const sessionLogs = [];
 if (recordingPath) {
   const sessionLog = recordingPath.replace(/\.[^.]+$/, '.session.log');
-  if (existsSync(sessionLog)) { cpSync(sessionLog, join(artifactDir, 'compositor.session.log')); sessionLogs.push(join(artifactDir, 'compositor.session.log')); }
+  if (existsSync(sessionLog)) cpSync(sessionLog, join(artifactDir, 'compositor.session.log'));
+  if (existsSync(join(artifactDir, 'compositor.session.log'))) sessionLogs.push(join(artifactDir, 'compositor.session.log'));
 }
 const report = { schemaVersion: 'quality-gate/v1', runId, room: `e2e-${runId}`, startedAt, finishedAt: new Date().toISOString(), durationMs: Date.now() - Date.parse(startedAt), browser: { version: process.version }, services: { api, web, sfu, compositor }, artifacts: { directory: artifactDir, browserLog: join(artifactDir, 'browser.log'), browserErrorLog: join(artifactDir, 'browser.error.log'), mediaMetadata: join(artifactDir, 'media-metadata.json'), sessionLogs }, outcome: { passed: failed.length === 0, infrastructureFailures: infrastructureFailures.map((check) => check.id), productFailures: productFailures.map((check) => check.id) }, checks, passed: failed.length === 0 };
-writeFileSync(join(artifactDir, 'media-metadata.json'), JSON.stringify({ schemaVersion: 'quality-gate/media-v1', fixtures: { Alice: { frequencyHz: 440, width: 1280, height: 720, frameRate: 30 }, Bob: { frequencyHz: 660, width: 1280, height: 720, frameRate: 30 } } }, null, 2));
+writeFileSync(join(artifactDir, 'media-metadata.json'), JSON.stringify({ schemaVersion: 'quality-gate/media-v1', fixtures: { Alice: { frequencyHz: 440, sourceWidth: 1280, sourceHeight: 720, outputWidth: 1920, outputHeight: 1080, frameRate: 30 }, Bob: { frequencyHz: 660, sourceWidth: 1280, sourceHeight: 720, outputWidth: 1920, outputHeight: 1080, frameRate: 30 } } }, null, 2));
 for (const check of checks) writeFileSync(join(artifactDir, `${check.id}.json`), JSON.stringify(check, null, 2));
 writeFileSync(join(artifactDir, 'report.json'), JSON.stringify(report, null, 2));
 if (process.env.QUALITY_GATE_JSON || process.argv.includes('--json')) process.stdout.write(`${JSON.stringify(report)}\n`); else console.log(`Quality gate ${report.passed ? 'PASS' : 'FAIL'} — report: ${join(artifactDir, 'report.json')}`);
