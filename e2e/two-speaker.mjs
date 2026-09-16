@@ -9,7 +9,7 @@
  * the harness.
  */
 import { createRequire } from 'module';
-import { cpSync, mkdirSync, rmSync, writeFileSync } from 'fs';
+import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { validateRecording } from './recording-validation.mjs';
@@ -32,6 +32,7 @@ const PHASE_DURATION_MS = 5_000;
 const PHASE_LEAD_MS = 1_000;
 // Three 5s phases plus a 1s lead-in and 1s encoder/stop margin.
 const RECORDING_MS = PHASE_LEAD_MS + PHASE_DURATION_MS * 3 + 1_000;
+const SCENE_INTERVAL_MS = 3_000;
 const PHASES = [
   { name: 'BOB SOLO', active: ['Bob'] },
   { name: 'ALICE SOLO', active: ['Alice'] },
@@ -73,19 +74,15 @@ async function register(email, password, name) {
   return body;
 }
 
-async function setDeterministicRecordingLayout(accessToken) {
+async function setDeterministicLayout(accessToken, layout) {
   const res = await fetch(`${API}/rooms/${encodeURIComponent(room)}/layout`, {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      authorization: `Bearer ${accessToken}`,
-    },
-    // The product default is focus (one featured speaker). The quality gate
-    // must exercise both deterministic speakers in the recorded program.
-    body: JSON.stringify({ cameraPreset: 'grid', featuredId: null, sceneScreenIds: [] }),
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify(layout),
   });
   const body = await res.json();
-  if (!res.ok) throw new Error(`layout setup failed (${res.status}): ${JSON.stringify(body)}`);
+  if (!res.ok) throw new Error(`layout ${layout.cameraPreset} failed (${res.status}): ${JSON.stringify(body)}`);
+  return body;
 }
 
 function mediaFixtureInit() {
@@ -95,6 +92,8 @@ function mediaFixtureInit() {
     const streams = [];
     const contexts = [];
     const oscillators = [];
+    const screenStreams = [];
+    const screenTimers = [];
     const canvas = document.createElement('canvas');
     canvas.width = config.width;
     canvas.height = config.height;
@@ -142,6 +141,32 @@ function mediaFixtureInit() {
     video.contentHint = 'motion';
     const stream = new MediaStream([audio, video]);
     streams.push(stream);
+    let screenStream;
+    if (config.screenEnabled) {
+      const screenCanvas = document.createElement('canvas');
+      screenCanvas.width = 1920;
+      screenCanvas.height = 1080;
+      const screenContext = screenCanvas.getContext('2d');
+      let screenFrame = 0;
+      const drawScreen = () => {
+        screenContext.fillStyle = '#047857';
+        screenContext.fillRect(0, 0, screenCanvas.width, screenCanvas.height);
+        screenContext.fillStyle = '#ffffff';
+        screenContext.textAlign = 'center';
+        screenContext.font = 'bold 92px monospace';
+        screenContext.fillText('DETERMINISTIC SCREEN', screenCanvas.width / 2, 220);
+        screenContext.font = 'bold 64px monospace';
+        screenContext.fillText(`frame ${String(screenFrame++).padStart(6, '0')}`, screenCanvas.width / 2, 420);
+      };
+      drawScreen();
+      const screenTimer = setInterval(drawScreen, 1000 / config.frameRate);
+      screenTimers.push(screenTimer);
+      screenStream = screenCanvas.captureStream(config.frameRate);
+      screenStreams.push(screenStream);
+      const originalGetDisplayMedia = navigator.mediaDevices.getDisplayMedia;
+      navigator.mediaDevices.getDisplayMedia = async () => screenStream;
+      void originalGetDisplayMedia;
+    }
     contexts.push(audioContext);
     oscillators.push(oscillator);
     Object.defineProperty(navigator.mediaDevices, 'getUserMedia', {
@@ -153,6 +178,7 @@ function mediaFixtureInit() {
       fixture: { ...config },
       calls: 0,
       stream,
+      screenStream,
       getFrameStats: () => ({
         counterScope: 'source-canvas-draws',
         counterValue: frame,
@@ -162,7 +188,9 @@ function mediaFixtureInit() {
       startPhases: (startAt) => { phaseStartAt = Number(startAt); draw(); },
       cleanup: async () => {
         clearInterval(timer);
+        screenTimers.forEach((item) => clearInterval(item));
         streams.forEach((item) => item.getTracks().forEach((track) => track.stop()));
+        screenStreams.forEach((item) => item.getTracks().forEach((track) => track.stop()));
         oscillators.forEach((item) => {
           try { item.stop(); } catch { /* already stopped by browser cleanup */ }
         });
@@ -284,6 +312,36 @@ async function measureRemoteAudio(page) {
   });
 }
 
+function validateSceneSnapshots(file, expectedPresets, expectedSources) {
+  const sessionLog = file.replace(/\.[^.]+$/, '.session.log');
+  const lines = readFileSync(sessionLog, 'utf8').split(/\r?\n/);
+  const snapshots = lines.filter((line) => line.includes(' scene ')).map((line) => {
+    const marker = line.indexOf(' scene ');
+    return JSON.parse(line.slice(marker + 7));
+  });
+  const seen = new Set(snapshots.map((snapshot) => snapshot.cameraPreset));
+  for (const preset of expectedPresets) {
+    if (!seen.has(preset)) throw new Error(`scene snapshot missing preset=${preset}; snapshots=${JSON.stringify(snapshots)}`);
+  }
+  for (const snapshot of snapshots) {
+    for (const source of expectedSources) {
+      if (!snapshot.sources.includes(source)) throw new Error(`scene ${snapshot.cameraPreset} removed active source=${source}; snapshot=${JSON.stringify(snapshot)}`);
+    }
+    if (snapshot.sources.some((source) => typeof source !== 'string' || !source.includes(':'))) {
+      throw new Error(`scene ${snapshot.cameraPreset} has invalid source ids; snapshot=${JSON.stringify(snapshot)}`);
+    }
+    if (snapshot.cameraPreset === 'focus' || snapshot.cameraPreset === 'pip-left' || snapshot.cameraPreset === 'pip-right' || snapshot.cameraPreset === 'grid') {
+      if (snapshot.effective !== snapshot.cameraPreset && snapshot.sceneScreenIds.length === 0) {
+        throw new Error(`scene ${snapshot.cameraPreset} has unexpected effective preset=${snapshot.effective}; snapshot=${JSON.stringify(snapshot)}`);
+      }
+    }
+  }
+  if (!snapshots.some((snapshot) => snapshot.effective === 'presentation' && snapshot.sceneScreenIds.length > 0)) {
+    throw new Error(`presentation scene snapshot missing; snapshots=${JSON.stringify(snapshots)}`);
+  }
+  return { snapshots, sessionLog };
+}
+
 async function assertRemoteAudio(page) {
   await page.waitForFunction(
     () => window.__studioDiagnostics?.peers?.length === 1,
@@ -363,6 +421,7 @@ async function main() {
       ...MEDIA_FIXTURES[name],
       phases: PHASES,
       phaseDurationMs: PHASE_DURATION_MS,
+      screenEnabled: name === 'Alice',
     });
     await page.goto(`${WEB}/?room=${room}&auto=1&e2eDiagnostics=1`, { waitUntil: 'domcontentloaded', timeout: TIMEOUT_MS });
     await page.evaluate((sess) => {
@@ -376,7 +435,24 @@ async function main() {
 
   await Promise.all(pages.map((page) => assertRemoteAudio(page)));
 
-  await setDeterministicRecordingLayout(alice.accessToken);
+  const alicePeerId = await pages[1].evaluate(() => window.__studioDiagnostics?.peers?.find((peer) => peer.name === 'Alice')?.id);
+  if (!alicePeerId) throw new Error('Alice peer id unavailable from Bob diagnostics');
+  const clickedScreenShare = await pages[0].evaluate(() => {
+    const button = [...document.querySelectorAll('button')].find((candidate) => candidate.textContent?.includes('Share screen'));
+    if (!button) return false;
+    button.click();
+    return true;
+  });
+  if (!clickedScreenShare) throw new Error('deterministic screen-share button unavailable');
+  await pages[1].waitForFunction(() => {
+    const peer = window.__studioDiagnostics?.peers?.find((candidate) => candidate.name === 'Alice');
+    return !!peer?.screenStream?.getVideoTracks()?.some((track) => track.readyState === 'live');
+  }, { timeout: TIMEOUT_MS });
+  const bobPeerId = await pages[0].evaluate(() => window.__studioDiagnostics?.peers?.find((peer) => peer.name === 'Bob')?.id);
+  if (!bobPeerId) throw new Error('Bob peer id unavailable from Alice diagnostics');
+  const expectedSources = [`${alicePeerId}:camera`, `${bobPeerId}:camera`];
+  const screenSource = `${alicePeerId}:screen`;
+  await setDeterministicLayout(alice.accessToken, { cameraPreset: 'focus', featuredId: `${alicePeerId}:camera`, sceneScreenIds: [] });
 
   const start = await fetch(`${API}/recordings/start`, {
     method: 'POST',
@@ -390,7 +466,18 @@ async function main() {
   if (!start.ok) throw new Error(`recording start failed: ${start.status}`);
   const phaseStartAt = Date.now() + PHASE_LEAD_MS;
   await Promise.all(pages.map((page) => page.evaluate((startAt) => window.__deterministicMedia.startPhases(startAt), phaseStartAt)));
-  await new Promise((resolve) => setTimeout(resolve, RECORDING_MS));
+  const sceneTransitions = [
+    { cameraPreset: 'focus', featuredId: `${alicePeerId}:camera`, sceneScreenIds: [] },
+    { cameraPreset: 'pip-left', featuredId: `${alicePeerId}:camera`, sceneScreenIds: [] },
+    { cameraPreset: 'pip-right', featuredId: `${alicePeerId}:camera`, sceneScreenIds: [] },
+    { cameraPreset: 'grid', featuredId: null, sceneScreenIds: [] },
+    { cameraPreset: 'focus', featuredId: `${alicePeerId}:camera`, sceneScreenIds: [screenSource] },
+  ];
+  for (const [index, scene] of sceneTransitions.entries()) {
+    if (index > 0) await new Promise((resolve) => setTimeout(resolve, SCENE_INTERVAL_MS));
+    await setDeterministicLayout(alice.accessToken, scene);
+  }
+  await new Promise((resolve) => setTimeout(resolve, RECORDING_MS - (sceneTransitions.length - 1) * SCENE_INTERVAL_MS));
 
   const stop = await fetch(`${API}/recordings/stop`, {
     method: 'POST',
@@ -402,6 +489,14 @@ async function main() {
   if (!stop.ok || !body.file) throw new Error(`recording stop failed: ${JSON.stringify(body)}`);
   recordingFile = body.file;
   console.log(`recording: ${body.file}`);
+  const sceneReport = validateSceneSnapshots(body.file, ['focus', 'pip-left', 'pip-right', 'grid'], expectedSources);
+  writeFileSync(join(artifactDir, 'layout-scenes.json'), JSON.stringify({
+    schemaVersion: 'quality-gate/layout-scenes-v1',
+    expectedPresets: ['focus', 'pip-left', 'pip-right', 'grid'],
+    expectedSources,
+    ...sceneReport,
+  }, null, 2));
+  console.log(`layout snapshots: ${sceneReport.snapshots.length}`);
   const sourceFrames = await Promise.all(pages.map(async (page) => ({
     participant: page.__speakerName,
     ...(await page.evaluate(() => window.__deterministicMedia.getFrameStats())),

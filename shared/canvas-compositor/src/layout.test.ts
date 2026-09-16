@@ -263,6 +263,34 @@ describe('grid', () => {
   });
 });
 
+describe('deterministic preset coverage invariants', () => {
+  for (const preset of ['focus', 'pip-left', 'pip-right', 'grid'] as const) {
+    it(`keeps both deterministic cameras bounded for ${preset}`, () => {
+      const sources = [cam('alice', 'Alice'), cam('bob', 'Bob')];
+      const placements = layoutSolve(state(preset, 'alice:camera'), sources, W, H);
+      assert.deepEqual(new Set(ids(placements)), new Set(['alice:camera', ...(preset === 'focus' ? [] : ['bob:camera'])]));
+      for (const placement of placements) {
+        assert.ok(Number.isInteger(placement.x) && Number.isInteger(placement.y));
+        assert.ok(Number.isInteger(placement.w) && Number.isInteger(placement.h));
+        assert.ok(placement.w > 0 && placement.h > 0, `${preset} produced invalid dimensions`);
+        assert.ok(placement.x >= 0 && placement.y >= 0, `${preset} produced negative placement`);
+        assert.ok(placement.x + placement.w <= W && placement.y + placement.h <= H, `${preset} exceeded canvas bounds`);
+      }
+    });
+  }
+
+  it('keeps a deterministic screen source through the active presentation transition', () => {
+    const sources = [cam('alice', 'Alice'), cam('bob', 'Bob'), screen('alice', 'Screen')];
+    const placements = layoutSolve(state('focus', 'alice:camera', ['alice:screen']), sources, W, H);
+    assert.deepEqual(ids(placements), ['alice:camera', 'bob:camera', 'alice:screen']);
+    for (const placement of placements) {
+      assert.ok(placement.w > 0 && placement.h > 0);
+      assert.ok(placement.x >= 0 && placement.y >= 0);
+      assert.ok(placement.x + placement.w <= W && placement.y + placement.h <= H);
+    }
+  });
+});
+
 describe('presentation', () => {
   it('places one camera in the left strip and contain-fits the screen', () => {
     const placements = layoutSolve(
