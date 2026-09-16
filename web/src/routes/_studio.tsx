@@ -7,7 +7,7 @@ import { createStudioHandle } from '../studio/studioHandle';
 export const Route = createFileRoute('/_studio')({
   validateSearch: parseStudioSearch,
   search: {
-    middlewares: [retainSearchParams(['room', 'auto'])],
+    middlewares: [retainSearchParams(['room', 'auto', 'e2eDiagnostics'])],
   },
   // Stable for the lifetime of this match — children inherit it via route context.
   context: () => ({

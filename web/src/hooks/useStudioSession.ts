@@ -3,6 +3,14 @@ import { SfuClient, type RemotePeer } from '@streaming/sfu-client';
 import { clearSession, joinRoom, type AuthUser } from '../lib/auth';
 import { useAsyncAction } from './useAsyncAction';
 
+type StudioDiagnostics = {
+  localPeerId: string | null;
+  localName: string | null;
+  peers: RemotePeer[];
+};
+
+type DiagnosticsWindow = Window & { __studioDiagnostics?: StudioDiagnostics };
+
 type UseStudioSessionArgs = {
   user: AuthUser | null;
   room: string;
@@ -23,6 +31,19 @@ export function useStudioSession({
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [localScreenStream, setLocalScreenStream] = useState<MediaStream | null>(null);
   const [remotePeers, setRemotePeers] = useState<RemotePeer[]>([]);
+  // This is deliberately opt-in so normal production sessions do not expose
+  // media streams or pay the cost of browser diagnostics instrumentation.
+  const diagnosticsParam = new URLSearchParams(window.location.search).get('e2eDiagnostics');
+  const diagnosticsEnabled = diagnosticsParam === '1' || diagnosticsParam === 'true';
+  const diagnosticsWindow = window as DiagnosticsWindow;
+  const updateDiagnostics = (peers: RemotePeer[], peerId = localPeerId) => {
+    if (!diagnosticsEnabled) return;
+    diagnosticsWindow.__studioDiagnostics = {
+      localPeerId: peerId,
+      localName: user?.name ?? null,
+      peers,
+    };
+  };
 
   const sfuRef = useRef<SfuClient | null>(null);
   const joiningRef = useRef(false);
@@ -46,6 +67,7 @@ export function useStudioSession({
     localStreamRef.current?.getTracks().forEach((t) => t.stop());
     setLocalStream(null);
     setRemotePeers([]);
+    if (diagnosticsEnabled) delete diagnosticsWindow.__studioDiagnostics;
     setLocalPeerId(null);
     setJoined(false);
     setRoomRole(null);
@@ -80,7 +102,13 @@ export function useStudioSession({
       });
       setLocalStream(stream);
 
-      const sfu = new SfuClient({ onPeersChanged: (peers) => setRemotePeers([...peers]) });
+      const sfu = new SfuClient({
+        onPeersChanged: (peers) => {
+          const nextPeers = [...peers];
+          setRemotePeers(nextPeers);
+          updateDiagnostics(nextPeers);
+        },
+      });
       sfuRef.current = sfu;
       await sfu.join(joinedRoom.slug, user.name, 'speaker', joinToken, sfuUrl);
       await sfu.publish(stream);

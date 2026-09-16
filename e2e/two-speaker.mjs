@@ -27,6 +27,13 @@ const API = process.env.API_ORIGIN ?? 'http://localhost:3000/api';
 const SIGNUP_PASSWORD = process.env.E2E_SIGNUP_PASSWORD ?? process.env.SIGNUP_PASSWORD;
 const TIMEOUT_MS = 30_000;
 const RECORDING_MS = 12_000;
+const DIAGNOSTIC_TIMEOUT_MS = 20_000;
+const AUDIO_METRIC = {
+  rmsMinimum: 0.002,
+  expectedEnergyMinimum: 0.18,
+  selfLeakageMaximum: 0.08,
+  frequencyToleranceHz: 35,
+};
 const ARTIFACT_ROOT = process.env.E2E_ARTIFACT_DIR ?? join(dirname(fileURLToPath(import.meta.url)), 'e2e-artifacts');
 
 // These are part of the fixture contract. Keep them stable so recordings from
@@ -41,6 +48,7 @@ const room = `e2e-${runId}`;
 const artifactDir = join(ARTIFACT_ROOT, runId);
 const pages = [];
 let browser;
+let cleanupAccessToken;
 
 async function register(email, password, name) {
   const res = await fetch(`${API}/auth/register`, {
@@ -155,6 +163,116 @@ async function waitForSpeaker(page, name) {
   console.log(`${name}: joined and published audio/video`);
 }
 
+async function measureRemoteAudio(page) {
+  return page.evaluate(async ({ expectedName, expectedHz, ownHz }) => {
+    const diagnostics = window.__studioDiagnostics;
+    if (!diagnostics) throw new Error('studio diagnostics are not enabled');
+    const peers = diagnostics.peers;
+    const context = new AudioContext({ sampleRate: 48_000 });
+    await context.resume();
+    const results = [];
+    try {
+      for (const peer of peers) {
+        const tracks = peer.stream.getTracks();
+        const audioTracks = peer.stream.getAudioTracks().filter((track) => track.readyState !== 'ended');
+        if (audioTracks.length === 0) {
+          results.push({
+            id: peer.id,
+            name: peer.name,
+            trackKinds: tracks.map((track) => track.kind),
+            audioTrackCount: 0,
+            videoTrackCount: peer.stream.getVideoTracks().filter((track) => track.readyState !== 'ended').length,
+            rms: 0,
+            dominantHz: 0,
+            expectedEnergyRatio: 0,
+            selfEnergyRatio: 0,
+          });
+          continue;
+        }
+        const source = context.createMediaStreamSource(new MediaStream(audioTracks));
+        const analyser = context.createAnalyser();
+        analyser.fftSize = 4096;
+        analyser.smoothingTimeConstant = 0;
+        source.connect(analyser);
+        const time = new Float32Array(analyser.fftSize);
+        const bins = new Float32Array(analyser.frequencyBinCount);
+        const samples = [];
+        for (let sample = 0; sample < 12; sample += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          analyser.getFloatTimeDomainData(time);
+          analyser.getFloatFrequencyData(bins);
+          let sum = 0;
+          for (const value of time) sum += value * value;
+          const binHz = context.sampleRate / analyser.fftSize;
+          const energyAt = (frequency) => {
+            let energy = 0;
+            for (let i = 0; i < bins.length; i += 1) {
+              if (Math.abs(i * binHz - frequency) <= 35) {
+                energy += 10 ** (bins[i] / 10);
+              }
+            }
+            return energy;
+          };
+          let peakBin = 0;
+          for (let i = 1; i < bins.length; i += 1) {
+            if (bins[i] > bins[peakBin]) peakBin = i;
+          }
+          const expectedEnergy = energyAt(expectedHz);
+          const ownEnergy = energyAt(ownHz);
+          const totalEnergy = bins.reduce((sumEnergy, value) => sumEnergy + 10 ** (value / 10), 0);
+          samples.push({
+            rms: Math.sqrt(sum / time.length),
+            dominantHz: peakBin * binHz,
+            expectedEnergyRatio: totalEnergy > 0 ? expectedEnergy / totalEnergy : 0,
+            selfEnergyRatio: totalEnergy > 0 ? ownEnergy / totalEnergy : 0,
+          });
+        }
+        source.disconnect();
+        const average = (key) => samples.reduce((sum, item) => sum + item[key], 0) / samples.length;
+        results.push({
+          id: peer.id,
+          name: peer.name,
+          trackKinds: tracks.map((track) => track.kind),
+          audioTrackCount: audioTracks.length,
+          videoTrackCount: peer.stream.getVideoTracks().filter((track) => track.readyState !== 'ended').length,
+          rms: average('rms'),
+          dominantHz: average('dominantHz'),
+          expectedEnergyRatio: average('expectedEnergyRatio'),
+          selfEnergyRatio: average('selfEnergyRatio'),
+        });
+      }
+    } finally {
+      await context.close();
+    }
+    return { expectedName, peers: results };
+  }, {
+    expectedName: page.__speakerName === 'Alice' ? 'Bob' : 'Alice',
+    expectedHz: page.__speakerName === 'Alice' ? MEDIA_FIXTURES.Bob.frequencyHz : MEDIA_FIXTURES.Alice.frequencyHz,
+    ownHz: page.__speakerName === 'Alice' ? MEDIA_FIXTURES.Alice.frequencyHz : MEDIA_FIXTURES.Bob.frequencyHz,
+  });
+}
+
+async function assertRemoteAudio(page) {
+  await page.waitForFunction(
+    () => window.__studioDiagnostics?.peers?.length === 1,
+    { timeout: DIAGNOSTIC_TIMEOUT_MS },
+  );
+  const measured = await measureRemoteAudio(page);
+  if (measured.peers.length !== 1) throw new Error(`${page.__speakerName}: expected exactly one remote peer: ${JSON.stringify(measured)}`);
+  const [peer] = measured.peers;
+  const expectedHz = MEDIA_FIXTURES[measured.expectedName].frequencyHz;
+  const ownHz = MEDIA_FIXTURES[page.__speakerName].frequencyHz;
+  const failures = [];
+  if (peer.name !== measured.expectedName) failures.push(`identity=${peer.name} expected=${measured.expectedName}`);
+  if (peer.audioTrackCount !== 1 || peer.videoTrackCount !== 1) failures.push(`tracks audio=${peer.audioTrackCount} video=${peer.videoTrackCount}`);
+  if (peer.rms < AUDIO_METRIC.rmsMinimum) failures.push(`silent rms=${peer.rms.toFixed(5)}`);
+  if (Math.abs(peer.dominantHz - expectedHz) > AUDIO_METRIC.frequencyToleranceHz) failures.push(`frequency=${peer.dominantHz.toFixed(1)}Hz expected=${expectedHz}Hz`);
+  if (peer.expectedEnergyRatio < AUDIO_METRIC.expectedEnergyMinimum) failures.push(`expected-energy=${peer.expectedEnergyRatio.toFixed(3)}`);
+  if (peer.selfEnergyRatio > AUDIO_METRIC.selfLeakageMaximum) failures.push(`self-leakage=${peer.selfEnergyRatio.toFixed(3)} own=${ownHz}Hz`);
+  console.log(`${page.__speakerName} remote audio:`, JSON.stringify({ ...peer, expectedHz, ownHz, tolerances: AUDIO_METRIC }));
+  if (failures.length > 0) throw new Error(`${page.__speakerName}: remote audio contract failed: ${failures.join(', ')}`);
+}
+
 async function saveFailureArtifacts(error) {
   mkdirSync(artifactDir, { recursive: true });
   writeFileSync(join(artifactDir, 'run.json'), JSON.stringify({ runId, room, error: String(error), fixtures: MEDIA_FIXTURES }, null, 2));
@@ -179,6 +297,7 @@ async function main() {
     register(`alice-${unique}@example.com`, password, 'Alice'),
     register(`bob-${unique}@example.com`, password, 'Bob'),
   ]);
+  cleanupAccessToken = alice.accessToken;
 
   browser = await puppeteer.launch({
     args: [
@@ -197,15 +316,17 @@ async function main() {
       if (message.type() === 'error') console.error(`[${name}] console.error:`, message.text());
     });
     await page.evaluateOnNewDocument(mediaFixtureInit(), MEDIA_FIXTURES[name]);
-    await page.goto(`${WEB}/?room=${room}&auto=1`, { waitUntil: 'domcontentloaded', timeout: TIMEOUT_MS });
+    await page.goto(`${WEB}/?room=${room}&auto=1&e2eDiagnostics=1`, { waitUntil: 'domcontentloaded', timeout: TIMEOUT_MS });
     await page.evaluate((sess) => {
       localStorage.setItem('streaming-access-token', sess.accessToken);
       localStorage.setItem('streaming-refresh-token', sess.refreshToken);
       localStorage.setItem('streaming-user', JSON.stringify(sess.user));
     }, session);
-    await page.goto(`${WEB}/?room=${room}&auto=1`, { waitUntil: 'domcontentloaded', timeout: TIMEOUT_MS });
+    await page.goto(`${WEB}/?room=${room}&auto=1&e2eDiagnostics=1`, { waitUntil: 'domcontentloaded', timeout: TIMEOUT_MS });
     await waitForSpeaker(page, name);
   }
+
+  await Promise.all(pages.map((page) => assertRemoteAudio(page)));
 
   await setDeterministicRecordingLayout(alice.accessToken);
 
@@ -239,6 +360,23 @@ try {
   await saveFailureArtifacts(error);
   process.exitCode = 1;
 } finally {
+  if (cleanupAccessToken) {
+    try {
+      const cleanup = await fetch(`${API}/recordings/stop`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${cleanupAccessToken}`,
+        },
+        body: JSON.stringify({ room }),
+      });
+      if (!cleanup.ok && cleanup.status !== 404) {
+        console.error(`E2E cleanup failed (${cleanup.status}): ${await cleanup.text()}`);
+      }
+    } catch (cleanupError) {
+      console.error('E2E cleanup request failed:', cleanupError);
+    }
+  }
   await Promise.all(pages.map(async (page) => {
     try { await page.evaluate(() => window.__deterministicMedia?.cleanup?.()); } catch { /* page may have crashed */ }
     try { await page.close(); } catch { /* already closed */ }
