@@ -43,7 +43,7 @@ const MEDIA_FIXTURES = {
   Bob: { frequencyHz: 660, width: 1280, height: 720, frameRate: 30, color: '#b91c1c', label: 'BOB' },
 };
 
-const runId = `${Date.now()}-${process.pid}`;
+const runId = process.env.E2E_RUN_ID ?? `${Date.now()}-${process.pid}`;
 const room = `e2e-${runId}`;
 const artifactDir = join(ARTIFACT_ROOT, runId);
 const pages = [];
