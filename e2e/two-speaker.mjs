@@ -74,6 +74,35 @@ async function register(email, password, name) {
   return body;
 }
 
+async function createRoom(accessToken) {
+  const res = await fetch(`${API}/rooms`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify({ name: room, slug: room }),
+  });
+  const body = await res.json();
+  if (!res.ok) throw new Error(`room creation failed (${res.status}): ${JSON.stringify(body)}`);
+  console.log(`room created: ${body.slug}`);
+  return body;
+}
+
+async function inviteParticipant(accessToken, participantToken, displayName) {
+  const inviteRes = await fetch(`${API}/rooms/${encodeURIComponent(room)}/invites`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${accessToken}` },
+  });
+  const invite = await inviteRes.json();
+  if (!inviteRes.ok) throw new Error(`room invite failed (${inviteRes.status}): ${JSON.stringify(invite)}`);
+  const admitRes = await fetch(`${API}/rooms/invite/admit`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${participantToken}` },
+    body: JSON.stringify({ token: invite.token, displayName }),
+  });
+  const admission = await admitRes.json();
+  if (!admitRes.ok) throw new Error(`room invite admission failed (${admitRes.status}): ${JSON.stringify(admission)}`);
+  console.log(`room participant admitted: ${displayName}`);
+}
+
 async function setDeterministicLayout(accessToken, layout) {
   const res = await fetch(`${API}/rooms/${encodeURIComponent(room)}/layout`, {
     method: 'POST',
@@ -400,6 +429,8 @@ async function main() {
     register(`bob-${unique}@example.com`, password, 'Bob'),
   ]);
   cleanupAccessToken = alice.accessToken;
+  await createRoom(alice.accessToken);
+  await inviteParticipant(alice.accessToken, bob.accessToken, 'Bob');
 
   browser = await puppeteer.launch({
     args: [
@@ -430,6 +461,15 @@ async function main() {
       localStorage.setItem('streaming-user', JSON.stringify(sess.user));
     }, session);
     await page.goto(`${WEB}/?room=${room}&auto=1&e2eDiagnostics=1`, { waitUntil: 'domcontentloaded', timeout: TIMEOUT_MS });
+    await page.waitForFunction(
+      () => [...document.querySelectorAll('button')].some((button) => button.textContent?.includes('Open room')),
+      { timeout: TIMEOUT_MS },
+    );
+    await page.evaluate(() => {
+      const button = [...document.querySelectorAll('button')].find((candidate) => candidate.textContent?.includes('Open room'));
+      if (!button) throw new Error('deterministic room-open button unavailable');
+      button.click();
+    });
     await waitForSpeaker(page, name);
   }
 
