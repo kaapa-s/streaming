@@ -21,6 +21,11 @@ export class StartRecordingDto {
   @IsString()
   rtmpUrl?: string;
 
+  /** Quality-gate-only loopback sink; never resolves a platform or credential. */
+  @IsOptional()
+  @IsString()
+  localRtmpUrl?: string;
+
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })

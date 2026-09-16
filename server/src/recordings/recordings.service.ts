@@ -52,11 +52,15 @@ export class RecordingsService {
       throw new BadRequestException(`already recording room "${slug}"`);
     }
 
-    const destinations = resolveDestinations(body);
+    const localRtmpUrl = body.localRtmpUrl?.trim();
+    if (localRtmpUrl && !/^rtmp:\/\/(127\.0\.0\.1|localhost)(?::\d+)?\//i.test(localRtmpUrl)) {
+      throw new BadRequestException('localRtmpUrl must use a loopback RTMP URL');
+    }
+    const destinations = localRtmpUrl ? [] : resolveDestinations(body);
     for (const dest of destinations) {
       await this.platforms.assertConnected(userId, dest.platform);
     }
-    const rtmpUrls = destinations.map((dest) =>
+    const rtmpUrls = localRtmpUrl ? [localRtmpUrl] : destinations.map((dest) =>
       normalizeOutboundRtmp(dest.streamKey, dest.platform),
     );
     const destinationIds = destinations.map((dest) => dest.platform);

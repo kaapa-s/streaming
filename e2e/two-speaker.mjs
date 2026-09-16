@@ -13,6 +13,7 @@ import { cpSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { validateRecording } from './recording-validation.mjs';
+import { startLocalRtmpReceiver } from './local-rtmp-receiver.mjs';
 
 const require = createRequire(import.meta.url);
 const repoDir = dirname(fileURLToPath(import.meta.url));
@@ -27,7 +28,15 @@ const WEB = process.env.WEB_ORIGIN ?? 'https://localhost:5173';
 const API = process.env.API_ORIGIN ?? 'http://localhost:3000/api';
 const SIGNUP_PASSWORD = process.env.E2E_SIGNUP_PASSWORD ?? process.env.SIGNUP_PASSWORD;
 const TIMEOUT_MS = 30_000;
-const RECORDING_MS = 12_000;
+const PHASE_DURATION_MS = 5_000;
+const PHASE_LEAD_MS = 1_000;
+// Three 5s phases plus a 1s lead-in and 1s encoder/stop margin.
+const RECORDING_MS = PHASE_LEAD_MS + PHASE_DURATION_MS * 3 + 1_000;
+const PHASES = [
+  { name: 'BOB SOLO', active: ['Bob'] },
+  { name: 'ALICE SOLO', active: ['Alice'] },
+  { name: 'BOB + ALICE', active: ['Bob', 'Alice'] },
+];
 const DIAGNOSTIC_TIMEOUT_MS = 20_000;
 const AUDIO_METRIC = {
   rmsMinimum: 0.002,
@@ -51,6 +60,7 @@ const pages = [];
 let browser;
 let cleanupAccessToken;
 let recordingFile;
+let rtmpReceiver;
 
 async function register(email, password, name) {
   const res = await fetch(`${API}/auth/register`, {
@@ -95,21 +105,34 @@ function mediaFixtureInit() {
     const destination = audioContext.createMediaStreamDestination();
     oscillator.type = 'sine';
     oscillator.frequency.value = config.frequencyHz;
-    gain.gain.value = 0.08;
+    gain.gain.value = 0;
     oscillator.connect(gain).connect(destination);
     oscillator.start();
     void audioContext.resume();
 
     let frame = 0;
+    let phaseStartAt = 0;
+    const phaseFor = (now) => {
+      const index = phaseStartAt > 0 ? Math.floor((now - phaseStartAt) / config.phaseDurationMs) : -1;
+      return config.phases[Math.max(-1, Math.min(config.phases.length - 1, index))];
+    };
     const draw = () => {
+      const phase = phaseFor(Date.now());
+      // Keep the deterministic tone live for pre-recording remote-audio
+      // assertions. startPhases() switches both gain and visual cue into the
+      // staged recording schedule before the recorder is allowed to run.
+      const active = phase ? phase.active.includes(config.label === 'BOB' ? 'Bob' : 'Alice') : true;
+      gain.gain.value = active ? 0.08 : 0;
       context.fillStyle = config.color;
       context.fillRect(0, 0, canvas.width, canvas.height);
       context.fillStyle = '#ffffff';
       context.textAlign = 'center';
       context.font = 'bold 96px monospace';
       context.fillText(config.label, canvas.width / 2, 130);
+      context.font = 'bold 64px monospace';
+      context.fillText(phase?.name ?? 'WAITING FOR RECORDING', canvas.width / 2, 300);
       context.font = '48px monospace';
-      context.fillText(`frame ${String(frame).padStart(6, '0')}`, canvas.width / 2, 205);
+      context.fillText(`frame ${String(frame).padStart(6, '0')}`, canvas.width / 2, 390);
       frame += 1;
     };
     draw();
@@ -130,6 +153,13 @@ function mediaFixtureInit() {
       fixture: { ...config },
       calls: 0,
       stream,
+      getFrameStats: () => ({
+        counterScope: 'source-canvas-draws',
+        counterValue: frame,
+        configuredCadenceFps: config.frameRate,
+      }),
+      phases: config.phases,
+      startPhases: (startAt) => { phaseStartAt = Number(startAt); draw(); },
       cleanup: async () => {
         clearInterval(timer);
         streams.forEach((item) => item.getTracks().forEach((track) => track.stop()));
@@ -277,7 +307,13 @@ async function assertRemoteAudio(page) {
 
 async function saveFailureArtifacts(error) {
   mkdirSync(artifactDir, { recursive: true });
-  writeFileSync(join(artifactDir, 'run.json'), JSON.stringify({ runId, room, error: String(error), fixtures: MEDIA_FIXTURES }, null, 2));
+  writeFileSync(join(artifactDir, 'run.json'), JSON.stringify({
+    runId,
+    room,
+    error: String(error),
+    fixtures: MEDIA_FIXTURES,
+    phaseSchedule: { phases: PHASES, phaseDurationMs: PHASE_DURATION_MS, leadMs: PHASE_LEAD_MS },
+  }, null, 2));
   await Promise.all(pages.map(async (page, index) => {
     const name = page.__speakerName ?? `speaker-${index}`;
     try {
@@ -292,6 +328,12 @@ async function saveFailureArtifacts(error) {
 
 async function main() {
   mkdirSync(artifactDir, { recursive: true });
+  // The quality gate opts into a local receiver; normal smoke runs retain the
+  // existing recording-only behavior.
+  if (process.env.QUALITY_GATE_LOCAL_RTMP === '1') {
+    rtmpReceiver = await startLocalRtmpReceiver(artifactDir);
+    console.log(`local RTMP receiver: ${rtmpReceiver.url}`);
+  }
   if (!SIGNUP_PASSWORD) throw new Error('SIGNUP_PASSWORD or E2E_SIGNUP_PASSWORD must be set');
   const password = 'password123';
   const unique = `${runId}`;
@@ -317,7 +359,11 @@ async function main() {
     page.on('console', (message) => {
       if (message.type() === 'error') console.error(`[${name}] console.error:`, message.text());
     });
-    await page.evaluateOnNewDocument(mediaFixtureInit(), MEDIA_FIXTURES[name]);
+    await page.evaluateOnNewDocument(mediaFixtureInit(), {
+      ...MEDIA_FIXTURES[name],
+      phases: PHASES,
+      phaseDurationMs: PHASE_DURATION_MS,
+    });
     await page.goto(`${WEB}/?room=${room}&auto=1&e2eDiagnostics=1`, { waitUntil: 'domcontentloaded', timeout: TIMEOUT_MS });
     await page.evaluate((sess) => {
       localStorage.setItem('streaming-access-token', sess.accessToken);
@@ -335,10 +381,15 @@ async function main() {
   const start = await fetch(`${API}/recordings/start`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${alice.accessToken}` },
-    body: JSON.stringify({ room }),
+    body: JSON.stringify({
+      room,
+      ...(rtmpReceiver ? { localRtmpUrl: rtmpReceiver.url } : {}),
+    }),
   });
   console.log('start:', start.status, await start.text());
   if (!start.ok) throw new Error(`recording start failed: ${start.status}`);
+  const phaseStartAt = Date.now() + PHASE_LEAD_MS;
+  await Promise.all(pages.map((page) => page.evaluate((startAt) => window.__deterministicMedia.startPhases(startAt), phaseStartAt)));
   await new Promise((resolve) => setTimeout(resolve, RECORDING_MS));
 
   const stop = await fetch(`${API}/recordings/stop`, {
@@ -351,9 +402,30 @@ async function main() {
   if (!stop.ok || !body.file) throw new Error(`recording stop failed: ${JSON.stringify(body)}`);
   recordingFile = body.file;
   console.log(`recording: ${body.file}`);
+  const sourceFrames = await Promise.all(pages.map(async (page) => ({
+    participant: page.__speakerName,
+    ...(await page.evaluate(() => window.__deterministicMedia.getFrameStats())),
+  })));
+  writeFileSync(join(artifactDir, 'source-frame-counters.json'), JSON.stringify({
+    schemaVersion: 'quality-gate/source-frame-counters-v1',
+    meaning: 'Canvas draw counters; not encoded frames, timestamps, or VLC decoded frames.',
+    participants: sourceFrames,
+  }, null, 2));
+  console.log('source frame counters:', JSON.stringify(sourceFrames));
   const media = await validateRecording(body.file, artifactDir);
   console.log('recording validation:', JSON.stringify(media));
   console.log('RECORDING_VALIDATION_OK');
+  if (rtmpReceiver) {
+    const rtmpMedia = await rtmpReceiver.validate();
+    console.log('rtmp validation:', JSON.stringify(rtmpMedia));
+    if (rtmpMedia.summary.video?.codec !== 'h264' || rtmpMedia.summary.audio?.codec !== 'aac') {
+      throw new Error('local RTMP output must contain H.264 video and AAC audio');
+    }
+    if (rtmpMedia.summary.durationSeconds < 3 || rtmpMedia.summary.video.keyframes < 1 || rtmpMedia.summary.video.frames < 30) {
+      throw new Error('local RTMP output is incomplete or has no usable keyframe/duration');
+    }
+    console.log('RTMP_VALIDATION_OK');
+  }
   console.log('E2E OK');
 }
 
@@ -394,5 +466,8 @@ try {
     try { cpSync(sessionLog, join(artifactDir, 'compositor.session.log')); } catch { /* session log may be absent */ }
     try { rmSync(recordingFile, { force: true }); } catch (cleanupError) { console.error('recording file cleanup failed:', cleanupError); }
     try { rmSync(sessionLog, { force: true }); } catch { /* session log may be absent */ }
+  }
+  if (rtmpReceiver) {
+    try { await rtmpReceiver.stop(); } catch (cleanupError) { console.error('RTMP receiver cleanup failed:', cleanupError); }
   }
 }
