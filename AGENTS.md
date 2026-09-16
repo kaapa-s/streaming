@@ -4,6 +4,7 @@ This repository uses Beads issues and Herdr-managed Pi agents. The coordinator o
 
 ## Worker agents
 
+- Never modify quality gate code, the gate harness, or test files. If a gate check fails for product reasons, stop and report it; a human decides whether the gate or the product is wrong.
 - Work on exactly one Beads issue at a time. Read it first:
   `bd show <issue>`
 - Claim it before editing:
@@ -42,6 +43,20 @@ NEXT: <recommended coordinator action>
 - Do not claim an issue is complete based only on static checks when its acceptance criteria require a live integration run.
 - Notify the user promptly on: completion, blocker, decision request, worker failure, environment recovery, or any change in scope.
 - When the user explicitly authorizes committing and pushing the accepted work, have the relevant workers finalize their Beads comments/state and commits as directed, verify the handoff, then close only the worker agents/workspaces started by the coordinator so the Herdr UI stays clean. Preserve their output and artifacts before cleanup.
+
+## Quality gates and the human stop point
+
+The repository has deterministic local quality gates (see `docs/quality-gate-local.md`; run with `npm run quality-gate`). The gates were specified after the task descriptions and are authoritative. Tests and gate code are never touched without human supervision.
+
+Stop point: the feature is implemented, the quality gate fails, and a human makes the call.
+
+- When implementation work makes the quality gate fail (even if the feature itself looks done), the coordinator stops and reports to the user: failing check IDs, measured vs expected values, artifact directory, and worker status. This is a user-facing event; a failed gate is never reported as completion.
+- No gate, test, or harness code is changed at this point, and no gate-update task is created yet.
+- The human manually verifies the feature and decides:
+  - the gate is wrong (gate/test needs updating), or
+  - the implementation is wrong (fixing continues with the gate unchanged).
+- Only after the human's explicit decision does the coordinator create a subtask under the currently fixed task to update the quality gate (or continue the fix), and only then assign it to a worker.
+- Coordinator handoffs always state the gate result for the current change.
 
 ## Handoff format
 
