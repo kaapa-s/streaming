@@ -4,6 +4,7 @@ This repository uses Beads issues and Herdr-managed Pi agents. The coordinator o
 
 ## Worker agents
 
+- Beads CLI 1.3.0+ is required. Its transactional close policy rejects closing a parent while any parent-child child remains open; `scripts/setup-local.sh` fails fast on older CLIs.
 - Never modify quality gate code, the gate harness, or test files. If a gate check fails for product reasons, stop and report it; a human decides whether the gate or the product is wrong.
 - Work on exactly one Beads issue at a time. Read it first:
   `bd show <issue>`

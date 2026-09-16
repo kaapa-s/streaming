@@ -34,6 +34,8 @@ export interface LayoutSnapshot {
   sceneScreenIds: string[];
   effective: LayoutPreset;
   sources: string[];
+  /** Camera sources whose peer audio is included in the program mix. */
+  audioSourceIds: string[];
 }
 
 export const SPEAKER_STRIP_RATIO = 0.14;

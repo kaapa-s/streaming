@@ -25,6 +25,21 @@ export class CreateRoomDto {
   declare slug?: string;
 }
 
+export class AdmitInviteDto {
+  @IsString()
+  @MinLength(32)
+  declare token: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  declare displayName?: string;
+
+  @IsOptional()
+  @IsString()
+  declare guestId?: string;
+}
+
 export class SetLayoutDto {
   @IsIn(CAMERA_PRESETS)
   declare cameraPreset: CameraPreset;

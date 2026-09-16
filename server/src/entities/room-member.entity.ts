@@ -24,8 +24,12 @@ export class RoomMember {
   declare roomId: string;
 
   @Index()
-  @Column()
-  declare userId: string;
+  @Column({ nullable: true })
+  declare userId: string | null;
+
+  @Index()
+  @Column({ type: 'varchar', nullable: true })
+  declare guestId: string | null;
 
   @Column({ type: 'varchar' })
   declare role: RoomRole;
@@ -34,7 +38,10 @@ export class RoomMember {
   @JoinColumn({ name: 'roomId' })
   declare room: Room;
 
-  @ManyToOne(() => User, (user) => user.memberships, { onDelete: 'CASCADE' })
+  @Column({ type: 'varchar', nullable: true })
+  declare displayName: string | null;
+
+  @ManyToOne(() => User, (user) => user.memberships, { onDelete: 'CASCADE', nullable: true })
   @JoinColumn({ name: 'userId' })
   declare user: User;
 

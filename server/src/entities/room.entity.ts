@@ -11,6 +11,7 @@ import {
 import { Recording } from './recording.entity';
 import { RoomMember } from './room-member.entity';
 import { User } from './user.entity';
+import { RoomInvite } from './room-invite.entity';
 import type { RoomLayout } from '../rooms/room-layout';
 
 export type RoomStatus = 'created' | 'active' | 'finished';
@@ -52,6 +53,9 @@ export class Room {
 
   @OneToMany(() => RoomMember, (member) => member.room)
   declare members: RoomMember[];
+
+  @OneToMany(() => RoomInvite, (invite) => invite.room)
+  declare invites: RoomInvite[];
 
   @OneToMany(() => Recording, (recording) => recording.room)
   declare recordings: Recording[];

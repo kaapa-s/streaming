@@ -23,6 +23,15 @@ audible and are 660 Hz for Bob and 440 Hz for Alice. Audio validation samples a
 1.5-second interior window for each phase, searches startup offsets, and checks
 presence/absence and order rather than relying on a whole-file midpoint.
 
+The opening compositor focus is Bob because `BOB SOLO` is the first active phase.
+The recorder's audio mix follows the camera sources actually placed on the
+program scene: a focus scene includes only its featured participant, while pip,
+grid, and presentation include the camera sources visible in those layouts. The
+gate records the first scene snapshot and asserts both that Bob is featured and
+that only Bob's camera is wired into the recorder mix. This scene/audio
+relationship is checked in addition to the independent scene and phase-audio
+contracts.
+
 ## Cadence and VLC evidence
 
 The gate reports `video.cadence` from encoded timestamp deltas (median interval,

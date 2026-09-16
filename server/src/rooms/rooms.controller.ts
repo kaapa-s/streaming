@@ -1,15 +1,15 @@
-import { Body, Controller, Get, Inject, Logger, Param, Post, UseGuards, forwardRef } from '@nestjs/common';
-import { JwtAuthGuard } from '../auth/auth.guards';
+import { Body, Controller, Get, Inject, Logger, Param, Post, Req, UseGuards, forwardRef } from '@nestjs/common';
+import type { Request } from 'express';
+import { JwtAuthGuard, OptionalJwtAuthGuard } from '../auth/auth.guards';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { AuthUser } from '../auth/jwt.strategy';
 import { CompositorClient } from '../recordings/compositor.client';
 import { RecordingsService } from '../recordings/recordings.service';
-import { CreateRoomDto, SetLayoutDto } from './dto/rooms.dto';
+import { AdmitInviteDto, CreateRoomDto, SetLayoutDto } from './dto/rooms.dto';
 import { RoomsService } from './rooms.service';
 import type { RoomLayout } from './room-layout';
 
 @Controller('rooms')
-@UseGuards(JwtAuthGuard)
 export class RoomsController {
   private readonly logger = new Logger(RoomsController.name);
 
@@ -21,28 +21,51 @@ export class RoomsController {
   ) {}
 
   @Post()
+  @UseGuards(JwtAuthGuard)
   create(@Body() body: CreateRoomDto, @CurrentUser() user: AuthUser) {
     return this.rooms.create(body, user);
   }
 
   /** Authenticated owner dashboard data, including the latest recording state. */
   @Get()
+  @UseGuards(JwtAuthGuard)
   listOwned(@CurrentUser() user: AuthUser) {
     return this.rooms.listOwned(user.id);
   }
 
+  @Post('invite/admit')
+  @UseGuards(OptionalJwtAuthGuard)
+  admitInvite(@Body() body: AdmitInviteDto, @Req() req: Request & { user?: AuthUser }) {
+    return this.rooms.admitInvite(body.token, req.user, body.displayName, body.guestId);
+  }
+
+  @Post(':slug/invites')
+  @UseGuards(JwtAuthGuard)
+  createInvite(@Param('slug') slug: string, @CurrentUser() user: AuthUser) {
+    return this.rooms.createInvite(slug, user.id);
+  }
+
+  @Post(':slug/invites/:inviteId/revoke')
+  @UseGuards(JwtAuthGuard)
+  revokeInvite(@Param('inviteId') inviteId: string, @CurrentUser() user: AuthUser) {
+    return this.rooms.revokeInvite(inviteId, user.id);
+  }
+
   @Get(':slug')
+  @UseGuards(JwtAuthGuard)
   getBySlug(@Param('slug') slug: string) {
     return this.rooms.findBySlug(slug);
   }
 
   @Get(':slug/media')
+  @UseGuards(JwtAuthGuard)
   async media(@Param('slug') slug: string, @CurrentUser() user: AuthUser) {
     const { room } = await this.rooms.requireMembershipBySlug(slug, user.id);
     return this.recordings.media(room, user.id);
   }
 
   @Post(':id/join')
+  @UseGuards(JwtAuthGuard)
   async joinById(@Param('id') id: string, @CurrentUser() user: AuthUser) {
     // UUID → by id; otherwise treat as a room slug for studio UX (?room=<slug>).
     const result = isUuid(id)
@@ -58,11 +81,13 @@ export class RoomsController {
    * whatever the owner last put on air.
    */
   @Get(':slug/layout')
+  @UseGuards(JwtAuthGuard)
   getLayout(@Param('slug') slug: string, @CurrentUser() user: AuthUser): Promise<RoomLayout> {
     return this.rooms.getLayout(slug, user.id);
   }
 
   @Post(':slug/layout')
+  @UseGuards(JwtAuthGuard)
   async setLayout(
     @Param('slug') slug: string,
     @CurrentUser() user: AuthUser,

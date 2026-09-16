@@ -9,6 +9,7 @@ import {
   Recording,
   Room,
   RoomMember,
+  RoomInvite,
   User,
 } from './entities';
 import { PlatformsModule } from './platforms/platforms.module';
@@ -30,6 +31,7 @@ import { UsersModule } from './users/users.module';
           RefreshToken,
           Room,
           RoomMember,
+          RoomInvite,
           Recording,
           PlatformConnection,
         ],

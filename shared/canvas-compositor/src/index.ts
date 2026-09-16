@@ -60,6 +60,7 @@ export interface CompositorOptions {
 }
 
 interface TileEntry {
+  peerId: string;
   name: string;
   stream: MediaStream;
   video: HTMLVideoElement;
@@ -186,9 +187,22 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
   };
 
   /** Recorder-only: tap peer mic into the MediaRecorder mix via Web Audio. */
+  const audioPeerIdsOnScene = (): Set<string> => {
+    const sources = currentSources();
+    return new Set(
+      layoutSolve(layoutState, sources, width, height)
+        .map((placement) => placement.sourceId)
+        .filter((id) => id.endsWith(':camera'))
+        .map((id) => id.slice(0, -':camera'.length)),
+    );
+  };
+
   const bindPeerAudio = (entry: TileEntry, stream: MediaStream) => {
     if (!audioCtx || !mixBus) return;
-    const tracks = stream.getAudioTracks().filter((t) => t.readyState !== 'ended');
+    const onScene = audioPeerIdsOnScene().has(entry.peerId);
+    const tracks = onScene
+      ? stream.getAudioTracks().filter((t) => t.readyState !== 'ended')
+      : [];
     const ids = tracks.map((t) => t.id).join(',');
     if (entry.audioTrackIds === ids) return;
 
@@ -248,6 +262,7 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
       if (!entry) {
         const video = createVideoEl();
         entry = {
+          peerId: peer.id,
           name: peer.name,
           stream: peer.stream,
           video,
@@ -435,6 +450,9 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
       featuredId: state.featuredId,
       sceneScreenIds: state.sceneScreenIds ?? [],
     };
+    if (audioCtx) {
+      for (const entry of entries.values()) bindPeerAudio(entry, entry.stream);
+    }
   };
 
   const getLayoutSnapshot = (): LayoutSnapshot => {
@@ -445,6 +463,10 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
       sceneScreenIds: [...layoutState.sceneScreenIds],
       effective: effectivePreset(layoutState, sources),
       sources: sources.map((source) => source.id).sort((a, b) => a.localeCompare(b)),
+      audioSourceIds: [...entries.values()]
+        .filter((entry) => entry.audioSource)
+        .map((entry) => sourceId(entry.peerId, 'camera'))
+        .sort((a, b) => a.localeCompare(b)),
     };
   };
 

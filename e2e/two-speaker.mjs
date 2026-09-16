@@ -341,7 +341,7 @@ async function measureRemoteAudio(page) {
   });
 }
 
-function validateSceneSnapshots(file, expectedPresets, expectedSources) {
+function validateSceneSnapshots(file, expectedPresets, expectedSources, sceneAudioContract) {
   const sessionLog = file.replace(/\.[^.]+$/, '.session.log');
   const lines = readFileSync(sessionLog, 'utf8').split(/\r?\n/);
   const snapshots = lines.filter((line) => line.includes(' scene ')).map((line) => {
@@ -368,7 +368,34 @@ function validateSceneSnapshots(file, expectedPresets, expectedSources) {
   if (!snapshots.some((snapshot) => snapshot.effective === 'presentation' && snapshot.sceneScreenIds.length > 0)) {
     throw new Error(`presentation scene snapshot missing; snapshots=${JSON.stringify(snapshots)}`);
   }
-  return { snapshots, sessionLog };
+  const firstRecordedScene = snapshots[0];
+  const expectedFeaturedId = sceneAudioContract.expectedFeaturedId;
+  const expectedAudioSourceIds = [...sceneAudioContract.expectedAudioSourceIds].sort();
+  const actualAudioSourceIds = [...(firstRecordedScene?.audioSourceIds ?? [])].sort();
+  if (
+    !firstRecordedScene ||
+    firstRecordedScene.featuredId !== expectedFeaturedId ||
+    JSON.stringify(actualAudioSourceIds) !== JSON.stringify(expectedAudioSourceIds)
+  ) {
+    throw new Error(
+      `scene/audio contract failed: first active speaker=${sceneAudioContract.firstActiveSpeaker} ` +
+      `expected featuredId=${expectedFeaturedId} actual=${firstRecordedScene?.featuredId ?? 'none'} ` +
+      `expected audio=${JSON.stringify(expectedAudioSourceIds)} actual audio=${JSON.stringify(actualAudioSourceIds)}; ` +
+      `snapshots=${JSON.stringify(snapshots)}`,
+    );
+  }
+  return {
+    snapshots,
+    sessionLog,
+    sceneAudioContract: {
+      firstActiveSpeaker: sceneAudioContract.firstActiveSpeaker,
+      expectedFeaturedId,
+      firstRecordedSceneFeaturedId: firstRecordedScene.featuredId,
+      expectedAudioSourceIds,
+      firstRecordedSceneAudioSourceIds: actualAudioSourceIds,
+      matched: true,
+    },
+  };
 }
 
 async function assertRemoteAudio(page) {
@@ -492,7 +519,9 @@ async function main() {
   if (!bobPeerId) throw new Error('Bob peer id unavailable from Alice diagnostics');
   const expectedSources = [`${alicePeerId}:camera`, `${bobPeerId}:camera`];
   const screenSource = `${alicePeerId}:screen`;
-  await setDeterministicLayout(alice.accessToken, { cameraPreset: 'focus', featuredId: `${alicePeerId}:camera`, sceneScreenIds: [] });
+  const firstActiveSpeaker = PHASES[0].active[0];
+  const firstActiveSource = firstActiveSpeaker === 'Alice' ? alicePeerId : bobPeerId;
+  await setDeterministicLayout(alice.accessToken, { cameraPreset: 'focus', featuredId: `${firstActiveSource}:camera`, sceneScreenIds: [] });
 
   const start = await fetch(`${API}/recordings/start`, {
     method: 'POST',
@@ -507,11 +536,11 @@ async function main() {
   const phaseStartAt = Date.now() + PHASE_LEAD_MS;
   await Promise.all(pages.map((page) => page.evaluate((startAt) => window.__deterministicMedia.startPhases(startAt), phaseStartAt)));
   const sceneTransitions = [
-    { cameraPreset: 'focus', featuredId: `${alicePeerId}:camera`, sceneScreenIds: [] },
-    { cameraPreset: 'pip-left', featuredId: `${alicePeerId}:camera`, sceneScreenIds: [] },
-    { cameraPreset: 'pip-right', featuredId: `${alicePeerId}:camera`, sceneScreenIds: [] },
+    { cameraPreset: 'focus', featuredId: `${firstActiveSource}:camera`, sceneScreenIds: [] },
+    { cameraPreset: 'pip-left', featuredId: `${firstActiveSource}:camera`, sceneScreenIds: [] },
+    { cameraPreset: 'pip-right', featuredId: `${firstActiveSource}:camera`, sceneScreenIds: [] },
     { cameraPreset: 'grid', featuredId: null, sceneScreenIds: [] },
-    { cameraPreset: 'focus', featuredId: `${alicePeerId}:camera`, sceneScreenIds: [screenSource] },
+    { cameraPreset: 'focus', featuredId: `${firstActiveSource}:camera`, sceneScreenIds: [screenSource] },
   ];
   for (const [index, scene] of sceneTransitions.entries()) {
     if (index > 0) await new Promise((resolve) => setTimeout(resolve, SCENE_INTERVAL_MS));
@@ -529,7 +558,20 @@ async function main() {
   if (!stop.ok || !body.file) throw new Error(`recording stop failed: ${JSON.stringify(body)}`);
   recordingFile = body.file;
   console.log(`recording: ${body.file}`);
-  const sceneReport = validateSceneSnapshots(body.file, ['focus', 'pip-left', 'pip-right', 'grid'], expectedSources);
+  const sceneReport = validateSceneSnapshots(
+    body.file,
+    ['focus', 'pip-left', 'pip-right', 'grid'],
+    expectedSources,
+    {
+      firstActiveSpeaker,
+      expectedFeaturedId: `${firstActiveSource}:camera`,
+      expectedAudioSourceIds: [`${firstActiveSource}:camera`],
+    },
+  );
+  console.log(
+    `scene/audio contract: ${firstActiveSpeaker} -> ${sceneReport.sceneAudioContract.firstRecordedSceneFeaturedId} ` +
+    `audio=${JSON.stringify(sceneReport.sceneAudioContract.firstRecordedSceneAudioSourceIds)} matched`,
+  );
   writeFileSync(join(artifactDir, 'layout-scenes.json'), JSON.stringify({
     schemaVersion: 'quality-gate/layout-scenes-v1',
     expectedPresets: ['focus', 'pip-left', 'pip-right', 'grid'],

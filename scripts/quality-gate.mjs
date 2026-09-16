@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /** Deterministic local quality gate orchestrator. No network outside the local stack. */
-import { existsSync, mkdirSync, writeFileSync, appendFileSync, cpSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, appendFileSync, cpSync, readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import http from 'node:http';
 import https from 'node:https';
@@ -88,7 +88,20 @@ const audioLines = [...output.matchAll(/remote audio:\s*(\{.*\})/g)].map((match)
 add('studio.remote-audio', 'Bidirectional remote audio and no self-feedback', blockedBy.length > 0 ? 'blocked' : (harnessPassed && audioLines.length >= 2 ? 'passed' : 'failed'), { reason: blockedReason, measured: audioLines, threshold: { peers: 1, rmsMinimum: 0.002, expectedEnergyMinimum: 0.18, selfLeakageMaximum: 0.08, frequencyToleranceHz: 35 }, artifacts: ['browser.log', 'source-frame-counters.json'] });
 const recordingValidationPassed = /RECORDING_VALIDATION_OK/.test(output);
 const layoutScenesPassed = /layout snapshots:\s*[1-9]\d*/.test(output);
-add('compositor.scenes', 'All compositor camera presets and active screen transition', blockedBy.length > 0 ? 'blocked' : (harnessPassed && layoutScenesPassed ? 'passed' : 'failed'), { reason: blockedReason, measured: { validated: layoutScenesPassed, presets: ['focus', 'pip-left', 'pip-right', 'grid'], activeScreenTransition: true }, threshold: { presets: ['focus', 'pip-left', 'pip-right', 'grid'], participants: 2, sourcePresence: true, boundedGeometry: true, validDimensions: true, nonBlackSupportingOutput: true, activeTransition: true }, artifacts: ['layout-scenes.json', 'compositor.session.log', 'recording.output.json', 'media-validation.json'] });
+let sceneAudioContract;
+try {
+  sceneAudioContract = JSON.parse(readFileSync(join(artifactDir, 'layout-scenes.json'), 'utf8')).sceneAudioContract;
+} catch {
+  sceneAudioContract = null;
+}
+const sceneAudioContractPassed = Boolean(
+  sceneAudioContract?.matched === true &&
+  sceneAudioContract.firstActiveSpeaker === 'Bob' &&
+  sceneAudioContract.expectedFeaturedId === sceneAudioContract.firstRecordedSceneFeaturedId &&
+  JSON.stringify(sceneAudioContract.expectedAudioSourceIds ?? []) ===
+    JSON.stringify(sceneAudioContract.firstRecordedSceneAudioSourceIds ?? []),
+);
+add('compositor.scenes', 'All compositor camera presets and active screen transition', blockedBy.length > 0 ? 'blocked' : (harnessPassed && layoutScenesPassed && sceneAudioContractPassed ? 'passed' : 'failed'), { reason: blockedReason, measured: { validated: layoutScenesPassed, sceneAudioContract: sceneAudioContract ?? { matched: false }, presets: ['focus', 'pip-left', 'pip-right', 'grid'], activeScreenTransition: true }, threshold: { presets: ['focus', 'pip-left', 'pip-right', 'grid'], participants: 2, sourcePresence: true, boundedGeometry: true, validDimensions: true, nonBlackSupportingOutput: true, activeTransition: true, sceneAudioAgreement: { firstPhaseSpeaker: 'Bob', firstFeaturedSource: 'Bob camera' } }, artifacts: ['layout-scenes.json', 'compositor.session.log', 'recording.output.json', 'media-validation.json'] });
 add('recording.output', 'Local compositor recording media output', blockedBy.length > 0 ? 'blocked' : (harnessPassed && recordingValidationPassed ? 'passed' : 'failed'), { reason: blockedReason, measured: { recording: output.match(/recording: ([^\n]+)/)?.[1] ?? null, validated: recordingValidationPassed }, threshold: { video: { codec: ['vp8', 'vp9', 'h264'], dimensions: '1920x1080', frames: 30, keyframes: 1, nonBlack: true, phaseCues: ['BOB SOLO', 'ALICE SOLO', 'BOB + ALICE'] }, audio: { codec: ['opus', 'aac'], rmsMinimum: 0.002, tonesHz: [440, 660], stagedPhases: { durationSeconds: 5, analysisWindowSeconds: 1.5, order: ['BOB SOLO', 'ALICE SOLO', 'BOB + ALICE'], activeToneEnergyRatioMinimum: 0.01, inactiveToneEnergyRatioMaximum: 0.035 } }, durationSeconds: { min: 15, max: 30 } }, artifacts: ['browser.log', 'ffprobe.json', 'audio-analysis.json', 'audio-analysis.log', 'phase-analysis.json', 'phase-frames.json', 'phase-1-bob-solo.png', 'phase-2-alice-solo.png', 'phase-3-bob-and-alice.png', 'frame-change-diagnostics.json', 'timestamp-1.png', 'timestamp-4-5.png', 'timestamp-7-5.png', 'timestamp-10.png', 'representative-frame.png', 'video-frame-analysis.json', 'media-validation.json', 'source-frame-counters.json'] });
 const rtmpValidationPassed = /RTMP_VALIDATION_OK/.test(output);
 add('recording.rtmp', 'Loopback RTMP H.264/AAC output', blockedBy.length > 0 ? 'blocked' : (harnessPassed && rtmpValidationPassed ? 'passed' : 'failed'), { reason: blockedReason, measured: { validated: rtmpValidationPassed, receiver: output.match(/local RTMP receiver: ([^\n]+)/)?.[1] ?? null }, threshold: { loopbackOnly: true, video: { codec: 'h264', dimensions: '1920x1080', keyframes: 1, frames: 30 }, audio: { codec: 'aac' }, durationSeconds: { min: 15, max: 30 }, payloadBytes: '>0' }, artifacts: ['rtmp/rtmp-received.flv', 'rtmp/rtmp-receiver.log', 'rtmp/ffprobe.json', 'rtmp/media-validation.json', 'rtmp/playback-check.log', 'rtmp/rtmp-validation.json'] });
