@@ -7,7 +7,7 @@ export const Route = createFileRoute('/')({
   beforeLoad: () => {
     const user = getStoredUser();
     throw redirect({
-      to: user ? '/join' : '/login',
+      to: user ? '/dashboard' : '/login',
       search: keepStudioSearch,
     });
   },

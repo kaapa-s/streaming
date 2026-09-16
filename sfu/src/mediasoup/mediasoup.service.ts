@@ -57,6 +57,15 @@ export class MediasoupService implements OnModuleInit, OnModuleDestroy {
     return router;
   }
 
+  async closeRouter(room: string): Promise<void> {
+    const key = room.trim().toLowerCase();
+    const pending = this.routers.get(key);
+    this.routers.delete(key);
+    if (!pending) return;
+    const router = await pending.catch(() => undefined);
+    router?.close();
+  }
+
   async createWebRtcTransport(room: string): Promise<types.WebRtcTransport> {
     const router = await this.getRouter(room);
     const ip = process.env.MEDIASOUP_LISTEN_IP ?? '127.0.0.1';

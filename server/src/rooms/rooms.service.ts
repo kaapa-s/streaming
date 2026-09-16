@@ -9,7 +9,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
 import { createHash, randomBytes, randomUUID } from 'crypto';
 import { issueJoinToken } from '@streaming/join-token';
-import { Room, RoomInvite, RoomMember, type RoomRole } from '../entities';
+import { Recording, Room, RoomInvite, RoomMember, type RoomRole } from '../entities';
 import type { AuthUser } from '../auth/jwt.strategy';
 import {
   defaultRoomLayout,
@@ -71,7 +71,7 @@ export class RoomsService {
         const room = manager.create(Room, { name, slug, ownerId: owner.id, status: 'created' });
         const saved = await manager.save(Room, room);
         await manager.save(RoomMember, manager.create(RoomMember, {
-          roomId: saved.id, userId: owner.id, role: 'owner',
+          roomId: saved.id, userId: owner.id, role: 'owner', inScene: true,
         }));
         return saved;
       });
@@ -124,6 +124,31 @@ export class RoomsService {
     return room;
   }
 
+  /** Hard-delete a never-started room. The row lock makes discard/join races deterministic. */
+  async discard(slug: string, ownerId: string, cleanup: () => Promise<void>): Promise<{ ok: true }> {
+    let deletedSlug: string | undefined;
+    await this.dataSource.transaction(async (manager) => {
+      const room = await manager.findOne(Room, {
+        where: { slug: slug.trim().toLowerCase() },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!room) throw new NotFoundException(`room "${slug}" not found`);
+      if (room.ownerId !== ownerId) throw new ForbiddenException('only the room owner can discard this room');
+      if (room.status !== 'created') {
+        throw new ConflictException(`room "${room.slug}" cannot be discarded from status "${room.status}"`);
+      }
+      const attempts = await manager.count(Recording, { where: { roomId: room.id } });
+      if (attempts > 0) throw new ConflictException(`room "${room.slug}" has a recording attempt`);
+      await manager.remove(Room, room);
+      deletedSlug = room.slug;
+    });
+
+    // Cleanup is deliberately after commit: a compositor outage must not leave a
+    // database room that blocks the owner's replacement slot. It is idempotent.
+    if (deletedSlug) await cleanup();
+    return { ok: true };
+  }
+
   async requireMembership(roomId: string, userId: string): Promise<RoomMember> {
     const member = await this.members.findOne({ where: { roomId, userId } });
     if (!member) throw new ForbiddenException('not a member of this room');
@@ -150,6 +175,7 @@ export class RoomsService {
     if (room.status === 'finished') throw new ForbiddenException('room is finished');
     let member = await this.members.findOne({ where: { roomId: room.id, userId: user.id } });
     if (!member) throw new ForbiddenException('an invite is required to join this room');
+    if (!member.inScene) throw new ForbiddenException('the owner has not admitted you to the scene');
     const role = member.role;
 
     const joinToken = issueJoinToken({
@@ -157,6 +183,7 @@ export class RoomsService {
       userId: user.id,
       name: user.name,
       role: 'speaker',
+      inScene: true,
     });
 
     return {
@@ -207,12 +234,53 @@ export class RoomsService {
       if (!name) throw new BadRequestException('display name is required for guests');
       const count = await this.members.count({ where: { roomId: room.id } });
       if (count >= 15) throw new ConflictException('room is full');
+      const sceneCount = await this.members.count({ where: { roomId: room.id, inScene: true } });
+      if (sceneCount >= 10) throw new ConflictException('scene is full');
       const identity = user ? { userId: user.id, guestId: null } : { userId: null, guestId: guestId || randomUUID() };
-      member = await this.members.save(this.members.create({ roomId: room.id, ...identity, displayName: name, role: 'speaker' }));
+      member = await this.members.save(this.members.create({ roomId: room.id, ...identity, displayName: name, role: 'speaker', inScene: true }));
     }
+    if (!member.inScene) throw new ForbiddenException('the owner has not admitted you to the scene');
     const identity = user ? user.id : `guest:${member.guestId}`;
     const name = user?.name || member.displayName || 'Guest';
-    return { room: { id: room.id, slug: room.slug }, role: member.role, guestId: member.guestId, joinToken: issueJoinToken({ roomSlug: room.slug, userId: identity, name, role: 'speaker' }), sfuUrl: optionalSfuUrl() };
+    return { room: { id: room.id, slug: room.slug }, role: member.role, guestId: member.guestId, joinToken: issueJoinToken({ roomSlug: room.slug, userId: identity, name, role: 'speaker', inScene: true }), sfuUrl: optionalSfuUrl() };
+  }
+
+  async sceneMembers(slug: string, ownerId: string) {
+    const { room } = await this.requireMembershipBySlug(slug, ownerId);
+    return this.members.find({ where: { roomId: room.id }, order: { createdAt: 'ASC' } });
+  }
+
+  async setSceneMembership(slug: string, ownerId: string, memberId: string, inScene: boolean) {
+    const { room, member } = await this.requireMembershipBySlug(slug, ownerId);
+    if (member.role !== 'owner') throw new ForbiddenException('only the room owner can change scene membership');
+    const target = await this.members.findOne({ where: { id: memberId, roomId: room.id } });
+    if (!target) throw new NotFoundException('room member not found');
+    if (target.role === 'owner' && !inScene) throw new ForbiddenException('the owner must remain in the scene');
+    const result = await this.dataSource.transaction(async (manager) => {
+      const lockedRoom = await manager.findOne(Room, {
+        where: { id: room.id }, lock: { mode: 'pessimistic_write' },
+      });
+      if (!lockedRoom) throw new NotFoundException('room not found');
+      const lockedTarget = await manager.findOne(RoomMember, { where: { id: target.id, roomId: room.id } });
+      if (!lockedTarget) throw new NotFoundException('room member not found');
+      if (inScene && !lockedTarget.inScene) {
+        const count = await manager.count(RoomMember, { where: { roomId: room.id, inScene: true } });
+        if (count >= 10) throw new ConflictException('scene is full');
+      }
+      await manager.update(RoomMember, { id: lockedTarget.id }, { inScene });
+      return { id: lockedTarget.id, userId: lockedTarget.userId ?? `guest:${lockedTarget.guestId}`, inScene };
+    });
+    return result;
+  }
+
+  async kickMember(slug: string, ownerId: string, memberId: string) {
+    const { room, member } = await this.requireMembershipBySlug(slug, ownerId);
+    if (member.role !== 'owner') throw new ForbiddenException('only the room owner can kick members');
+    const target = await this.members.findOne({ where: { id: memberId, roomId: room.id } });
+    if (!target) throw new NotFoundException('room member not found');
+    if (target.role === 'owner') throw new ForbiddenException('the owner cannot be kicked');
+    await this.members.remove(target);
+    return { ok: true, userId: target.userId ?? `guest:${target.guestId}` };
   }
 
   /** Service token for the headless compositor (no end-user session). */

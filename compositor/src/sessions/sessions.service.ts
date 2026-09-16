@@ -283,6 +283,17 @@ export class SessionsService {
     return { room, live, resolution };
   }
 
+  /** Release only a warm session. Discard never stops recording or deletes media. */
+  async discard(slug: string): Promise<{ room: string; discarded: boolean }> {
+    const room = slug.trim().toLowerCase();
+    const entry = this.sessions.get(room);
+    if (entry?.state === 'recording') {
+      throw new BadRequestException(`room "${room}" is recording`);
+    }
+    await this.releaseRoom(room, { keepPending: false });
+    return { room, discarded: Boolean(entry) };
+  }
+
   async stop(slug: string): Promise<{ room: string; file?: string; live: boolean }> {
     const room = slug.trim().toLowerCase();
     const entry = this.sessions.get(room);

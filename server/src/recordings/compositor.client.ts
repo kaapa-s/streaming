@@ -54,6 +54,11 @@ export class CompositorClient {
     return this.request('POST', `/internal/rooms/${encodeURIComponent(slug)}/stop`);
   }
 
+  /** Release an idle room without invoking recording stop or media cleanup. */
+  async discard(slug: string): Promise<{ room: string; discarded: boolean }> {
+    return this.request('POST', `/internal/rooms/${encodeURIComponent(slug)}/discard`);
+  }
+
   async upload(slug: string, putUrl: string): Promise<{ room: string; uploaded: boolean }> {
     return this.request('POST', `/internal/rooms/${encodeURIComponent(slug)}/upload`, { putUrl });
   }

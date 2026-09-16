@@ -11,6 +11,7 @@ import type {
 } from '../lib/platforms';
 
 export type StudioValue = {
+  room: string;
   error: string;
   user: AuthUser | null;
   authMode: AuthMode;
@@ -29,8 +30,10 @@ export type StudioValue = {
   onAuth: (e: React.FormEvent) => void;
   onLogout: () => void;
   joined: boolean;
+  joinedRoom: string | null;
   joining: boolean;
   join: () => Promise<void>;
+  joinWithAdmission: (admission: { room: { slug: string }; joinToken: string; sfuUrl?: string; role: 'owner' | 'speaker' | 'viewer' }, displayName: string) => Promise<void>;
   leave: () => Promise<void>;
   roomRole: 'owner' | 'speaker' | 'viewer' | null;
   localPeerId: string | null;
@@ -39,6 +42,8 @@ export type StudioValue = {
   remotePeers: RemotePeer[];
   toggleScreenShare: () => void;
   stopScreenShare: () => void;
+  toggleCamera: () => void;
+  toggleMicrophone: () => void;
   screenPending: boolean;
   screenLabel: string;
   cameraPreset: CameraPreset;

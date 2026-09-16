@@ -52,6 +52,7 @@ export function useStudioController(room: string): StudioValue {
   });
 
   return {
+    room,
     error,
     user: auth.user,
     authMode: auth.authMode,
@@ -74,8 +75,10 @@ export function useStudioController(room: string): StudioValue {
         await session.leave();
       }),
     joined: session.joined,
+    joinedRoom: session.joinedRoom,
     joining: session.joining,
     join: session.join,
+    joinWithAdmission: session.joinWithAdmission,
     leave: async () => {
       recording.resetUi();
       await session.leave();
@@ -87,6 +90,8 @@ export function useStudioController(room: string): StudioValue {
     remotePeers: session.remotePeers,
     toggleScreenShare: session.toggleScreenShare,
     stopScreenShare: session.stopScreenShare,
+    toggleCamera: session.toggleCamera,
+    toggleMicrophone: session.toggleMicrophone,
     screenPending: session.screenPending,
     screenLabel: session.screenLabel,
     cameraPreset: studioLayout.layout.cameraPreset,

@@ -7,6 +7,8 @@ export interface JoinTokenPayload {
   userId: string;
   name: string;
   role: JoinPeerRole;
+  /** Only scene members may obtain a participant token. Compositor tokens omit this. */
+  inScene?: boolean;
   exp: number;
 }
 

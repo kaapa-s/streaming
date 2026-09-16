@@ -45,16 +45,86 @@ export class RoomsController {
     return this.rooms.createInvite(slug, user.id);
   }
 
+  @Post(':slug/discard')
+  @UseGuards(JwtAuthGuard)
+  async discard(@Param('slug') slug: string, @CurrentUser() user: AuthUser) {
+    return this.rooms.discard(slug, user.id, async () => {
+      try {
+        await this.compositor.discard(slug);
+      } catch (err) {
+        // The room is already deleted; cleanup can be retried by infrastructure
+        // without turning a successful hard delete into a client retry loop.
+        this.logger.warn(`discard compositor cleanup failed for ${slug}: ${String(err)}`);
+      }
+      const sfuUrl = process.env.SFU_INTERNAL_URL?.trim();
+      const secret = process.env.SFU_INTERNAL_SECRET?.trim();
+      if (sfuUrl && secret) {
+        try {
+          await fetch(`${sfuUrl.replace(/\/$/, '')}/internal/rooms/${encodeURIComponent(slug)}/discard`, {
+            method: 'POST', headers: { 'X-Internal-Secret': secret },
+          });
+        } catch (err) {
+          this.logger.warn(`discard SFU cleanup failed for ${slug}: ${String(err)}`);
+        }
+      }
+    });
+  }
+
   @Post(':slug/invites/:inviteId/revoke')
   @UseGuards(JwtAuthGuard)
   revokeInvite(@Param('inviteId') inviteId: string, @CurrentUser() user: AuthUser) {
     return this.rooms.revokeInvite(inviteId, user.id);
   }
 
+  /** Resolve a room only for an existing member; slug lookup is not authorization. */
   @Get(':slug')
   @UseGuards(JwtAuthGuard)
-  getBySlug(@Param('slug') slug: string) {
-    return this.rooms.findBySlug(slug);
+  async getBySlug(@Param('slug') slug: string, @CurrentUser() user: AuthUser) {
+    const { room, member } = await this.rooms.requireMembershipBySlug(slug, user.id);
+    return { id: room.id, slug: room.slug, name: room.name, status: room.status, role: member.role };
+  }
+
+  @Get(':slug/members')
+  @UseGuards(JwtAuthGuard)
+  sceneMembers(@Param('slug') slug: string, @CurrentUser() user: AuthUser) {
+    return this.rooms.sceneMembers(slug, user.id);
+  }
+
+  @Post(':slug/members/:memberId/scene')
+  @UseGuards(JwtAuthGuard)
+  setSceneMembership(
+    @Param('slug') slug: string,
+    @Param('memberId') memberId: string,
+    @Body() body: { inScene?: boolean },
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.rooms.setSceneMembership(slug, user.id, memberId, body.inScene === true).then(async (result) => {
+      if (!result.inScene) await this.disconnectFromSfu(slug, result.userId);
+      return result;
+    });
+  }
+
+  @Post(':slug/members/:memberId/kick')
+  @UseGuards(JwtAuthGuard)
+  async kickMember(@Param('slug') slug: string, @Param('memberId') memberId: string, @CurrentUser() user: AuthUser) {
+    const result = await this.rooms.kickMember(slug, user.id, memberId);
+    await this.disconnectFromSfu(slug, result.userId);
+    return result;
+  }
+
+  private async disconnectFromSfu(slug: string, userId: string): Promise<void> {
+    const base = process.env.SFU_INTERNAL_URL?.trim();
+    const secret = process.env.SFU_INTERNAL_SECRET?.trim();
+    if (!base || !secret) return;
+    try {
+      await fetch(`${base.replace(/\/$/, '')}/internal/rooms/${encodeURIComponent(slug)}/kick`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Internal-Secret': secret },
+        body: JSON.stringify({ userId }),
+      });
+    } catch (err) {
+      this.logger.warn(`SFU participant disconnect failed for ${slug}: ${String(err)}`);
+    }
   }
 
   @Get(':slug/media')

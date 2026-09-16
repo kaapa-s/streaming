@@ -528,16 +528,25 @@ async function main() {
       localStorage.setItem('streaming-refresh-token', sess.refreshToken);
       localStorage.setItem('streaming-user', JSON.stringify(sess.user));
     }, session);
-    await page.goto(`${WEB}/?room=${room}&auto=1&e2eDiagnostics=1`, { waitUntil: 'domcontentloaded', timeout: TIMEOUT_MS });
-    await page.waitForFunction(
-      () => [...document.querySelectorAll('button')].some((button) => button.textContent?.includes('Open room')),
-      { timeout: TIMEOUT_MS },
+    await page.goto(
+      name === 'Alice' ? `${WEB}/?room=${room}&auto=1&e2eDiagnostics=1` : `${WEB}/join?room=${room.toLowerCase()}&auto=1&e2eDiagnostics=1`,
+      { waitUntil: 'domcontentloaded', timeout: TIMEOUT_MS },
     );
-    await page.evaluate(() => {
-      const button = [...document.querySelectorAll('button')].find((candidate) => candidate.textContent?.includes('Open room'));
-      if (!button) throw new Error('deterministic room-open button unavailable');
-      button.click();
-    });
+    // The accepted room-entry flow is automatic: the owner selects the room
+    // from the sidebar, while the invited participant enters the canonical
+    // room route directly. Neither path relies on the removed Open room UI.
+    if (name === 'Alice') {
+      await page.waitForFunction(
+        (slug) => [...document.querySelectorAll('a')].some((link) => link.getAttribute('href')?.includes(`/join?room=${encodeURIComponent(slug.toLowerCase())}`)),
+        { timeout: TIMEOUT_MS },
+        room,
+      );
+      await page.evaluate((slug) => {
+        const link = [...document.querySelectorAll('a')].find((candidate) => candidate.getAttribute('href')?.includes(`/join?room=${encodeURIComponent(slug.toLowerCase())}`));
+        if (!link) throw new Error('deterministic sidebar room link unavailable');
+        link.click();
+      }, room);
+    }
     await waitForSpeaker(page, name);
   }
 

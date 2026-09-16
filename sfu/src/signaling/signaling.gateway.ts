@@ -11,6 +11,7 @@ type MediaSource = 'camera' | 'screen';
 interface Peer {
   id: string;
   name: string;
+  userId: string;
   role: PeerRole;
   room: string;
   socket: WebSocket;
@@ -79,6 +80,26 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
     });
   }
 
+  async kickUser(roomSlug: string, userId: string): Promise<void> {
+    for (const peer of this.rooms.get(roomSlug.trim().toLowerCase()) ?? []) {
+      if (peer.userId === userId) {
+        peer.socket.close(4003, 'removed from room');
+        this.handleDisconnect(peer.socket);
+      }
+    }
+  }
+
+  async closeRoom(roomSlug: string): Promise<void> {
+    const room = roomSlug.trim().toLowerCase();
+    const peers = [...(this.rooms.get(room) ?? [])];
+    for (const peer of peers) {
+      peer.socket.close(4004, 'room discarded');
+      this.handleDisconnect(peer.socket);
+    }
+    this.rooms.delete(room);
+    await this.mediasoup.closeRouter(room);
+  }
+
   handleDisconnect(socket: WebSocket): void {
     const peer = this.peers.get(socket);
     if (!peer) return;
@@ -105,6 +126,13 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
       const room = claims.roomSlug;
       const name = claims.name;
       const role: PeerRole = claims.role;
+      if (role === 'speaker' && claims.inScene !== true) {
+        throw new Error('participant is not admitted to the scene');
+      }
+      const existingPeers = this.rooms.get(room);
+      if (role === 'speaker' && existingPeers && [...existingPeers].filter((peer) => peer.role === 'speaker').length >= 10) {
+        throw new Error('scene is full');
+      }
       if (data.room != null && String(data.room) !== room) {
         throw new Error('join token room mismatch');
       }
@@ -116,6 +144,7 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
       const peer: Peer = {
         id: randomUUID(),
         name,
+        userId: claims.userId,
         role,
         room,
         socket,

@@ -1,6 +1,7 @@
 const ACCESS_KEY = 'streaming-access-token';
 const REFRESH_KEY = 'streaming-refresh-token';
 const USER_KEY = 'streaming-user';
+const GUEST_ADMISSION_KEY = 'streaming-guest-admission';
 
 export interface AuthUser {
   id: string;
@@ -186,6 +187,11 @@ export async function listOwnedRooms(): Promise<OwnedRoom[]> {
   return res.json() as Promise<OwnedRoom[]>;
 }
 
+export async function discardRoom(slug: string): Promise<void> {
+  const res = await apiFetch(`/api/rooms/${encodeURIComponent(slug)}/discard`, { method: 'POST' });
+  if (!res.ok) throw new Error(await parseError(res));
+}
+
 export async function createRoom(name: string): Promise<OwnedRoom> {
   const res = await apiFetch('/api/rooms', {
     method: 'POST',
@@ -193,6 +199,46 @@ export async function createRoom(name: string): Promise<OwnedRoom> {
   });
   if (!res.ok) throw new Error(await parseError(res));
   return res.json() as Promise<OwnedRoom>;
+}
+
+export type GuestAdmission = {
+  invite: string;
+  room: { id: string; slug: string };
+  role: 'owner' | 'speaker' | 'viewer';
+  guestId: string | null;
+  joinToken: string;
+  sfuUrl?: string;
+  displayName: string;
+};
+
+export function saveGuestAdmission(admission: GuestAdmission): void {
+  sessionStorage.setItem(GUEST_ADMISSION_KEY, JSON.stringify(admission));
+}
+
+export function getGuestAdmission(invite: string): GuestAdmission | null {
+  try {
+    const value = JSON.parse(sessionStorage.getItem(GUEST_ADMISSION_KEY) ?? 'null') as GuestAdmission | null;
+    return value?.invite === invite ? value : null;
+  } catch { return null; }
+}
+
+export function clearGuestAdmission(): void {
+  sessionStorage.removeItem(GUEST_ADMISSION_KEY);
+}
+
+export async function admitInvite(token: string, displayName?: string, guestId?: string): Promise<{
+  room: { id: string; slug: string };
+  role: 'owner' | 'speaker' | 'viewer';
+  guestId: string | null;
+  joinToken: string;
+  sfuUrl?: string;
+}> {
+  const res = await apiFetch('/api/rooms/invite/admit', {
+    method: 'POST',
+    body: JSON.stringify({ token, displayName, guestId }),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json();
 }
 
 export async function joinRoom(slug: string): Promise<{

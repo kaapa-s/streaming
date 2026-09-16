@@ -34,6 +34,10 @@ export class RoomMember {
   @Column({ type: 'varchar' })
   declare role: RoomRole;
 
+  /** Room membership is durable; scene membership controls active participation. */
+  @Column({ default: false })
+  declare inScene: boolean;
+
   @ManyToOne(() => Room, (room) => room.members, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'roomId' })
   declare room: Room;

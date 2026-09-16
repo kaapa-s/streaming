@@ -38,6 +38,11 @@ export class SessionsController {
     return this.sessions.stop(slug);
   }
 
+  @Post('rooms/:slug/discard')
+  discard(@Param('slug') slug: string) {
+    return this.sessions.discard(slug);
+  }
+
   @Post('rooms/:slug/upload')
   upload(@Param('slug') slug: string, @Body() body: UploadDto) {
     return this.sessions.upload(slug, body.putUrl);

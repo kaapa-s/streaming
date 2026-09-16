@@ -25,6 +25,7 @@ export function useStudioSession({
   onUnauthorized,
 }: UseStudioSessionArgs) {
   const [joined, setJoined] = useState(false);
+  const [joinedRoom, setJoinedRoom] = useState<string | null>(null);
   const [joining, setJoining] = useState(false);
   const [roomRole, setRoomRole] = useState<'owner' | 'speaker' | 'viewer' | null>(null);
   const [localPeerId, setLocalPeerId] = useState<string | null>(null);
@@ -70,6 +71,7 @@ export function useStudioSession({
     if (diagnosticsEnabled) delete diagnosticsWindow.__studioDiagnostics;
     setLocalPeerId(null);
     setJoined(false);
+    setJoinedRoom(null);
     setRoomRole(null);
     joiningRef.current = false;
     setJoining(false);
@@ -113,6 +115,7 @@ export function useStudioSession({
       await sfu.join(joinedRoom.slug, user.name, 'speaker', joinToken, sfuUrl);
       await sfu.publish(stream);
       setLocalPeerId(sfu.peerId);
+      setJoinedRoom(joinedRoom.slug);
       setJoined(true);
       setJoining(false);
     } catch (err) {
@@ -125,6 +128,35 @@ export function useStudioSession({
         onUnauthorized();
       }
       setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const joinWithAdmission = async (
+    admission: { room: { slug: string }; joinToken: string; sfuUrl?: string; role: 'owner' | 'speaker' | 'viewer' },
+    displayName: string,
+  ) => {
+    if (joiningRef.current) return;
+    joiningRef.current = true;
+    setJoining(true);
+    setError('');
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) throw new Error('Camera/mic unavailable: use HTTPS or localhost.');
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } }, audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      setRoomRole(admission.role);
+      setLocalStream(stream);
+      const sfu = new SfuClient({ onPeersChanged: (peers) => { const nextPeers = [...peers]; setRemotePeers(nextPeers); updateDiagnostics(nextPeers); } });
+      sfuRef.current = sfu;
+      await sfu.join(admission.room.slug, displayName, 'speaker', admission.joinToken, admission.sfuUrl);
+      await sfu.publish(stream);
+      setLocalPeerId(sfu.peerId);
+      setJoinedRoom(admission.room.slug);
+      setJoined(true);
+      setJoining(false);
+    } catch (err) {
+      sfuRef.current?.close(); sfuRef.current = null; joiningRef.current = false; setJoining(false);
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message);
+      throw err;
     }
   };
 
@@ -181,10 +213,23 @@ export function useStudioSession({
     });
   };
 
+  const toggleCamera = () => {
+    const track = localStreamRef.current?.getVideoTracks()[0];
+    if (track) track.enabled = !track.enabled;
+    setLocalStream((stream) => stream ? new MediaStream(stream.getTracks()) : stream);
+  };
+
+  const toggleMicrophone = () => {
+    const track = localStreamRef.current?.getAudioTracks()[0];
+    if (track) track.enabled = !track.enabled;
+    setLocalStream((stream) => stream ? new MediaStream(stream.getTracks()) : stream);
+  };
+
   const screenLabel = screenPending ? 'Starting share…' : 'Share screen';
 
   return {
     joined,
+    joinedRoom,
     joining,
     roomRole,
     localPeerId,
@@ -192,10 +237,13 @@ export function useStudioSession({
     localScreenStream,
     remotePeers,
     join,
+    joinWithAdmission,
     leave,
     toggleScreenShare,
     stopScreenShare,
     screenPending,
     screenLabel,
+    toggleCamera,
+    toggleMicrophone,
   };
 }

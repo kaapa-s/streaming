@@ -1,4 +1,4 @@
-import { Link, Outlet, createFileRoute } from '@tanstack/react-router';
+import { Link, Outlet, createFileRoute, useLocation } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 import { Settings, Plus } from 'lucide-react';
 import { Button } from '../../components/Button';
@@ -8,15 +8,16 @@ import { ensureAuthenticated } from '../../studio/studioStage';
 import { useStudio } from '../../studio/useStudio';
 
 export const Route = createFileRoute('/_studio/_app')({
-  beforeLoad: ({ context }) => ensureAuthenticated(context.studioHandle),
+  beforeLoad: ({ context, search }) => ensureAuthenticated(context.studioHandle, Boolean(search.invite)),
   component: AppShell,
 });
 
 function AppShell() {
   const s = useStudio();
+  const location = useLocation();
   const [rooms, setRooms] = useState<OwnedRoom[]>([]);
-  useEffect(() => { void listOwnedRooms().then(setRooms).catch(() => undefined); }, [s.joined]);
-  if (!s.user) return null;
+  useEffect(() => { void listOwnedRooms().then(setRooms).catch(() => undefined); }, [s.joined, location.pathname]);
+  if (!s.user && !s.joined) return null;
   const current = rooms.find((room) => room.status === 'created' || room.status === 'active');
   const finished = rooms.filter((room) => room.status === 'finished');
 
@@ -31,7 +32,7 @@ function AppShell() {
       </nav>
       <div className="mt-auto flex flex-col gap-1">
         <Link to="/settings" search={keepStudioSearch} className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium text-ink-muted hover:bg-surface-muted hover:text-ink"><Settings size={16} /> Settings</Link>
-        <div className="border-t border-border mt-2 pt-3 px-2 flex items-center justify-between"><p className="text-sm font-semibold truncate">{s.user.name}</p><Button variant="ghost" className="px-0 py-1 text-sm font-medium text-ink-muted hover:text-ink" loading={s.logoutPending} onClick={s.onLogout}>{s.logoutPending ? 'Logging out…' : 'Log out'}</Button></div>
+        <div className="border-t border-border mt-2 pt-3 px-2 flex items-center justify-between"><p className="text-sm font-semibold truncate">{s.user?.name ?? 'Guest'}</p><Button variant="ghost" className="px-0 py-1 text-sm font-medium text-ink-muted hover:text-ink" loading={s.logoutPending} onClick={s.onLogout}>{s.logoutPending ? 'Logging out…' : 'Log out'}</Button></div>
       </div>
     </aside>
     <main className="flex-1 min-w-0 p-8"><Outlet /></main>

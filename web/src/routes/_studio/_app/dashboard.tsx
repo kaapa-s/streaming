@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 import { Button } from '../../../components/Button';
-import { createRoom, listOwnedRooms, type OwnedRoom } from '../../../lib/auth';
+import { createRoom, discardRoom, listOwnedRooms, type OwnedRoom } from '../../../lib/auth';
 
 export const Route = createFileRoute('/_studio/_app/dashboard')({ component: DashboardPage });
 
@@ -11,6 +11,7 @@ function DashboardPage() {
   const [name, setName] = useState('');
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [discarding, setDiscarding] = useState<string | null>(null);
   const [error, setError] = useState('');
 
   const refresh = () => listOwnedRooms().then(setRooms).catch((e: unknown) => setError(errorMessage(e))).finally(() => setLoading(false));
@@ -29,6 +30,12 @@ function DashboardPage() {
 
   const active = rooms.find((room) => room.status === 'active' || room.status === 'created');
   const finished = rooms.filter((room) => room.status === 'finished');
+  const discard = async (room: OwnedRoom) => {
+    if (room.status !== 'created' || !window.confirm(`Discard “${room.name}”? This permanently deletes the room and its invites.`)) return;
+    setError(''); setDiscarding(room.slug);
+    try { await discardRoom(room.slug); await refresh(); } catch (e) { setError(errorMessage(e)); }
+    finally { setDiscarding(null); }
+  };
 
   return (
     <div className="max-w-3xl">
@@ -48,7 +55,7 @@ function DashboardPage() {
         <div className="mt-8 flex flex-col gap-6">
           <section>
             <h2 className="text-lg font-semibold">Current room</h2>
-            {active ? <RoomCard room={active} /> : <p className="mt-2 rounded-lg border border-dashed border-border p-5 text-sm text-ink-muted">No current room. Create one above.</p>}
+            {active ? <RoomCard room={active} onDiscard={discard} discarding={discarding === active.slug} /> : <p className="mt-2 rounded-lg border border-dashed border-border p-5 text-sm text-ink-muted">No current room. Create one above.</p>}
           </section>
           <section>
             <h2 className="text-lg font-semibold">Recording status</h2>
@@ -64,8 +71,8 @@ function DashboardPage() {
   );
 }
 
-function RoomCard({ room }: { room: OwnedRoom }) {
-  return <div className="flex items-center justify-between gap-4 rounded-lg border border-border bg-surface-raised p-4"><div><p className="font-medium">{room.name}</p><p className="mt-1 text-xs text-ink-muted">/{room.slug} · {room.status}</p></div>{room.status !== 'finished' && <Link to="/join" search={{ room: room.slug }} className="text-sm font-semibold text-accent hover:text-accent-hover">Open room →</Link>}</div>;
+function RoomCard({ room, onDiscard, discarding = false }: { room: OwnedRoom; onDiscard?: (room: OwnedRoom) => void; discarding?: boolean }) {
+  return <div className="flex items-center justify-between gap-4 rounded-lg border border-border bg-surface-raised p-4"><div><p className="font-medium">{room.name}</p><p className="mt-1 text-xs text-ink-muted">/{room.slug} · {room.status}</p></div>{room.status === 'created' && onDiscard && <Button type="button" variant="danger" loading={discarding} disabled={discarding} onClick={() => void onDiscard(room)}>{discarding ? 'Discarding…' : 'Discard'}</Button>}</div>;
 }
 
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : 'Request failed'; }

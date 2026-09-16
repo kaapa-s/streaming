@@ -1,6 +1,6 @@
 import { sourceId, type CameraPreset } from '@streaming/canvas-compositor';
 import type { RemotePeer } from '@streaming/sfu-client';
-import { Monitor } from 'lucide-react';
+import { Camera, CameraOff, Mic, MicOff, Monitor } from 'lucide-react';
 import { LAYOUT_OPTIONS } from './layoutIcons';
 import { VideoTile } from './VideoTile';
 
@@ -12,6 +12,8 @@ type SceneStripProps = {
   screenPending: boolean;
   onToggleScreenShare: () => void;
   onRemoveLocalScreen: () => void;
+  onToggleCamera: () => void;
+  onToggleMicrophone: () => void;
   cameraPreset: CameraPreset;
   featuredId: string | null;
   sceneScreenIds: string[];
@@ -29,6 +31,8 @@ export function SceneStrip({
   screenPending,
   onToggleScreenShare,
   onRemoveLocalScreen,
+  onToggleCamera,
+  onToggleMicrophone,
   cameraPreset,
   featuredId,
   sceneScreenIds,
@@ -52,6 +56,18 @@ export function SceneStrip({
       </h2>
 
       <div className="flex flex-col gap-4">
+        {localStream && (
+          <div className="flex gap-2">
+            <button type="button" onClick={onToggleCamera} className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs font-semibold">
+              {localStream.getVideoTracks()[0]?.enabled ? <Camera size={16} /> : <CameraOff size={16} />}
+              Camera
+            </button>
+            <button type="button" onClick={onToggleMicrophone} className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs font-semibold">
+              {localStream.getAudioTracks()[0]?.enabled ? <Mic size={16} /> : <MicOff size={16} />}
+              Microphone
+            </button>
+          </div>
+        )}
         <div>
           <p className="text-xs font-medium text-ink-muted mb-2">Layout</p>
           <div className="flex flex-wrap gap-2">
