@@ -111,8 +111,8 @@ export class RecordingsService {
         const existing = await this.rooms.activeOwnedBy(userId);
         throw new ConflictException(
           existing
-            ? `user already owns an active room: ${existing.slug}`
-            : 'user already owns an active room',
+            ? `user already owns a current room: ${existing.slug}`
+            : 'user already owns a current room',
         );
       }
       throw err;
@@ -213,6 +213,25 @@ export class RecordingsService {
       live: result.live,
       downloadUrl,
       s3Key,
+    };
+  }
+
+  async media(room: Room, userId: string): Promise<{
+    status: string;
+    startedAt: Date | null;
+    endedAt: Date | null;
+    file: string | null;
+    downloadUrl?: string;
+  } | null> {
+    if (room.ownerId !== userId) throw new ForbiddenException('only the room owner can access recorded media');
+    const recording = await this.recordings.findOne({ where: { roomId: room.id }, order: { createdAt: 'DESC' } });
+    if (!recording) return null;
+    const downloadUrl = recording.s3Key && this.s3.isConfigured()
+      ? await this.s3.createDownloadUrl(recording.s3Key)
+      : undefined;
+    return {
+      status: recording.status, startedAt: recording.startedAt, endedAt: recording.endedAt,
+      file: recording.filePath, ...(downloadUrl ? { downloadUrl } : {}),
     };
   }
 

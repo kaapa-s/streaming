@@ -19,6 +19,7 @@ import { Route as StudioSignupRouteImport } from './routes/_studio/signup'
 import { Route as StudioAppDashboardRouteImport } from './routes/_studio/_app/dashboard'
 import { Route as StudioAppJoinRouteImport } from './routes/_studio/_app/join'
 import { Route as StudioAppSettingsRouteImport } from './routes/_studio/_app/settings'
+import { Route as StudioAppRoomsSlugRouteImport } from './routes/_studio/_app/rooms.$slug'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -68,6 +69,11 @@ const StudioAppSettingsRoute = StudioAppSettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => StudioAppRoute,
 } as any)
+const StudioAppRoomsSlugRoute = StudioAppRoomsSlugRouteImport.update({
+  id: '/rooms/$slug',
+  path: '/rooms/$slug',
+  getParentRoute: () => StudioAppRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -78,6 +84,7 @@ export interface FileRoutesByFullPath {
   '/dashboard': typeof StudioAppDashboardRoute
   '/join': typeof StudioAppJoinRoute
   '/settings': typeof StudioAppSettingsRoute
+  '/rooms/$slug': typeof StudioAppRoomsSlugRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -88,6 +95,7 @@ export interface FileRoutesByTo {
   '/dashboard': typeof StudioAppDashboardRoute
   '/join': typeof StudioAppJoinRoute
   '/settings': typeof StudioAppSettingsRoute
+  '/rooms/$slug': typeof StudioAppRoomsSlugRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -101,6 +109,7 @@ export interface FileRoutesById {
   '/_studio/_app/dashboard': typeof StudioAppDashboardRoute
   '/_studio/_app/join': typeof StudioAppJoinRoute
   '/_studio/_app/settings': typeof StudioAppSettingsRoute
+  '/_studio/_app/rooms/$slug': typeof StudioAppRoomsSlugRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -113,6 +122,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/join'
     | '/settings'
+    | '/rooms/$slug'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -123,6 +133,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/join'
     | '/settings'
+    | '/rooms/$slug'
   id:
     | '__root__'
     | '/'
@@ -135,6 +146,7 @@ export interface FileRouteTypes {
     | '/_studio/_app/dashboard'
     | '/_studio/_app/join'
     | '/_studio/_app/settings'
+    | '/_studio/_app/rooms/$slug'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -215,6 +227,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof StudioAppSettingsRouteImport
       parentRoute: typeof StudioAppRoute
     }
+    '/_studio/_app/rooms/$slug': {
+      id: '/_studio/_app/rooms/$slug'
+      path: '/rooms/$slug'
+      fullPath: '/rooms/$slug'
+      preLoaderRoute: typeof StudioAppRoomsSlugRouteImport
+      parentRoute: typeof StudioAppRoute
+    }
   }
 }
 
@@ -222,12 +241,14 @@ interface StudioAppRouteChildren {
   StudioAppDashboardRoute: typeof StudioAppDashboardRoute
   StudioAppJoinRoute: typeof StudioAppJoinRoute
   StudioAppSettingsRoute: typeof StudioAppSettingsRoute
+  StudioAppRoomsSlugRoute: typeof StudioAppRoomsSlugRoute
 }
 
 const StudioAppRouteChildren: StudioAppRouteChildren = {
   StudioAppDashboardRoute: StudioAppDashboardRoute,
   StudioAppJoinRoute: StudioAppJoinRoute,
   StudioAppSettingsRoute: StudioAppSettingsRoute,
+  StudioAppRoomsSlugRoute: StudioAppRoomsSlugRoute,
 }
 
 const StudioAppRouteWithChildren = StudioAppRoute._addFileChildren(

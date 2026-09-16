@@ -41,6 +41,10 @@ export class S3PresignService {
     return `${prefix}/${roomSlug}-${stamp}.webm`;
   }
 
+  async createDownloadUrl(s3Key: string): Promise<string> {
+    return getSignedUrl(this.client(), new GetObjectCommand({ Bucket: this.bucket(), Key: s3Key }), { expiresIn: 60 * 60 });
+  }
+
   async createUploadUrls(s3Key: string): Promise<{ putUrl: string; downloadUrl: string }> {
     const client = this.client();
     const bucket = this.bucket();

@@ -16,9 +16,9 @@ import type { RoomLayout } from '../rooms/room-layout';
 export type RoomStatus = 'created' | 'active' | 'finished';
 
 @Entity('rooms')
-@Index('IDX_rooms_one_active_owner', ['ownerId'], {
+@Index('IDX_rooms_one_current_owner', ['ownerId'], {
   unique: true,
-  where: '"status" = \'active\'',
+  where: '"status" IN (\'created\', \'active\')',
 })
 export class Room {
   @PrimaryGeneratedColumn('uuid')

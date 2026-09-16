@@ -36,6 +36,12 @@ export class RoomsController {
     return this.rooms.findBySlug(slug);
   }
 
+  @Get(':slug/media')
+  async media(@Param('slug') slug: string, @CurrentUser() user: AuthUser) {
+    const { room } = await this.rooms.requireMembershipBySlug(slug, user.id);
+    return this.recordings.media(room, user.id);
+  }
+
   @Post(':id/join')
   async joinById(@Param('id') id: string, @CurrentUser() user: AuthUser) {
     // UUID → by id; otherwise treat as a room slug for studio UX (?room=<slug>).

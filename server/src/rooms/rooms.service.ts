@@ -1,11 +1,12 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, In, Repository } from 'typeorm';
 import { issueJoinToken } from '@streaming/join-token';
 import { Room, RoomMember, type RoomRole } from '../entities';
 import type { AuthUser } from '../auth/jwt.strategy';
@@ -14,6 +15,10 @@ import {
   normalizeRoomLayout,
   type RoomLayout,
 } from './room-layout';
+
+function isUniqueViolation(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === '23505';
+}
 
 function roomLayoutOf(room: Room): RoomLayout {
   // normalizeRoomLayout guards legacy/hand-edited jsonb rows; defaultRoomLayout is fresh.
@@ -34,6 +39,7 @@ function optionalSfuUrl(): string | undefined {
 @Injectable()
 export class RoomsService {
   constructor(
+    private readonly dataSource: DataSource,
     @InjectRepository(Room)
     private readonly rooms: Repository<Room>,
     @InjectRepository(RoomMember)
@@ -41,6 +47,9 @@ export class RoomsService {
   ) {}
 
   async create(input: { name?: string; slug?: string }, owner: AuthUser): Promise<Room> {
+    const current = await this.rooms.findOne({ where: { ownerId: owner.id, status: 'created' } });
+    const active = current ?? await this.rooms.findOne({ where: { ownerId: owner.id, status: 'active' } });
+    if (active) throw new ConflictException(`user already owns a current room: ${active.slug}`);
     const name = input.name?.trim() || input.slug?.trim();
     if (!name) throw new BadRequestException('room name is required');
     const base = input.slug?.trim().toLowerCase() || slugify(name);
@@ -50,18 +59,27 @@ export class RoomsService {
       if (!existing) break;
       slug = `${base}-${suffix}`;
     }
-    const room = await this.rooms.save(
-      this.rooms.create({ name, slug, ownerId: owner.id, status: 'created' }),
-    );
-    await this.members.save(
-      this.members.create({ roomId: room.id, userId: owner.id, role: 'owner' }),
-    );
-    return room;
+    try {
+      return await this.dataSource.transaction(async (manager) => {
+        const room = manager.create(Room, { name, slug, ownerId: owner.id, status: 'created' });
+        const saved = await manager.save(Room, room);
+        await manager.save(RoomMember, manager.create(RoomMember, {
+          roomId: saved.id, userId: owner.id, role: 'owner',
+        }));
+        return saved;
+      });
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        const existing = await this.rooms.findOne({ where: { ownerId: owner.id, status: 'created' } });
+        throw new ConflictException(`user already owns a current room${existing ? `: ${existing.slug}` : ''}`);
+      }
+      throw error;
+    }
   }
 
   async listOwned(userId: string): Promise<Array<{
     id: string; slug: string; name: string; status: Room['status']; createdAt: Date;
-    recording: { id: string; status: string; startedAt: Date | null; endedAt: Date | null } | null;
+    media: { status: string; startedAt: Date | null; endedAt: Date | null; file: string | null } | null;
   }>> {
     const rooms = await this.rooms.find({
       where: { ownerId: userId },
@@ -75,16 +93,16 @@ export class RoomsService {
       return {
         id: room.id, slug: room.slug, name: room.name, status: room.status,
         createdAt: room.createdAt,
-        recording: recording ? {
-          id: recording.id, status: recording.status,
-          startedAt: recording.startedAt, endedAt: recording.endedAt,
+        media: recording ? {
+          status: recording.status, startedAt: recording.startedAt, endedAt: recording.endedAt,
+          file: recording.filePath,
         } : null,
       };
     });
   }
 
   async activeOwnedBy(userId: string): Promise<Room | null> {
-    return this.rooms.findOne({ where: { ownerId: userId, status: 'active' } });
+    return this.rooms.findOne({ where: { ownerId: userId, status: In(['created', 'active']) } });
   }
 
   async findBySlug(slug: string): Promise<Room> {

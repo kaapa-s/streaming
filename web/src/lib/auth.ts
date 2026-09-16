@@ -172,11 +172,11 @@ export interface OwnedRoom {
   name: string;
   status: 'created' | 'active' | 'finished';
   createdAt: string;
-  recording: {
-    id: string;
+  media: {
     status: string;
     startedAt: string | null;
     endedAt: string | null;
+    file: string | null;
   } | null;
 }
 
