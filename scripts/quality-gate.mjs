@@ -70,7 +70,7 @@ await Promise.all([
   preflight('preflight.sfu', 'SFU reachable', sfu),
   preflight('preflight.compositor', 'Compositor reachable', compositor),
 ]);
-for (const [command, flag, id] of [['ffprobe', '-version', 'preflight.ffprobe'], ['node', '--version', 'preflight.node']]) {
+for (const [command, flag, id] of [['ffmpeg', '-version', 'preflight.ffmpeg'], ['ffprobe', '-version', 'preflight.ffprobe'], ['node', '--version', 'preflight.node']]) {
   const result = await new Promise((resolveResult) => { const p = spawn(command, [flag], { stdio: 'ignore' }); p.on('error', (error) => resolveResult(error)); p.on('close', (code) => resolveResult(code === 0 ? null : new Error(`exit ${code}`))); });
   add(id, `${command} available`, result ? 'failed' : 'passed', { measured: result ? { error: String(result) } : { available: true }, threshold: { required: true } });
 }

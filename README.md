@@ -41,6 +41,13 @@ Headless Chromium loads the recorder from the compositor itself
 npm run setup
 ```
 
+For the deterministic, local-only quality gate—including prerequisites, exact
+startup flow, artifacts, failure meanings, and cleanup/no-leak behavior—see
+[`docs/quality-gate-local.md`](docs/quality-gate-local.md). After the local stack
+is running, the gate itself is one command: `npm run quality-gate`. It uses only
+loopback services and explicitly does not contact AWS, YouTube, AI review, or
+any other external destination.
+
 This copies `server/.env` / `sfu/.env` / `compositor/.env` from examples if missing,
 starts Postgres, installs dependencies, runs migrations, installs Puppeteer Chrome
 for the compositor, then starts API (`:3000`), SFU (`:3001`), compositor (`:3002`),
