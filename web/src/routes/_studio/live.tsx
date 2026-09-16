@@ -7,7 +7,6 @@ import { SceneStrip } from '../../components/studio/SceneStrip';
 import { StudioHeader } from '../../components/studio/StudioHeader';
 import { useLocalStorageState } from '../../hooks/useLocalStorageState';
 import { SESSION_NAME_KEY } from '../../lib/sessionName';
-import { keepStudioSearch } from '../../lib/studioSearch';
 import { ensureLiveSession } from '../../studio/studioStage';
 import { useStudio } from '../../studio/useStudio';
 
@@ -44,14 +43,12 @@ function LivePage() {
     },
   });
 
-  if (!s.user) return null;
-
   const liveToYoutube = s.live && s.liveDestinations.includes('youtube');
 
   const leaveToSessions = () => {
     void (async () => {
       await s.leave();
-      await navigate({ to: '/join', search: keepStudioSearch });
+      await navigate({ to: '/', search: { room: '' } });
     })();
   };
 
@@ -116,6 +113,8 @@ function LivePage() {
           screenPending={s.screenPending}
           onToggleScreenShare={s.toggleScreenShare}
           onRemoveLocalScreen={s.stopScreenShare}
+          onToggleCamera={s.toggleCamera}
+          onToggleMicrophone={s.toggleMicrophone}
           cameraPreset={s.cameraPreset}
           featuredId={s.featuredId}
           sceneScreenIds={s.sceneScreenIds}
