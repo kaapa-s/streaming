@@ -9,7 +9,8 @@
     "dev:compositor": "npm run dev --prefix compositor",
     "dev:web": "npm run dev --prefix web",
     "quality-gate": "node scripts/quality-gate.mjs",
-    "quality-agent": "node scripts/quality-agent.mjs"
+    "quality-agent": "node scripts/quality-agent.mjs",
+    "plan": "node scripts/plan.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",
