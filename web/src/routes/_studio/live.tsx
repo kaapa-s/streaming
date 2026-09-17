@@ -6,6 +6,7 @@ import { RecordingFinishedModal } from '../../components/studio/RecordingFinishe
 import { SceneStrip } from '../../components/studio/SceneStrip';
 import { StudioHeader } from '../../components/studio/StudioHeader';
 import { useLocalStorageState } from '../../hooks/useLocalStorageState';
+import { discardRoom } from '../../lib/auth';
 import { SESSION_NAME_KEY } from '../../lib/sessionName';
 import { ensureLiveSession } from '../../studio/studioStage';
 import { useStudio } from '../../studio/useStudio';
@@ -22,6 +23,20 @@ function LivePage() {
   const navigate = useNavigate();
   const [sessionName] = useLocalStorageState(SESSION_NAME_KEY, 'Studio session');
   const [goLiveOpen, setGoLiveOpen] = useState(false);
+  const [discardError, setDiscardError] = useState('');
+
+  const discard = () => {
+    if (!window.confirm(`Discard ${s.roomName ?? sessionName}? This permanently deletes the room and its invites.`)) return;
+    void (async () => {
+      try {
+        await discardRoom(s.room);
+        await s.leave();
+        await navigate({ to: '/dashboard', search: { room: '' } });
+      } catch (error) {
+        setDiscardError(error instanceof Error ? error.message : String(error));
+      }
+    })();
+  };
 
   const activeSessionRef = useRef(false);
   activeSessionRef.current = s.recording || s.live;
@@ -55,7 +70,10 @@ function LivePage() {
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden bg-surface text-ink">
       <StudioHeader
-        sessionName={sessionName || 'Studio session'}
+        sessionName={s.roomName || sessionName || 'Studio session'}
+        roomStatus={s.roomStatus}
+        isRoomOwner={s.isRoomOwner}
+        onDiscard={discard}
         recording={s.recording}
         live={s.live}
         recordingPending={s.recordingPending}
@@ -126,7 +144,7 @@ function LivePage() {
       </div>
 
       <footer className="px-5 py-2.5 min-h-10 text-sm text-ink-muted border-t border-border">
-        {s.error && <span className="text-danger">{s.error}</span>}
+        {(s.error || discardError) && <span className="text-danger">{s.error || discardError}</span>}
         {!s.error && s.recordingInfo && <span>{s.recordingInfo}</span>}
         {!s.error && !s.recordingInfo && !s.recording && <span>Ready · 1080p60</span>}
       </footer>

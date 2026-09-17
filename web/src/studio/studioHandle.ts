@@ -31,6 +31,8 @@ export type StudioValue = {
   onLogout: () => void;
   joined: boolean;
   joinedRoom: string | null;
+  roomName: string | null;
+  roomStatus: 'created' | 'active' | 'finished' | null;
   joining: boolean;
   join: () => Promise<void>;
   joinWithAdmission: (admission: { room: { slug: string }; joinToken: string; sfuUrl?: string; role: 'owner' | 'speaker' | 'viewer' }, displayName: string) => Promise<void>;

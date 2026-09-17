@@ -242,7 +242,7 @@ export async function admitInvite(token: string, displayName?: string, guestId?:
 }
 
 export async function joinRoom(slug: string): Promise<{
-  room: { id: string; slug: string };
+  room: { id: string; slug: string; name: string; status: 'created' | 'active' | 'finished' };
   role: 'owner' | 'speaker' | 'viewer';
   joinToken: string;
   sfuUrl?: string;

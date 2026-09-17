@@ -26,6 +26,8 @@ export function useStudioSession({
 }: UseStudioSessionArgs) {
   const [joined, setJoined] = useState(false);
   const [joinedRoom, setJoinedRoom] = useState<string | null>(null);
+  const [roomName, setRoomName] = useState<string | null>(null);
+  const [roomStatus, setRoomStatus] = useState<'created' | 'active' | 'finished' | null>(null);
   const [joining, setJoining] = useState(false);
   const [roomRole, setRoomRole] = useState<'owner' | 'speaker' | 'viewer' | null>(null);
   const [localPeerId, setLocalPeerId] = useState<string | null>(null);
@@ -72,6 +74,8 @@ export function useStudioSession({
     setLocalPeerId(null);
     setJoined(false);
     setJoinedRoom(null);
+    setRoomName(null);
+    setRoomStatus(null);
     setRoomRole(null);
     joiningRef.current = false;
     setJoining(false);
@@ -90,6 +94,8 @@ export function useStudioSession({
       }
       const { joinToken, room: joinedRoom, sfuUrl, role } = await joinRoom(room);
       setRoomRole(role);
+      setRoomName(joinedRoom.name);
+      setRoomStatus(joinedRoom.status);
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           width: { ideal: 1920 },
@@ -230,6 +236,8 @@ export function useStudioSession({
   return {
     joined,
     joinedRoom,
+    roomName,
+    roomStatus,
     joining,
     roomRole,
     localPeerId,

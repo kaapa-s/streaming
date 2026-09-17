@@ -76,6 +76,8 @@ export function useStudioController(room: string): StudioValue {
       }),
     joined: session.joined,
     joinedRoom: session.joinedRoom,
+    roomName: session.roomName,
+    roomStatus: session.roomStatus,
     joining: session.joining,
     join: session.join,
     joinWithAdmission: session.joinWithAdmission,

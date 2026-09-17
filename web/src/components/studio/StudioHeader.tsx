@@ -10,6 +10,9 @@ type StudioHeaderProps = {
   onStop: () => void;
   onOpenGoLive: () => void;
   onLeaveSessions: () => void;
+  roomStatus: 'created' | 'active' | 'finished' | null;
+  isRoomOwner: boolean;
+  onDiscard: () => void;
 };
 
 export function StudioHeader({
@@ -21,6 +24,9 @@ export function StudioHeader({
   onStop,
   onOpenGoLive,
   onLeaveSessions,
+  roomStatus,
+  isRoomOwner,
+  onDiscard,
 }: StudioHeaderProps) {
   const elapsed = useElapsedLabel(recording);
 
@@ -35,11 +41,9 @@ export function StudioHeader({
           ← Sessions
         </button>
         <h1 className="text-base font-semibold text-ink truncate">{sessionName}</h1>
-        {recording && live && (
-          <span className="rec-pulse text-xs font-bold tracking-widest text-live ml-auto shrink-0">
-            LIVE
-          </span>
-        )}
+        <span className={`text-xs font-bold tracking-widest shrink-0 ${recording ? `text-live ${live ? 'rec-pulse' : ''}` : 'text-ink-subtle'}`}>
+          {recording && live ? 'LIVE' : recording ? 'Recording' : roomStatus === 'created' ? 'Not started' : 'Ready'}
+        </span>
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
@@ -65,6 +69,11 @@ export function StudioHeader({
         {!live && (
           <Button disabled={recordingPending} onClick={onOpenGoLive}>
             Go live ▾
+          </Button>
+        )}
+        {isRoomOwner && roomStatus === 'created' && !recording && (
+          <Button variant="danger" disabled={recordingPending} onClick={onDiscard}>
+            Discard room
           </Button>
         )}
       </div>

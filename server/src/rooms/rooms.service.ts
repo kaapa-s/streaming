@@ -166,7 +166,7 @@ export class RoomsService {
    * Rooms are created explicitly through POST /rooms, never as a join side effect.
    */
   async joinBySlug(slug: string, user: AuthUser): Promise<{
-    room: { id: string; slug: string };
+    room: { id: string; slug: string; name: string; status: Room['status'] };
     role: RoomRole;
     joinToken: string;
     sfuUrl?: string;
@@ -187,7 +187,7 @@ export class RoomsService {
     });
 
     return {
-      room: { id: room.id, slug: room.slug },
+      room: { id: room.id, slug: room.slug, name: room.name, status: room.status },
       role,
       joinToken,
       sfuUrl: optionalSfuUrl(),
