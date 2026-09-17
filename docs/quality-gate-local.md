@@ -79,8 +79,28 @@ required. The receiver uses the same `/quality-gate` stream path for listening a
 publishing so normal publisher disconnects close the captured FLV without a misleading
 path error.
 
-A passing run ends with `Quality gate PASS` and exits 0. To emit the complete
-report as one JSON line, use `QUALITY_GATE_JSON=1 npm run quality-gate`.
+A passing run ends with `Quality gate PASS` and exits 0. To emit the complete report as one JSON line, use `QUALITY_GATE_JSON=1 npm run quality-gate`.
+For a targeted reproduction, use `npm run quality-gate -- --only=<check-id>`. It evaluates only the requested preflight, or the requested product check plus the preflights and harness required to evaluate it; unrelated checks are skipped. The default command still runs the complete deterministic gate. Failed checks include a `reproduce` command and `diagnostic` field.
+
+The report schema is `quality-gate/v1`. Its stable check catalog is `quality-gate/checks-v1`; IDs and meanings are:
+
+| ID | Meaning |
+| --- | --- |
+| `preflight.api` | API service is reachable |
+| `preflight.web` | Web application is reachable |
+| `preflight.sfu` | SFU service is reachable |
+| `preflight.compositor` | Compositor service is reachable |
+| `preflight.ffmpeg` | ffmpeg is available |
+| `preflight.ffprobe` | ffprobe is available |
+| `preflight.node` | Node.js is available |
+| `infra.harness-timeout` | Browser harness completes within its bounded timeout |
+| `browser.publish` | Two speakers publish audio and video |
+| `studio.remote-audio` | Remote audio is bidirectional without self-feedback |
+| `compositor.scenes` | Compositor scenes and screen transition satisfy the layout contract |
+| `recording.output` | Local recording satisfies the media contract |
+| `recording.rtmp` | Loopback RTMP satisfies the H.264/AAC contract |
+
+Each report check contains its measured values, threshold, status, artifact paths, and reproduction command. `artifacts.readable` lists the JSON, table, and log files intended for automated diagnosis; binary recordings and screenshots are retained only as supporting evidence.
 
 ## Artifacts
 
