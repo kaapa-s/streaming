@@ -6,7 +6,7 @@ import { join, relative, resolve } from 'node:path';
 
 const root = resolve(new URL('..', import.meta.url).pathname);
 const runId = `${new Date().toISOString().replaceAll(/[:.]/g, '-')}-${process.pid}-${randomUUID().slice(0, 8)}`;
-const artifactDir = resolve(process.env.QUALITY_AGENT_ARTIFACT_DIR ?? join(root, 'e2e', 'quality-agent-artifacts', runId));
+const artifactDir = resolve(process.env.QUALITY_AGENT_ARTIFACT_DIR ?? join(root, 'quality-agent-artifacts', runId));
 const maxRuns = Number(process.env.QUALITY_AGENT_MAX_RUNS ?? 3);
 const model = process.env.OPENROUTER_MODEL ?? 'openrouter/auto';
 const apiKey = process.env.OPENROUTER_API_KEY;

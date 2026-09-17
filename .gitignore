@@ -11,5 +11,5 @@ compositor/.env
 *.log
 .DS_Store
 e2e/e2e-artifacts
-e2e/quality-agent-artifacts/
+quality-agent-artifacts/
 .beads.gate.lock

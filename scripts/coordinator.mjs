@@ -14,7 +14,7 @@ const timeoutMs = Number(process.env.COORDINATOR_TIMEOUT_MS ?? 1_200_000);
 const defaultVerifyCommands = ['npm run lint --prefix server', 'npm run typecheck --prefix server', 'npm run test --prefix server', 'npm run lint --prefix sfu', 'npm run typecheck --prefix sfu', 'npm run lint --prefix web', 'npm run lint --prefix compositor', 'npm run typecheck --prefix compositor', 'npm run test --prefix compositor', 'npm run quality-gate'];
 const verifyCommands = (process.env.COORDINATOR_VERIFY_COMMANDS ?? defaultVerifyCommands.join(';;')).split(';;').map((value) => value.trim()).filter(Boolean);
 const escalationEnabled = process.env.COORDINATOR_ESCALATION !== '0';
-const protectedPatterns = [/^scripts\/quality-gate\.mjs$/, /^scripts\/quality-agent\.mjs$/, /^scripts\/coordinator\.mjs$/, /^scripts\/plan\.mjs$/, /^e2e\//, /(^|\/)(test|tests|__tests__)\//, /\.(test|spec)\.[^/]+$/, /(^|\/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock)$/];
+const protectedPatterns = [/^scripts\/quality-gate\.mjs$/, /^scripts\/quality-agent\.mjs$/, /^scripts\/coordinator\.mjs$/, /^scripts\/plan\.mjs$/, /^e2e\//, /(^|\/)(test|tests|__tests__)\//, /\.(test|spec)\.[^/]+$/, /(^|\/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock)$/, /(^|\/)(\.env|\.env\..*)$/, /\.(pem|key|p12)$/];
 const steps = [];
 const children = new Set();
 let issue = null;
@@ -24,6 +24,7 @@ let isolator = null;
 let worktreeCreated = false;
 let stoppedBy = null;
 let worker = null;
+let handoffWritten = false;
 
 mkdirSync(artifactDir, { recursive: true });
 const log = (message) => appendFileSync(join(artifactDir, 'coordinator.log'), `${new Date().toISOString()} ${message}\n`);
@@ -46,10 +47,10 @@ function run(command, args = [], cwd = root, env = {}, limit = timeoutMs) {
     let stderr = '';
     let settled = false;
     const settle = (code, signal) => { if (!settled) { settled = true; clearTimeout(timer); children.delete(child); try { child.kill('SIGKILL'); } catch {} finish({ code, signal, stdout, stderr }); } };
-    const timer = setTimeout(() => { settle(124, 'SIGTERM'); stderr += '\nTimed out after ' + limit + 'ms\n'; }, limit);
+    const timer = setTimeout(() => { stderr += '\nTimed out after ' + limit + 'ms\n'; settle(124, 'SIGTERM'); }, limit);
     child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
     child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
-    child.on('error', (error) => { stderr += `${stderr}${error}\n`; settle(1, null); });
+    child.on('error', (error) => { stderr += `${error}\n`; settle(1, null); });
     child.on('close', (code, signal) => settle(code ?? 1, signal));
   });
 }
@@ -68,11 +69,12 @@ async function runProcessGroup(command, args, cwd, env = {}, limit = timeoutMs) 
     let stdout = '';
     let stderr = '';
     let settled = false;
-    const settle = (code, signal) => { if (!settled) { settled = true; clearTimeout(timer); children.delete(child); finish({ code, signal, stdout, stderr }); } };
-    const timer = setTimeout(() => { try { process.kill(-child.pid, 'SIGTERM'); } catch {} settle(124, 'SIGTERM'); stderr += '\nTimed out after ' + limit + 'ms\n'; }, limit);
+    const terminateGroup = () => { try { process.kill(-child.pid, 'SIGTERM'); } catch {} };
+    const settle = (code, signal) => { if (!settled) { settled = true; clearTimeout(timer); terminateGroup(); children.delete(child); finish({ code, signal, stdout, stderr }); } };
+    const timer = setTimeout(() => { stderr += '\nTimed out after ' + limit + 'ms\n'; terminateGroup(); settle(124, 'SIGTERM'); }, limit);
     child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
     child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
-    child.on('error', (error) => { stderr += `${stderr}${error}\n`; settle(1, null); });
+    child.on('error', (error) => { stderr += `${error}\n`; settle(1, null); });
     child.on('close', (code, signal) => settle(code ?? 1, signal));
   });
 }
@@ -120,10 +122,10 @@ async function changedPaths(cwd) {
 }
 
 async function isolationConfirmed(cwd) {
-  const marker = `coordinator ${runId} ${process.pid}`;
-  writeFileSync(join(cwd, '.coordinator-isolation'), marker);
-  isolator = marker;
-  return marker;
+  const result = await git(cwd, ['rev-parse', '--show-toplevel']);
+  if (result.code !== 0 || resolve(result.stdout.trim()) !== resolve(cwd)) throw new Error(`worktree isolation check failed: ${result.stderr || result.stdout}`);
+  isolator = { checkout: resolve(cwd), verifiedAt: new Date().toISOString() };
+  return isolator;
 }
 
 async function annotateReview(review, cwd) {
@@ -154,7 +156,7 @@ async function pipeline() {
   writeFileSync(join(artifactDir, 'worktree.log'), `${created.stdout}${created.stderr}`);
   if (created.code !== 0) throw new Error(`worktree creation failed: ${created.stderr || created.stdout}`);
   worktreeCreated = true;
-  isolationConfirmed(worktreeDir);
+  await isolationConfirmed(worktreeDir);
   record('worktree', 'passed', worktreeDir);
 
   record('implementer', 'running');
@@ -173,8 +175,9 @@ async function pipeline() {
 
   record('reviewer', 'running');
   const review = await runWorker('reviewer', 'reviewer', worktreeDir);
-  await annotateReview(review, worktreeDir);
-  if (review.code !== 0) { record('reviewer', 'failed', review.stderr || review.stdout); stoppedBy = 'reviewer'; return; }
+  const reviewPayload = await annotateReview(review, worktreeDir);
+  const reviewFailed = review.code !== 0 || reviewPayload?.status === 'failed';
+  if (reviewFailed) { record('reviewer', 'failed', review.stderr || reviewPayload?.summary || reviewPayload?.findings || review.stdout); stoppedBy = 'reviewer'; return; }
   record('reviewer', 'passed');
 
   for (const command of verifyCommands) {
@@ -209,7 +212,6 @@ async function escalate() {
   }
   escalator = { status: result.code === 0 ? 'passed' : 'failed', exitCode: result.code, payload, stderr: result.stderr };
   record('escalation', escalator.status, payload ? `classification=${payload.classification} passed=${payload.passed} escalation=${payload.escalation?.status}` : (result.stderr || result.stdout).slice(0, 2000));
-  if (payload && payload.passed) { stoppedBy = null; outcome = 'passed'; }
 }
 
 async function obtainFinalDiff(cwd) {
@@ -229,6 +231,8 @@ async function handoff(status, summary, blocker = 'none') {
   writeFileSync(join(artifactDir, 'handoff.txt'), `${text}\n`);
   const result = await run('bd', ['comment', issueId, text, '--json']);
   writeFileSync(join(artifactDir, 'handoff-result.json'), JSON.stringify(result, null, 2));
+  if (result.code !== 0) throw new Error(`Beads handoff failed: ${result.stderr || result.stdout}`);
+  handoffWritten = true;
 }
 
 async function cleanup() {
@@ -278,6 +282,13 @@ try {
   stoppedBy = stoppedBy ?? 'coordinator';
   record('coordinator', 'failed', String(error));
   process.exitCode = 1;
+  if (issue && !handoffWritten) {
+    try {
+      await handoff('NEEDS_DECISION', `Coordinator failed before completing the pipeline; artifacts preserved for human decision.`, stoppedBy);
+    } catch (handoffError) {
+      log(`handoff failed: ${handoffError}`);
+    }
+  }
 } finally {
   try { await cleanup(); } catch {}
   const supervised = await listSupervised();

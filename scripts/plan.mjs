@@ -1,11 +1,13 @@
 #!/usr/bin/env node
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
 
 const root = resolve(new URL('..', import.meta.url).pathname);
 const issueId = process.argv.find((value) => value.startsWith('--issue='))?.slice('--issue='.length);
 const outputPath = process.argv.find((value) => value.startsWith('--output='))?.slice('--output='.length);
+const commentEnabled = process.env.PLAN_COMMENT !== '0';
 const agentEnabled = process.env.PLAN_AGENT !== '0';
 const model = process.env.OPENROUTER_MODEL ?? 'openrouter/auto';
 
@@ -153,8 +155,19 @@ const report = {
   agentStopConditions: (agent.stopConditions ?? []).map((finding) => ({ ...finding, source: 'agent' })),
 };
 const serialized = `${JSON.stringify(report, null, 2)}\n`;
-const target = outputPath ? resolve(outputPath) : resolve(process.env.PLAN_OUTPUT ?? join(root, 'plan', `${issueId}.json`));
-mkdirSync(resolve(target, '..'), { recursive: true });
-writeFileSync(target, serialized);
+if (outputPath) {
+  const target = resolve(outputPath);
+  writeFileSync(target, serialized);
+  process.stderr.write(`Plan written to ${target}\n`);
+}
+let commentResult = null;
+if (!outputPath && commentEnabled) {
+  const dir = mkdtempSync(join(tmpdir(), 'plan-v1-'));
+  const reportPath = join(dir, `${issueId}.json`);
+  writeFileSync(reportPath, serialized);
+  commentResult = await run('bd', ['comment', issueId, '--file', reportPath, '--json']);
+  rmSync(dir, { recursive: true, force: true });
+  if (commentResult.code !== 0) throw new Error(`Beads plan comment failed: ${commentResult.stderr || commentResult.stdout}`);
+  process.stderr.write(`Plan[v1] posted as a comment on ${issueId}\n`);
+}
 process.stdout.write(serialized);
-process.stderr.write(`Plan written to ${target}\n`);
