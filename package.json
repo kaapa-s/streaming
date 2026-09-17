@@ -8,7 +8,8 @@
     "dev:sfu": "npm run dev --prefix sfu",
     "dev:compositor": "npm run dev --prefix compositor",
     "dev:web": "npm run dev --prefix web",
-    "quality-gate": "node scripts/quality-gate.mjs"
+    "quality-gate": "node scripts/quality-gate.mjs",
+    "quality-agent": "node scripts/quality-agent.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",

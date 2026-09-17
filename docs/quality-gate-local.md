@@ -162,3 +162,22 @@ process before retrying. The gate does not delete diagnostic artifacts.
 
 No command in this workflow invokes production Compose, deployment scripts,
 AWS, OAuth, YouTube, or an external destination.
+
+## On-demand verification agent
+
+The optional agent wrapper runs the deterministic gate, sends the JSON report and
+readable artifacts to OpenRouter for bounded diagnosis, and reruns the gate after
+a product-only patch when the model returns a valid patch:
+
+```bash
+OPENROUTER_API_KEY=... npm run quality-agent
+```
+
+Set `OPENROUTER_MODEL` and `QUALITY_AGENT_MAX_RUNS` (default `3`) to configure the
+model and retry budget. The wrapper never edits `scripts/quality-gate.mjs`, `e2e/`,
+tests, or files outside `server/`, `sfu/`, `web/`, `compositor/`, `shared/`, and
+`scripts/`; it never commits or closes Beads issues. Every run retains
+`report.json`, `agent.log`, gate attempt directories, and `applied.patch` under
+`e2e/quality-agent-artifacts/`. Missing credentials, rejected patches, suspected
+test issues, infrastructure failures, and exhausted retries remain failed runs for
+human review.
