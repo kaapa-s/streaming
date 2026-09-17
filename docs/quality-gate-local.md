@@ -181,3 +181,15 @@ tests, or files outside `server/`, `sfu/`, `web/`, `compositor/`, `shared/`, and
 `e2e/quality-agent-artifacts/`. Missing credentials, rejected patches, suspected
 test issues, infrastructure failures, and exhausted retries remain failed runs for
 human review.
+
+For durable escalation, provide the triggering Beads issue with
+`QUALITY_AGENT_TRIGGER_ISSUE=<issue-id>` or `npm run quality-agent -- --issue=<issue-id>`.
+A failed product-bug or flake run creates one `[agent]` bug bead with labels
+`agent-filed`, `triage`, and `quality-gate`; its description includes the run ID,
+failing check IDs, measured values and thresholds, artifact directory, hypotheses,
+attempted actions, and a reproduction command. The agent comments the triggering
+issue with the same summary and does not close any issue. A `suspected-test-issue`
+result only comments the triggering issue and records the classification in the
+`quality-agent/v1` report; it never edits tests or gate code. If no triggering issue
+is supplied, the report still records the escalation status and retained artifacts
+for a human to attach to the appropriate bead.

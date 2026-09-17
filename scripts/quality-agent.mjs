@@ -27,6 +27,7 @@ const log = (message) => {
 };
 const parseArg = (name, fallback) => process.argv.find((value) => value.startsWith(`${name}=`))?.slice(name.length + 1) ?? fallback;
 const gateCommand = parseArg('--gate-command', 'npm run quality-gate');
+const triggeringIssue = process.env.QUALITY_AGENT_TRIGGER_ISSUE ?? parseArg('--issue', '');
 
 function run(command, args, env = {}) {
   return new Promise((resolveRun) => {
@@ -134,6 +135,64 @@ async function applyPatch(patch) {
   return validation;
 }
 
+async function fileEscalation(finalReport, finalDiagnosis) {
+  const failed = failedChecks(finalReport);
+  const issueComment = [
+    `Quality agent run ${runId}: ${finalDiagnosis?.classification ?? classification}.`,
+    `Checks: ${failed.map((check) => check.id).join(', ') || 'none reported'}.`,
+    `Artifacts: ${artifactDir}.`,
+    `Summary: ${finalDiagnosis?.summary ?? 'The gate did not pass.'}`,
+  ].join(' ');
+  const escalation = { status: 'not-filed', triggeringIssue: triggeringIssue || null, bugIssue: null, comment: issueComment };
+  if (triggeringIssue) {
+    const commentResult = await run('bd', ['comment', triggeringIssue, issueComment, '--json']);
+    if (commentResult.code !== 0) {
+      escalation.commentError = commentResult.stderr || commentResult.stdout;
+    } else {
+      escalation.status = 'commented';
+    }
+  }
+  if (finalDiagnosis?.classification === 'suspected-test-issue') {
+    escalation.status = triggeringIssue && !escalation.commentError ? 'suspected-test-issue-commented' : 'suspected-test-issue';
+    return escalation;
+  }
+  if (!['product-bug', 'flake'].includes(finalDiagnosis?.classification)) return escalation;
+  const details = [
+    'Filed by the on-demand quality agent.',
+    `Gate run ID: ${runId}`,
+    `Failing check IDs: ${failed.map((check) => check.id).join(', ') || 'not reported'}`,
+    `Measured vs expected: ${JSON.stringify(failed.map((check) => ({ id: check.id, measured: check.measured, threshold: check.threshold })))}`,
+    `Artifact directory: ${artifactDir}`,
+    `Hypothesis: ${(finalDiagnosis?.hypotheses ?? []).join(' | ') || 'none provided'}`,
+    `Actions already attempted: ${actions.join(' | ') || 'none'}`,
+    `Reproduction: ${failed[0]?.reproduce || gateCommand}`,
+  ].join('\\n');
+  const bugResult = await run('bd', [
+    'create',
+    `[agent] ${finalDiagnosis.classification}: ${finalDiagnosis.summary || 'quality gate failure'}`,
+    '--description',
+    details,
+    '--type',
+    'bug',
+    '--priority',
+    '1',
+    '--labels',
+    'agent-filed,triage,quality-gate',
+    '--json',
+  ]);
+  if (bugResult.code !== 0) {
+    escalation.bugError = bugResult.stderr || bugResult.stdout;
+    return escalation;
+  }
+  try {
+    escalation.bugIssue = JSON.parse(bugResult.stdout)[0]?.id ?? null;
+  } catch {
+    escalation.bugError = `Could not parse bd create output: ${bugResult.stdout}`;
+  }
+  if (escalation.bugIssue) escalation.status = 'bug-filed';
+  return escalation;
+}
+
 async function gate(runNumber) {
   const gateDir = join(artifactDir, `gate-${runNumber}`);
   mkdirSync(gateDir, { recursive: true });
@@ -150,6 +209,7 @@ async function gate(runNumber) {
 let diagnosis = null;
 let finalGate = null;
 let initialGate = null;
+let escalation = null;
 let classification = 'environment-infra';
 try {
   for (let attempt = 1; attempt <= maxRuns; attempt += 1) {
@@ -180,6 +240,16 @@ try {
   log(`Agent stopped: ${String(error)}`);
 }
 
+if (!finalGate?.passed) {
+  try {
+    escalation = await fileEscalation(finalGate, diagnosis);
+    log(`Escalation result: ${escalation.status}`);
+  } catch (error) {
+    escalation = { status: 'failed', triggeringIssue: triggeringIssue || null, error: String(error) };
+    log(`Escalation failed: ${String(error)}`);
+  }
+}
+
 const diff = (await run('git', ['diff', '--binary'])).stdout;
 writeFileSync(join(artifactDir, 'applied.patch'), diff);
 const report = {
@@ -192,6 +262,7 @@ const report = {
   classification,
   actions,
   diagnosis,
+  escalation,
   gate: { before: initialGate, after: finalGate },
   artifacts: { directory: artifactDir, appliedPatch: join(artifactDir, 'applied.patch'), proposedPatch: join(artifactDir, 'proposed.patch'), log: join(artifactDir, 'agent.log') },
   remainingHypotheses: diagnosis?.hypotheses ?? [],
