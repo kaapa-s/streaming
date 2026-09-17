@@ -184,6 +184,7 @@ export class RoomsService {
       name: user.name,
       role: 'speaker',
       inScene: true,
+      canManage: member.role === 'owner',
     });
 
     return {
@@ -242,7 +243,7 @@ export class RoomsService {
     if (!member.inScene) throw new ForbiddenException('the owner has not admitted you to the scene');
     const identity = user ? user.id : `guest:${member.guestId}`;
     const name = user?.name || member.displayName || 'Guest';
-    return { room: { id: room.id, slug: room.slug }, role: member.role, guestId: member.guestId, joinToken: issueJoinToken({ roomSlug: room.slug, userId: identity, name, role: 'speaker', inScene: true }), sfuUrl: optionalSfuUrl() };
+    return { room: { id: room.id, slug: room.slug }, role: member.role, guestId: member.guestId, joinToken: issueJoinToken({ roomSlug: room.slug, userId: identity, name, role: 'speaker', inScene: true, canManage: member.role === 'owner' }), sfuUrl: optionalSfuUrl() };
   }
 
   async sceneMembers(slug: string, ownerId: string) {

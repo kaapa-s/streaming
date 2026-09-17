@@ -8,16 +8,52 @@ import { MediasoupService } from '../mediasoup/mediasoup.service';
 type PeerRole = 'speaker' | 'compositor';
 type MediaSource = 'camera' | 'screen';
 
+type RoomLayout = {
+  cameraPreset: 'focus' | 'pip-left' | 'pip-right' | 'grid';
+  featuredId: string | null;
+  sceneScreenIds: string[];
+};
+
+export type RoomState = {
+  layout: RoomLayout;
+  recording: boolean;
+  live: boolean;
+};
+
 interface Peer {
   id: string;
   name: string;
   userId: string;
   role: PeerRole;
+  canManage: boolean;
   room: string;
   socket: WebSocket;
   transports: Map<string, types.WebRtcTransport>;
   producers: Map<string, types.Producer>;
   consumers: Map<string, types.Consumer>;
+}
+
+export function parseRoomState(input: unknown): RoomState | null {
+  if (typeof input !== 'object' || input === null) return null;
+  const raw = input as { layout?: unknown; recording?: unknown; live?: unknown };
+  if (typeof raw.recording !== 'boolean' || typeof raw.live !== 'boolean') return null;
+  if (typeof raw.layout !== 'object' || raw.layout === null) return null;
+  const layout = raw.layout as Partial<RoomLayout>;
+  const presets = ['focus', 'pip-left', 'pip-right', 'grid'] as const;
+  const sceneScreenIds = Array.isArray(layout.sceneScreenIds)
+    ? layout.sceneScreenIds.filter((id): id is string => typeof id === 'string' && id.length > 0)
+    : [];
+  return {
+    layout: {
+      cameraPreset: presets.includes(layout.cameraPreset as RoomLayout['cameraPreset'])
+        ? layout.cameraPreset as RoomLayout['cameraPreset']
+        : 'focus',
+      featuredId: typeof layout.featuredId === 'string' && layout.featuredId.length > 0 ? layout.featuredId : null,
+      sceneScreenIds,
+    },
+    recording: raw.recording,
+    live: raw.live,
+  };
 }
 
 function resolveMediaSource(appData: unknown): MediaSource {
@@ -58,6 +94,7 @@ interface RequestMessage {
 export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private peers = new Map<WebSocket, Peer>();
   private rooms = new Map<string, Set<Peer>>();
+  private roomStates = new Map<string, RoomState>();
 
   constructor(private readonly mediasoup: MediasoupService) {}
 
@@ -97,6 +134,7 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
       this.handleDisconnect(peer.socket);
     }
     this.rooms.delete(room);
+    this.roomStates.delete(room);
     await this.mediasoup.closeRouter(room);
   }
 
@@ -110,8 +148,12 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
     const room = this.rooms.get(peer.room);
     if (room) {
       room.delete(peer);
-      if (room.size === 0) this.rooms.delete(peer.room);
-      else this.broadcast(peer.room, peer, 'peerLeft', { peerId: peer.id });
+      if (room.size === 0) {
+        this.rooms.delete(peer.room);
+        this.roomStates.delete(peer.room);
+      } else {
+        this.broadcast(peer.room, peer, 'peerLeft', { peerId: peer.id });
+      }
     }
     console.log(`[signaling] ${peer.name} (${peer.id}) left room ${peer.room}`);
   }
@@ -146,6 +188,7 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
         name,
         userId: claims.userId,
         role,
+        canManage: claims.canManage === true,
         room,
         socket,
         transports: new Map(),
@@ -166,6 +209,7 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
         peerId: peer.id,
         routerRtpCapabilities: router.rtpCapabilities,
         producers,
+        roomState: this.roomStates.get(room) ?? null,
       };
     }
 
@@ -173,6 +217,15 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
     if (!peer) throw new Error('join first');
 
     switch (method) {
+      case 'roomState': {
+        if (!peer.canManage) throw new Error('only the room owner can publish room state');
+        const state = parseRoomState(data);
+        if (!state) throw new Error('invalid room state');
+        this.roomStates.set(peer.room, state);
+        this.broadcast(peer.room, peer, 'roomState', state);
+        return state;
+      }
+
       case 'createTransport': {
         const transport = await this.mediasoup.createWebRtcTransport(peer.room);
         peer.transports.set(transport.id, transport);

@@ -20,6 +20,16 @@ function createDevice(): Device {
 
 export type SfuRole = 'speaker' | 'compositor';
 export type MediaSource = 'camera' | 'screen';
+export type RoomLayout = {
+  cameraPreset: 'focus' | 'pip-left' | 'pip-right' | 'grid';
+  featuredId: string | null;
+  sceneScreenIds: string[];
+};
+export type RoomState = {
+  layout: RoomLayout;
+  recording: boolean;
+  live: boolean;
+};
 
 export interface RemotePeer {
   id: string;
@@ -33,6 +43,7 @@ export interface RemotePeer {
 export interface SfuCallbacks {
   /** Fired whenever the set of remote peers or their tracks change. */
   onPeersChanged: (peers: RemotePeer[]) => void;
+  onRoomState?: (state: RoomState) => void;
 }
 
 interface ProducerInfo {
@@ -47,6 +58,7 @@ interface JoinResult {
   peerId: string;
   routerRtpCapabilities: RtpCapabilities;
   producers: ProducerInfo[];
+  roomState: RoomState | null;
 }
 
 interface TransportParams {
@@ -75,10 +87,25 @@ type SignalingEvent =
   | { event: 'newProducer'; data: ProducerInfo }
   | { event: 'peerLeft'; data: { peerId: string } }
   | { event: 'consumerClosed'; data: { consumerId: string } }
+  | { event: 'roomState'; data: RoomState }
   | { event: string; data: unknown };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
+}
+
+function isRoomState(value: unknown): value is RoomState {
+  if (!isRecord(value) || typeof value.recording !== 'boolean' || typeof value.live !== 'boolean') return false;
+  if (!isRecord(value.layout)) return false;
+  return (
+    (value.layout.cameraPreset === 'focus' ||
+      value.layout.cameraPreset === 'pip-left' ||
+      value.layout.cameraPreset === 'pip-right' ||
+      value.layout.cameraPreset === 'grid') &&
+    (typeof value.layout.featuredId === 'string' || value.layout.featuredId === null) &&
+    Array.isArray(value.layout.sceneScreenIds) &&
+    value.layout.sceneScreenIds.every((id) => typeof id === 'string')
+  );
 }
 
 function parseSignalingMessage(raw: unknown): SignalingResponse | SignalingEvent | null {
@@ -157,6 +184,7 @@ export class SfuClient {
 
     const joined = await this.request<JoinResult>('join', { room, name, role, token: joinToken });
     this.peerId = joined.peerId;
+    if (joined.roomState) this.callbacks.onRoomState?.(joined.roomState);
 
     await this.device.load({ routerRtpCapabilities: joined.routerRtpCapabilities });
     this.recvTransport = await this.createTransport('recv');
@@ -164,6 +192,10 @@ export class SfuClient {
     for (const producer of joined.producers) {
       await this.consumeProducer(producer);
     }
+  }
+
+  async publishRoomState(state: RoomState): Promise<void> {
+    await this.request('roomState', state as unknown as Record<string, unknown>);
   }
 
   /** Publish local camera/mic tracks (studio only; the compositor never calls this). */
@@ -352,6 +384,9 @@ export class SfuClient {
         }
         break;
       }
+      case 'roomState':
+        if (isRoomState(msg.data)) this.callbacks.onRoomState?.(msg.data);
+        break;
       case 'consumerClosed': {
         const data = msg.data;
         if (isRecord(data) && typeof data.consumerId === 'string') {
