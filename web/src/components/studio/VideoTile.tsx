@@ -1,5 +1,5 @@
-import { useEffect, useRef } from 'react';
-import { X } from 'lucide-react';
+import { useCallback, useEffect, useRef } from 'react';
+import { CameraOff, X } from 'lucide-react';
 
 /** Camera preview only — never attaches mic tracks (feedback). */
 export function VideoTile({
@@ -10,28 +10,42 @@ export function VideoTile({
   onSelect,
   onRemove,
 }: {
-  stream: MediaStream;
+  /** Null renders a placeholder overlay: membership is known, media is not. */
+  stream: MediaStream | null;
   label: string;
   sharing?: boolean;
   selected?: boolean;
   onSelect?: () => void;
   onRemove?: () => void;
 }) {
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
 
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
+  // Track add/remove can be missed by the MediaStream event when the producer
+  // lands between mount and listener attach; derive a signature from render so
+  // any studio re-render with new video tracks re-runs the binding effect.
+  const trackIds = stream
+    ? stream.getVideoTracks().map((track) => track.id).join(',')
+    : '';
+  const hasVideo = trackIds.length > 0;
 
-    // Rebind only when *video* tracks change. Mic addtrack used to replace
-    // srcObject and abort play(), leaving a black tile while audio still worked.
-    let attachedIds = '';
-
-    const bindVideo = () => {
-      const videoTracks = stream.getVideoTracks().filter((t) => t.readyState !== 'ended');
-      const ids = videoTracks.map((t) => t.id).join(',');
-      if (ids === attachedIds && video.srcObject) return;
-      attachedIds = ids;
+  /**
+   * Bind the stream to the element. Runs from the ref callback (so it always
+   * happens when the element mounts, including React StrictMode's
+   * attach/detach/attach cycle) and from track-change listeners.
+   *
+   * The `<video>` is always mounted (the placeholder is an overlay) so the ref
+   * is never null while a stream exists; a conditional `<video>` could be
+   * swapped out under StrictMode and leave `.srcObject` unset.
+   */
+  const bind = useCallback(
+    (video: HTMLVideoElement | null = videoRef.current) => {
+      if (!video) return;
+      const videoTracks = stream
+        ? stream.getVideoTracks().filter((track) => track.readyState !== 'ended')
+        : [];
+      const ids = videoTracks.map((track) => track.id).join(',');
+      if (video.dataset.boundIds === ids && video.srcObject) return;
+      video.dataset.boundIds = ids;
 
       video.muted = true;
       video.defaultMuted = true;
@@ -42,17 +56,31 @@ export function VideoTile({
           console.warn('[VideoTile] play failed', label, err);
         });
       }
-    };
+    },
+    [stream, label],
+  );
 
-    bindVideo();
-    stream.addEventListener('addtrack', bindVideo);
-    stream.addEventListener('removetrack', bindVideo);
+  const setVideoRef = useCallback(
+    (element: HTMLVideoElement | null) => {
+      videoRef.current = element;
+      bind(element);
+    },
+    [bind],
+  );
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    bind(video);
+    if (!stream) return;
+    const onTrackChange = () => bind(video);
+    stream.addEventListener('addtrack', onTrackChange);
+    stream.addEventListener('removetrack', onTrackChange);
     return () => {
-      stream.removeEventListener('addtrack', bindVideo);
-      stream.removeEventListener('removetrack', bindVideo);
-      video.srcObject = null;
+      stream.removeEventListener('addtrack', onTrackChange);
+      stream.removeEventListener('removetrack', onTrackChange);
     };
-  }, [stream, label]);
+  }, [stream, label, bind, trackIds]);
 
   return (
     <div
@@ -60,7 +88,13 @@ export function VideoTile({
         selected ? 'border-accent' : 'border-transparent'
       }`}
     >
-      <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover block" />
+      <video ref={setVideoRef} autoPlay playsInline muted className="w-full h-full object-cover block" />
+      {!hasVideo && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 text-ink-muted">
+          <CameraOff size={20} strokeWidth={1.5} />
+          <span className="text-[10px] font-semibold uppercase tracking-wide">Connecting…</span>
+        </div>
+      )}
       <span className="absolute left-1.5 bottom-1.5 max-w-[calc(100%-0.75rem)] bg-black/60 text-white px-1.5 py-0.5 rounded text-[11px] font-semibold leading-tight pointer-events-none [overflow-wrap:anywhere]">
         {label}
       </span>
