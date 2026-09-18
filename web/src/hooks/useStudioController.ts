@@ -39,7 +39,10 @@ export function useStudioController(room: string): StudioValue {
     layout: studioLayout.layout,
   });
   useRemoteAudio(session.joined, session.remotePeers);
-  const recording = useRecordingControls(room, setError);
+  const recording = useRecordingControls(room, setError, {
+    joined: session.joined,
+    isOwner,
+  });
   const platforms = usePlatformConnections(Boolean(auth.user), setError);
   const liveToYoutube = recording.live && recording.liveDestinations.includes('youtube');
   const comments = useLiveComments({

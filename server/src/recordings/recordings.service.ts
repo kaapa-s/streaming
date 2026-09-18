@@ -6,12 +6,13 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  OnModuleInit,
   forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, Repository } from 'typeorm';
 import { CommentsService } from '../comments/comments.service';
-import { Recording, Room } from '../entities';
+import { ACTIVE_RECORDING_STATUSES, Recording, Room, type RecordingStatus } from '../entities';
 import type { PlatformProvider } from '../platforms/platform-ids';
 import { PlatformConnectionStore } from '../platforms/platform-connection.store';
 import { normalizeOutboundRtmp } from '../platforms/outbound-rtmp';
@@ -26,11 +27,24 @@ function isUniqueViolation(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === '23505';
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+export interface SessionState {
+  room: string;
+  roomStatus: Room['status'];
+  active: boolean;
+  live: boolean;
+  status: RecordingStatus | null;
+  startedAt: Date | null;
+  destinations: PlatformProvider[];
+  error: string | null;
+}
+
 @Injectable()
-export class RecordingsService {
+export class RecordingsService implements OnModuleInit {
   private readonly logger = new Logger(RecordingsService.name);
-  /** room slug → active recording row id while live/recording */
-  private readonly activeIds = new Map<string, string>();
 
   constructor(
     private readonly dataSource: DataSource,
@@ -44,6 +58,75 @@ export class RecordingsService {
     private readonly platforms: PlatformConnectionStore,
   ) {}
 
+  /**
+   * Sessions are durable, so an API restart must not strand a room as active.
+   * Compare persisted active rows against the compositor: a row with no live
+   * compositor session was lost and is finalized as failed.
+   */
+  async onModuleInit(): Promise<void> {
+    try {
+      await this.reconcileSessions();
+    } catch (err) {
+      this.logger.warn(`session reconciliation skipped: ${String(err)}`);
+    }
+  }
+
+  private async reconcileSessions(): Promise<void> {
+    const rows = await this.recordings.find({ where: { status: In(ACTIVE_RECORDING_STATUSES) } });
+    if (rows.length === 0) return;
+
+    let compositorStatus: unknown;
+    try {
+      const timeout = new Promise<never>((_, reject) => {
+        const timer = setTimeout(() => reject(new Error('compositor status timed out')), 3000);
+        timer.unref?.();
+      });
+      compositorStatus = await Promise.race([this.compositor.status(), timeout]);
+    } catch {
+      // Compositor may still be starting; leave the sessions untouched for now.
+      return;
+    }
+    const byRoom = new Map<string, { state?: string }>();
+    if (Array.isArray(compositorStatus)) {
+      for (const entry of compositorStatus as Array<{ room?: string; state?: string }>) {
+        if (entry?.room) byRoom.set(String(entry.room).toLowerCase(), entry);
+      }
+    }
+
+    const roomRepo = this.dataSource.getRepository(Room);
+    for (const row of rows) {
+      const room = await roomRepo.findOne({ where: { id: row.roomId } });
+      const session = room ? byRoom.get(room.slug.toLowerCase()) : undefined;
+      if (session?.state === 'recording') continue;
+
+      await this.dataSource.transaction(async (manager) => {
+        await manager.update(Recording, row.id, {
+          status: 'failed',
+          error: row.error ?? 'Media session was lost before it was stopped',
+          endedAt: row.endedAt ?? new Date(),
+        });
+        if (room) {
+          await manager.update(Room, { id: room.id, status: 'active' }, { status: 'finished' });
+        }
+      });
+      this.logger.warn(
+        `reconciled lost session room=${room?.slug ?? row.roomId} recording=${row.id} status=${row.status}`,
+      );
+    }
+  }
+
+  /**
+   * The room's current media session. Durable room state, not the owner browser
+   * connection, decides whether a session is active.
+   */
+  private activeRecording(roomId: string, manager?: EntityManager): Promise<Recording | null> {
+    const repo = manager ? manager.getRepository(Recording) : this.recordings;
+    return repo.findOne({
+      where: { roomId, status: In(ACTIVE_RECORDING_STATUSES) },
+      order: { createdAt: 'DESC' },
+    });
+  }
+
   async start(
     room: Room,
     userId: string,
@@ -55,9 +138,6 @@ export class RecordingsService {
     destinations: PlatformProvider[];
   }> {
     const slug = room.slug;
-    if (this.activeIds.has(slug)) {
-      throw new BadRequestException(`already recording room "${slug}"`);
-    }
 
     const localRtmpUrl = body.localRtmpUrl?.trim();
     if (localRtmpUrl && !/^rtmp:\/\/(127\.0\.0\.1|localhost)(?::\d+)?\//i.test(localRtmpUrl)) {
@@ -71,6 +151,7 @@ export class RecordingsService {
       normalizeOutboundRtmp(dest.streamKey, dest.platform),
     );
     const destinationIds = destinations.map((dest) => dest.platform);
+    const live = rtmpUrls.length > 0;
 
     const resolution = parseResolution(body.resolution);
     const token = this.rooms.issueCompositorJoinToken(slug);
@@ -84,22 +165,29 @@ export class RecordingsService {
         });
         if (!lockedRoom) throw new NotFoundException(`room "${slug}" not found`);
         if (lockedRoom.ownerId !== userId) {
-          throw new ForbiddenException('only the room owner can start recording');
+          throw new ForbiddenException('only the room owner can start a session');
         }
         if (lockedRoom.status !== 'created') {
           throw new ConflictException(
             `room "${slug}" cannot be activated from status "${lockedRoom.status}"`,
           );
         }
+        const existing = await this.activeRecording(lockedRoom.id, manager);
+        if (existing) {
+          throw new ConflictException(`room "${slug}" already has an active session`);
+        }
 
         const recording = manager.create(Recording, {
           roomId: lockedRoom.id,
           status: 'starting',
+          live,
+          destinations: destinationIds,
           resolution,
           startedAt: new Date(),
           filePath: null,
           s3Key: null,
           endedAt: null,
+          error: null,
         });
         await manager.save(Recording, recording);
         lockedRoom.status = 'active';
@@ -117,18 +205,17 @@ export class RecordingsService {
       }
       throw err;
     }
-    this.activeIds.set(slug, row.id);
 
     try {
       const result = await this.compositor.goLive(slug, {
-        rtmpUrls: rtmpUrls.length ? rtmpUrls : undefined,
+        rtmpUrls: live ? rtmpUrls : undefined,
         resolution,
         token,
       });
       await this.recordings.update(row.id, { status: 'recording' });
       await this.syncLayoutToCompositor(slug);
       if (destinationIds.includes('youtube')) {
-        this.comments.bindForLiveRoom(slug, room.ownerId);
+        this.comments.bindForLiveRoom(slug, userId);
       }
       return {
         room: result.room,
@@ -137,38 +224,72 @@ export class RecordingsService {
         destinations: destinationIds,
       };
     } catch (err) {
-      this.activeIds.delete(slug);
       await this.dataSource.transaction(async (manager) => {
-        await manager.update(Recording, row.id, { status: 'failed', endedAt: new Date() });
+        await manager.update(Recording, row.id, {
+          status: 'failed',
+          error: `Failed to start: ${errorMessage(err)}`,
+          endedAt: new Date(),
+        });
         await manager.update(Room, { id: room.id, status: 'active' }, { status: 'created' });
       });
       throw err;
     }
   }
 
+  /**
+   * Explicit stop. Only the owner may end a session, and the room's recording
+   * row (not an in-memory map) is the durable source of truth.
+   */
   async stop(
     room: Room,
-  ): Promise<{ room: string; file?: string; live: boolean; downloadUrl?: string; s3Key?: string }> {
+    userId: string,
+  ): Promise<{
+    room: string;
+    file?: string;
+    live: boolean;
+    downloadUrl?: string;
+    s3Key?: string;
+    status: RecordingStatus;
+    error?: string;
+  }> {
     const slug = room.slug;
-    this.comments.stopSession(slug);
-    const recordingId = this.activeIds.get(slug);
-    if (!recordingId) {
+    if (room.ownerId !== userId) {
+      throw new ForbiddenException('only the room owner can stop a session');
+    }
+
+    const recording = await this.activeRecording(room.id);
+    if (!recording) {
       // Still try compositor stop in case of desync.
       try {
         await this.compositor.stop(slug);
       } catch {
         /* ignore */
       }
-      throw new NotFoundException(`no active recording for room "${slug}"`);
+      throw new NotFoundException(`no active session for room "${slug}"`);
     }
-    this.activeIds.delete(slug);
 
-    await this.recordings.update(recordingId, { status: 'uploading' });
+    await this.recordings.update(recording.id, { status: 'stopping', error: null });
 
-    const result = await this.compositor.stop(slug);
+    let result: Awaited<ReturnType<CompositorClient['stop']>>;
+    try {
+      result = await this.compositor.stop(slug);
+    } catch (err) {
+      // The media session may still be live; keep the durable state recording and
+      // surface the failure so the owner can retry instead of losing the room.
+      await this.recordings.update(recording.id, {
+        status: 'recording',
+        error: `Failed to stop: ${errorMessage(err)}`,
+      });
+      throw err;
+    }
+
+    // The session is over; only now is it safe to tear down live comments.
+    this.comments.stopSession(slug);
+
     const updates: Partial<Recording> = {
       filePath: result.file ?? null,
       endedAt: new Date(),
+      status: 'uploading',
     };
 
     let downloadUrl: string | undefined;
@@ -183,18 +304,21 @@ export class RecordingsService {
         const urls = await this.s3.createUploadUrls(s3Key);
         await this.compositor.upload(slug, urls.putUrl);
         updates.s3Key = s3Key;
-        updates.status = 'stopped';
+        updates.status = 'finished';
+        updates.error = null;
         downloadUrl = urls.downloadUrl;
       } catch (err) {
         this.logger.error(`S3 upload failed for room ${slug}: ${String(err)}`);
-        updates.status = 'stopped';
+        updates.status = 'failed';
+        updates.error = `Upload failed: ${errorMessage(err)}`;
       }
     } else {
-      updates.status = 'stopped';
+      updates.status = 'finished';
+      updates.error = null;
     }
 
     await this.dataSource.transaction(async (manager) => {
-      await manager.update(Recording, recordingId, updates);
+      await manager.update(Recording, recording.id, updates);
       const roomUpdate = await manager.update(
         Room,
         { id: room.id, status: 'active' },
@@ -205,7 +329,7 @@ export class RecordingsService {
       }
     });
     this.logger.log(
-      `stopped room=${slug} file=${result.file ?? 'none'} s3=${s3Key ?? 'none'}`,
+      `stopped room=${slug} status=${updates.status} file=${result.file ?? 'none'} s3=${s3Key ?? 'none'}`,
     );
     return {
       room: slug,
@@ -213,6 +337,43 @@ export class RecordingsService {
       live: result.live,
       downloadUrl,
       s3Key,
+      status: updates.status ?? 'finished',
+      ...(updates.error ? { error: updates.error } : {}),
+    };
+  }
+
+  /** Durable session snapshot so the owner can restore control after a reconnect. */
+  async session(room: Room, userId: string): Promise<SessionState> {
+    if (room.ownerId !== userId) {
+      throw new ForbiddenException('only the room owner can view the live session');
+    }
+    const latest = await this.recordings.findOne({
+      where: { roomId: room.id },
+      order: { createdAt: 'DESC' },
+    });
+    const activeStatus = latest && ACTIVE_RECORDING_STATUSES.includes(latest.status) ? latest.status : null;
+    if (!latest || !activeStatus) {
+      return {
+        room: room.slug,
+        roomStatus: room.status,
+        active: false,
+        live: false,
+        status: activeStatus,
+        startedAt: null,
+        destinations: [],
+        error: latest?.error ?? null,
+      };
+    }
+    const active = activeStatus === 'starting' || activeStatus === 'recording';
+    return {
+      room: room.slug,
+      roomStatus: room.status,
+      active,
+      live: active ? latest.live : false,
+      status: activeStatus,
+      startedAt: active ? latest.startedAt : null,
+      destinations: active ? latest.destinations ?? [] : [],
+      error: latest.error,
     };
   }
 
@@ -239,7 +400,8 @@ export class RecordingsService {
     try {
       return await this.compositor.status();
     } catch {
-      return [...this.activeIds.entries()].map(([room, id]) => ({ room, recordingId: id }));
+      const rows = await this.recordings.find({ where: { status: In(ACTIVE_RECORDING_STATUSES) } });
+      return rows.map((row) => ({ roomId: row.roomId, recordingId: row.id, status: row.status }));
     }
   }
 

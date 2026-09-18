@@ -10,7 +10,12 @@ import {
 import { useAsyncAction } from './useAsyncAction';
 import { useLocalStorageState } from './useLocalStorageState';
 
-export function useRecordingControls(room: string, setError: (message: string) => void) {
+export function useRecordingControls(
+  room: string,
+  setError: (message: string) => void,
+  options: { joined?: boolean; isOwner?: boolean } = {},
+) {
+  const { joined = false, isOwner = false } = options;
   const [recording, setRecording] = useState(false);
   const [live, setLive] = useState(false);
   const [liveDestinations, setLiveDestinations] = useState<PlatformProvider[]>([]);
@@ -62,6 +67,45 @@ export function useRecordingControls(room: string, setError: (message: string) =
     resetUi();
   }, [room]);
 
+  /**
+   * Durable room state, not this browser tab, owns the media session. On
+   * (re)join the owner restores the active session so the Stop control and live
+   * comments reappear without a second start request.
+   */
+  useEffect(() => {
+    if (!joined || !isOwner) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await apiFetch(`/api/recordings/session?room=${encodeURIComponent(room)}`);
+        if (!res.ok) return;
+        const body = await res.json();
+        if (cancelled) return;
+        if (body.active) {
+          const nextDestinations = Array.isArray(body.destinations)
+            ? (body.destinations as PlatformProvider[])
+            : [];
+          setRecording(true);
+          setLive(!!body.live);
+          setLiveDestinations(nextDestinations);
+          setRecordingInfo(
+            body.live ? formatLiveInfo(nextDestinations) : 'Recording @ 1080p60',
+          );
+        } else if (body.status === 'stopping' || body.status === 'uploading') {
+          setRecording(false);
+          setLive(false);
+          setLiveDestinations([]);
+          setRecordingInfo('Finalizing recording…');
+        }
+      } catch {
+        // Restoring control is best-effort; a failed lookup must not block the studio.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [room, joined, isOwner]);
+
   const runRecordingAction = (
     action: 'start' | 'stop',
     opts?: { destinations?: OutboundDestination[] },
@@ -94,7 +138,17 @@ export function useRecordingControls(room: string, setError: (message: string) =
           const downloadUrl =
             typeof body.downloadUrl === 'string' ? body.downloadUrl : undefined;
           const file = typeof body.file === 'string' ? body.file : undefined;
-          if (downloadUrl || file) {
+          if (body.status === 'failed') {
+            // Finalization failed after the media session ended. Surface it and do
+            // not present a saved recording that does not exist.
+            setFinishedRecording(null);
+            setRecordingInfo('');
+            setError(
+              typeof body.error === 'string' && body.error.trim()
+                ? body.error
+                : 'Recording processing failed',
+            );
+          } else if (downloadUrl || file) {
             setFinishedRecording({
               ...(downloadUrl ? { downloadUrl } : {}),
               ...(file ? { file } : {}),
