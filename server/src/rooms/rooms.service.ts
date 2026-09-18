@@ -103,7 +103,7 @@ export class RoomsService {
 
   async listOwned(userId: string): Promise<Array<{
     id: string; slug: string; name: string; status: Room['status']; createdAt: Date;
-    media: { status: string; startedAt: Date | null; endedAt: Date | null; file: string | null } | null;
+    media: { status: string; startedAt: Date | null; endedAt: Date | null; error: string | null; file: string | null } | null;
   }>> {
     const rooms = await this.rooms.find({
       where: { ownerId: userId },
@@ -119,7 +119,7 @@ export class RoomsService {
         createdAt: room.createdAt,
         media: recording ? {
           status: recording.status, startedAt: recording.startedAt, endedAt: recording.endedAt,
-          file: recording.filePath,
+          error: recording.error, file: recording.filePath,
         } : null,
       };
     });

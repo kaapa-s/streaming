@@ -41,8 +41,26 @@ export class S3PresignService {
     return `${prefix}/${roomSlug}-${stamp}.webm`;
   }
 
-  async createDownloadUrl(s3Key: string): Promise<string> {
-    return getSignedUrl(this.client(), new GetObjectCommand({ Bucket: this.bucket(), Key: s3Key }), { expiresIn: 60 * 60 });
+  async createDownloadUrl(
+    s3Key: string,
+    options?: { filename?: string; download?: boolean },
+  ): Promise<string> {
+    /** Inline by default so the same URL can back `<video>`; attachment for the download action. */
+    const responseContentDisposition =
+      options?.download
+        ? `attachment; filename="${sanitizeFilename(options.filename ?? 'recording.webm')}"`
+        : undefined;
+    return getSignedUrl(
+      this.client(),
+      new GetObjectCommand({
+        Bucket: this.bucket(),
+        Key: s3Key,
+        ...(responseContentDisposition
+          ? { ResponseContentDisposition: responseContentDisposition }
+          : {}),
+      }),
+      { expiresIn: 60 * 60 },
+    );
   }
 
   async createUploadUrls(s3Key: string): Promise<{ putUrl: string; downloadUrl: string }> {
@@ -68,4 +86,9 @@ export class S3PresignService {
     this.logger.log(`presigned s3 key=${s3Key}`);
     return { putUrl, downloadUrl };
   }
+}
+
+function sanitizeFilename(name: string): string {
+  const cleaned = name.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+  return cleaned || 'recording.webm';
 }

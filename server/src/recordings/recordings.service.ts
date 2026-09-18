@@ -11,6 +11,9 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, In, Repository } from 'typeorm';
+import { stat } from 'fs/promises';
+import { resolve } from 'path';
+import type { Response } from 'express';
 import { CommentsService } from '../comments/comments.service';
 import { ACTIVE_RECORDING_STATUSES, Recording, Room, type RecordingStatus } from '../entities';
 import type { PlatformProvider } from '../platforms/platform-ids';
@@ -19,6 +22,7 @@ import { normalizeOutboundRtmp } from '../platforms/outbound-rtmp';
 import { RoomsService } from '../rooms/rooms.service';
 import { CompositorClient } from './compositor.client';
 import { resolveDestinations } from './destinations';
+import { issueMediaToken, verifyMediaToken, type MediaTokenPayload } from './media-token';
 import type { StartRecordingDto } from './recordings.dto';
 import { S3PresignService } from './s3-presign.service';
 import { postSfuInternal } from './sfu-internal';
@@ -30,6 +34,12 @@ function isUniqueViolation(error: unknown): boolean {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function mediaDurationSeconds(startedAt: Date | null, endedAt: Date | null): number | null {
+  if (!startedAt || !endedAt) return null;
+  const seconds = Math.round((endedAt.getTime() - startedAt.getTime()) / 1000);
+  return seconds >= 0 ? seconds : null;
 }
 
 export interface SessionState {
@@ -51,6 +61,24 @@ export interface RoomShareState {
   startedAt: Date | null;
   destinations: PlatformProvider[];
   error: string | null;
+}
+
+/**
+ * Owner-facing recorded output of a room. `playbackUrl`/`downloadUrl` are either
+ * cloud-signed or API-signed for self-hosted media, so the browser can render
+ * and save the recording without a Bearer header.
+ */
+export interface RoomMedia {
+  status: RecordingStatus;
+  live: boolean;
+  resolution: string;
+  startedAt: Date | null;
+  endedAt: Date | null;
+  durationSeconds: number | null;
+  error: string | null;
+  file: string | null;
+  playbackUrl?: string;
+  downloadUrl?: string;
 }
 
 @Injectable()
@@ -427,23 +455,104 @@ export class RecordingsService implements OnModuleInit {
     };
   }
 
-  async media(room: Room, userId: string): Promise<{ media: {
-    status: string;
-    startedAt: Date | null;
-    endedAt: Date | null;
-    file: string | null;
-    downloadUrl?: string;
-  } | null }> {
+  async media(room: Room, userId: string): Promise<{ media: RoomMedia | null }> {
     if (room.ownerId !== userId) throw new ForbiddenException('only the room owner can access recorded media');
     const recording = await this.recordings.findOne({ where: { roomId: room.id }, order: { createdAt: 'DESC' } });
     if (!recording) return { media: null };
-    const downloadUrl = recording.s3Key && this.s3.isConfigured()
-      ? await this.s3.createDownloadUrl(recording.s3Key)
-      : undefined;
+    const urls = await this.mediaUrls(room, recording, userId);
     return { media: {
-      status: recording.status, startedAt: recording.startedAt, endedAt: recording.endedAt,
-      file: recording.filePath, ...(downloadUrl ? { downloadUrl } : {}),
+      status: recording.status,
+      live: recording.live,
+      resolution: recording.resolution,
+      startedAt: recording.startedAt,
+      endedAt: recording.endedAt,
+      durationSeconds: mediaDurationSeconds(recording.startedAt, recording.endedAt),
+      error: recording.error,
+      file: recording.filePath,
+      ...urls,
     } };
+  }
+
+  /**
+   * Playback/download links for a finished room's output. Cloud storage uses
+   * presigned S3 URLs; self-hosted media uses short-lived API-signed URLs that
+   * authorize the streaming endpoint without a Bearer header.
+   */
+  private async mediaUrls(
+    room: Room,
+    recording: Recording,
+    userId: string,
+  ): Promise<{ playbackUrl?: string; downloadUrl?: string }> {
+    // Only a finalized recording has a stable, playable output. Processing and
+    // failed uploads stay explicit states rather than half-playable video.
+    if (recording.status !== 'finished') return {};
+    const filename = `${room.slug}.webm`;
+    if (recording.s3Key && this.s3.isConfigured()) {
+      try {
+        const [playbackUrl, downloadUrl] = await Promise.all([
+          this.s3.createDownloadUrl(recording.s3Key),
+          this.s3.createDownloadUrl(recording.s3Key, { filename, download: true }),
+        ]);
+        return { playbackUrl, downloadUrl };
+      } catch (err) {
+        this.logger.warn(`media URL signing failed for room ${room.slug}: ${errorMessage(err)}`);
+        return {};
+      }
+    }
+    if (!recording.filePath) return {};
+    try {
+      const info = await stat(resolve(recording.filePath));
+      if (!info.isFile()) return {};
+    } catch {
+      // The local file was purged or the recorder host is not reachable here.
+      return {};
+    }
+    const token = issueMediaToken(room.id, userId);
+    const playbackUrl = `/api/rooms/${encodeURIComponent(room.slug)}/media/file?token=${encodeURIComponent(token)}`;
+    return { playbackUrl, downloadUrl: `${playbackUrl}&download=1` };
+  }
+
+  /** Stream a self-hosted recording after verifying the API-signed media token. */
+  async streamMedia(
+    room: Room,
+    token: string | undefined,
+    download: boolean,
+    reply: Response,
+  ): Promise<void> {
+    let payload: MediaTokenPayload;
+    try {
+      payload = verifyMediaToken(token ?? '');
+    } catch {
+      throw new ForbiddenException('invalid or expired media link');
+    }
+    if (payload.roomId !== room.id || payload.userId !== room.ownerId) {
+      throw new ForbiddenException('media link does not match this room');
+    }
+    const recording = await this.recordings.findOne({
+      where: { roomId: room.id },
+      order: { createdAt: 'DESC' },
+    });
+    const file = recording?.filePath;
+    if (!recording || !file || !file.toLowerCase().endsWith('.webm')) {
+      throw new NotFoundException('recorded media is not available');
+    }
+    let resolved: string;
+    try {
+      resolved = resolve(file);
+      const info = await stat(resolved);
+      if (!info.isFile()) throw new Error('not a regular file');
+    } catch {
+      // The recorder host may keep the file locally; a missing/unreadable path is
+      // a normal "not available" outcome rather than a server error.
+      throw new NotFoundException('recorded media is not available');
+    }
+    const disposition = download ? 'attachment' : 'inline';
+    await sendFile(reply, resolved, {
+      headers: {
+        'Content-Disposition': `${disposition}; filename="${sanitizeHeaderValue(`${room.slug}.webm`)}"`,
+        'Cache-Control': 'private, no-store',
+      },
+    });
   }
 
   async status(): Promise<unknown> {
@@ -479,4 +588,18 @@ export class RecordingsService implements OnModuleInit {
       this.logger.warn(`layout sync failed for room ${slug}: ${String(err)}`);
     }
   }
+}
+
+function sendFile(
+  reply: Response,
+  path: string,
+  options: Parameters<Response['sendFile']>[1],
+): Promise<void> {
+  return new Promise((resolvePromise, reject) => {
+    reply.sendFile(path, options, (err?: Error) => (err ? reject(err) : resolvePromise()));
+  });
+}
+
+function sanitizeHeaderValue(value: string): string {
+  return value.replace(/["\r\n]/g, '');
 }

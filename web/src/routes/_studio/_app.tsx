@@ -40,10 +40,19 @@ function AppShell() {
 }
 
 function RoomLink({ room }: { room: OwnedRoom }) {
-  const label = room.status === 'created' ? 'Not started' : room.status === 'active' ? 'Recording' : 'Finished';
+  const label = room.status === 'created'
+    ? 'Not started'
+    : room.status === 'active'
+      ? 'Recording'
+      : room.media?.status === 'failed'
+        ? 'Failed'
+        : room.media?.status === 'uploading' || room.media?.status === 'stopping'
+          ? 'Processing'
+          : 'Finished';
+  const failing = room.media?.status === 'failed';
   const chip = room.status === 'active'
     ? <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-accent"><span className="inline-block size-1.5 rounded-full bg-accent" />{label}</span>
-    : <span className={`inline-flex items-center gap-1.5 text-xs ${room.status === 'finished' ? 'text-ink-subtle' : 'text-ink-muted'}`}><span className="inline-block size-1.5 rounded-full bg-ink-subtle opacity-60" />{label}</span>;
+    : <span className={`inline-flex items-center gap-1.5 text-xs ${failing ? 'font-semibold text-danger' : room.status === 'finished' ? 'text-ink-subtle' : 'text-ink-muted'}`}><span className={`inline-block size-1.5 rounded-full ${failing ? 'bg-danger' : 'bg-ink-subtle opacity-60'}`} />{label}</span>;
   if (room.status === 'finished') return <Link to="/rooms/$slug" params={{ slug: room.slug }} search={keepStudioSearch} className="rounded-lg px-3 py-2 text-sm font-medium text-ink-muted hover:bg-surface-muted hover:text-ink"><span className="block truncate">{room.name}</span>{chip}</Link>;
   return <Link to="/join" search={{ room: room.slug }} className="rounded-lg px-3 py-2 text-sm font-medium text-ink hover:bg-surface-muted"><span className="block truncate">{room.name}</span>{chip}</Link>;
 }

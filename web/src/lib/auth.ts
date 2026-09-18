@@ -177,6 +177,7 @@ export interface OwnedRoom {
     status: string;
     startedAt: string | null;
     endedAt: string | null;
+    error: string | null;
     file: string | null;
   } | null;
 }

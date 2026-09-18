@@ -1,5 +1,5 @@
-import { Body, Controller, Get, Inject, Logger, Param, Post, Req, UseGuards, forwardRef } from '@nestjs/common';
-import type { Request } from 'express';
+import { Body, Controller, Get, Inject, Logger, Param, Post, Query, Req, Res, UseGuards, forwardRef } from '@nestjs/common';
+import type { Request, Response } from 'express';
 import { JwtAuthGuard, OptionalJwtAuthGuard } from '../auth/auth.guards';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { AuthUser } from '../auth/jwt.strategy';
@@ -120,6 +120,22 @@ export class RoomsController {
   async media(@Param('slug') slug: string, @CurrentUser() user: AuthUser) {
     const { room } = await this.rooms.requireMembershipBySlug(slug, user.id);
     return this.recordings.media(room, user.id);
+  }
+
+  /**
+   * Streams a self-hosted recording. Media elements cannot attach a Bearer
+   * header, so the short-lived signed query token authorizes this owner-scoped
+   * request instead of the JWT guard.
+   */
+  @Get(':slug/media/file')
+  async mediaFile(
+    @Param('slug') slug: string,
+    @Query('token') token: string | undefined,
+    @Query('download') download: string | undefined,
+    @Res() reply: Response,
+  ): Promise<void> {
+    const room = await this.rooms.findBySlug(slug);
+    await this.recordings.streamMedia(room, token, download === '1', reply);
   }
 
   @Post(':id/join')
