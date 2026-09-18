@@ -207,7 +207,8 @@ export type GuestAdmission = {
   room: { id: string; slug: string };
   role: 'owner' | 'speaker' | 'viewer';
   guestId: string | null;
-  joinToken: string;
+  inScene: boolean;
+  joinToken?: string;
   sfuUrl?: string;
   displayName: string;
 };
@@ -227,11 +228,13 @@ export function clearGuestAdmission(): void {
   sessionStorage.removeItem(GUEST_ADMISSION_KEY);
 }
 
+/** Admit an invite. A waiting invitee has `inScene: false` and no join token. */
 export async function admitInvite(token: string, displayName?: string, guestId?: string): Promise<{
   room: { id: string; slug: string };
   role: 'owner' | 'speaker' | 'viewer';
   guestId: string | null;
-  joinToken: string;
+  inScene: boolean;
+  joinToken?: string;
   sfuUrl?: string;
 }> {
   const res = await apiFetch('/api/rooms/invite/admit', {
@@ -265,6 +268,35 @@ export async function listRoomInvites(slug: string): Promise<RoomInviteSummary[]
 export async function revokeRoomInvite(slug: string, inviteId: string): Promise<void> {
   const res = await apiFetch(
     `/api/rooms/${encodeURIComponent(slug)}/invites/${encodeURIComponent(inviteId)}/revoke`,
+    { method: 'POST' },
+  );
+  if (!res.ok) throw new Error(await parseError(res));
+}
+
+export interface RoomMemberSceneResult {
+  id: string;
+  userId: string;
+  inScene: boolean;
+}
+
+/** Owner-only: admit an off-scene member to the scene or remove them from it. */
+export async function setRoomMemberScene(
+  slug: string,
+  memberId: string,
+  inScene: boolean,
+): Promise<RoomMemberSceneResult> {
+  const res = await apiFetch(
+    `/api/rooms/${encodeURIComponent(slug)}/members/${encodeURIComponent(memberId)}/scene`,
+    { method: 'POST', body: JSON.stringify({ inScene }) },
+  );
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json() as Promise<RoomMemberSceneResult>;
+}
+
+/** Owner-only: remove a member from the room and disconnect their SFU session. */
+export async function kickRoomMember(slug: string, memberId: string): Promise<void> {
+  const res = await apiFetch(
+    `/api/rooms/${encodeURIComponent(slug)}/members/${encodeURIComponent(memberId)}/kick`,
     { method: 'POST' },
   );
   if (!res.ok) throw new Error(await parseError(res));

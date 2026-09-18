@@ -272,15 +272,26 @@ export class RoomsService {
       if (!name) throw new BadRequestException('display name is required for guests');
       const count = await this.members.count({ where: { roomId: room.id } });
       if (count >= 15) throw new ConflictException('room is full');
-      const sceneCount = await this.members.count({ where: { roomId: room.id, inScene: true } });
-      if (sceneCount >= 10) throw new ConflictException('scene is full');
       const identity = user ? { userId: user.id, guestId: null } : { userId: null, guestId: guestId || randomUUID() };
-      member = await this.members.save(this.members.create({ roomId: room.id, ...identity, displayName: name, role: 'speaker', inScene: true }));
+      // Invitees start off-scene and consume no scene slot until the owner admits them.
+      member = await this.members.save(this.members.create({ roomId: room.id, ...identity, displayName: name, role: 'speaker', inScene: false }));
     }
-    if (!member.inScene) throw new ForbiddenException('the owner has not admitted you to the scene');
     const identity = user ? user.id : `guest:${member.guestId}`;
     const name = user?.name || member.displayName || 'Guest';
-    return { room: { id: room.id, slug: room.slug }, role: member.role, guestId: member.guestId, joinToken: issueJoinToken({ roomSlug: room.slug, userId: identity, name, role: 'speaker', inScene: true, canManage: member.role === 'owner' }), sfuUrl: optionalSfuUrl() };
+    // A waiting member gets no SFU token: off-scene clients must not connect
+    // until the owner admits them and joinBySlug authorizes the join.
+    return {
+      room: { id: room.id, slug: room.slug },
+      role: member.role,
+      guestId: member.guestId,
+      inScene: member.inScene,
+      ...(member.inScene
+        ? {
+          joinToken: issueJoinToken({ roomSlug: room.slug, userId: identity, name, role: 'speaker', inScene: true, canManage: member.role === 'owner' }),
+          sfuUrl: optionalSfuUrl(),
+        }
+        : {}),
+    };
   }
 
   async sceneMembers(slug: string, ownerId: string) {

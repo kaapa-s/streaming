@@ -101,7 +101,30 @@ async function inviteParticipant(accessToken, participantToken, displayName) {
   });
   const admission = await admitRes.json();
   if (!admitRes.ok) throw new Error(`room invite admission failed (${admitRes.status}): ${JSON.stringify(admission)}`);
-  console.log(`room participant admitted: ${displayName}`);
+  // Option A (streaming-1o4): invitees are created off-scene and receive no SFU
+  // token, so the owner must explicitly admit them to the scene.
+  if (admission.inScene !== false) throw new Error(`invitee ${displayName} should start off-scene`);
+  console.log(`room participant admitted off-scene: ${displayName}`);
+}
+
+async function admitParticipantToScene(accessToken, displayName) {
+  const membersRes = await fetch(`${API}/rooms/${encodeURIComponent(room)}/members`, {
+    headers: { authorization: `Bearer ${accessToken}` },
+  });
+  const members = await membersRes.json();
+  if (!membersRes.ok) throw new Error(`members fetch failed (${membersRes.status}): ${JSON.stringify(members)}`);
+  const target = members.find((member) => member.displayName === displayName);
+  if (!target) throw new Error(`off-scene member ${displayName} not found in roster`);
+  const admitRes = await fetch(
+    `${API}/rooms/${encodeURIComponent(room)}/members/${encodeURIComponent(target.id)}/scene`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({ inScene: true }),
+    },
+  );
+  if (!admitRes.ok) throw new Error(`admit ${displayName} to scene failed (${admitRes.status})`);
+  console.log(`room participant admitted to scene: ${displayName}`);
 }
 
 async function setDeterministicLayout(accessToken, layout) {
@@ -499,6 +522,7 @@ async function main() {
   cleanupAccessToken = alice.accessToken;
   await createRoom(alice.accessToken);
   await inviteParticipant(alice.accessToken, bob.accessToken, 'Bob');
+  await admitParticipantToScene(alice.accessToken, 'Bob');
 
   browser = await puppeteer.launch({
     args: [
