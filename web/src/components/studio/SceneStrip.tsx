@@ -1,6 +1,7 @@
 import { sourceId, type CameraPreset } from '@streaming/canvas-compositor';
 import type { RemotePeer } from '@streaming/sfu-client';
 import { Camera, CameraOff, Mic, MicOff, Monitor } from 'lucide-react';
+import { participantName, type RoomParticipant } from '../../lib/roomState';
 import { LAYOUT_OPTIONS } from './layoutIcons';
 import { VideoTile } from './VideoTile';
 
@@ -18,6 +19,7 @@ type SceneStripProps = {
   featuredId: string | null;
   sceneScreenIds: string[];
   canEditLayout: boolean;
+  participants: RoomParticipant[];
   onCameraPreset: (preset: CameraPreset) => void;
   onFeature: (sourceId: string) => void;
   onToggleSceneScreen: (sourceId: string) => void;
@@ -37,6 +39,7 @@ export function SceneStrip({
   featuredId,
   sceneScreenIds,
   canEditLayout,
+  participants,
   onCameraPreset,
   onFeature,
   onToggleSceneScreen,
@@ -54,6 +57,26 @@ export function SceneStrip({
           </span>
         )}
       </h2>
+
+      {participants.length > 0 && (
+        <ul className="mb-3 flex flex-wrap gap-1.5" aria-label="Room participants">
+          {participants.map((participant) => (
+            <li
+              key={participant.id}
+              className={`rounded-full border px-2.5 py-1 text-[11px] font-medium ${
+                participant.inScene
+                  ? 'border-accent/40 text-ink'
+                  : 'border-border text-ink-subtle'
+              }`}
+              title={participant.inScene ? 'On scene' : 'Waiting for admission'}
+            >
+              {participantName(participant)}
+              {participant.role === 'owner' ? ' · host' : ''}
+              {participant.inScene ? '' : ' · off scene'}
+            </li>
+          ))}
+        </ul>
+      )}
 
       <div className="flex flex-col gap-4">
         {localStream && (

@@ -137,6 +137,7 @@ function LivePage() {
           featuredId={s.featuredId}
           sceneScreenIds={s.sceneScreenIds}
           canEditLayout={s.isRoomOwner}
+          participants={s.participants}
           onCameraPreset={s.setCameraPreset}
           onFeature={s.setFeatured}
           onToggleSceneScreen={s.toggleSceneScreen}

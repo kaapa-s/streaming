@@ -21,6 +21,7 @@ import { CompositorClient } from './compositor.client';
 import { resolveDestinations } from './destinations';
 import type { StartRecordingDto } from './recordings.dto';
 import { S3PresignService } from './s3-presign.service';
+import { postSfuInternal } from './sfu-internal';
 import { parseResolution, type StreamResolution } from '@streaming/stream-quality';
 
 function isUniqueViolation(error: unknown): boolean {
@@ -34,6 +35,16 @@ function errorMessage(error: unknown): string {
 export interface SessionState {
   room: string;
   roomStatus: Room['status'];
+  active: boolean;
+  live: boolean;
+  status: RecordingStatus | null;
+  startedAt: Date | null;
+  destinations: PlatformProvider[];
+  error: string | null;
+}
+
+/** Member-visible subset of the session: who is sharing, without owner-only controls. */
+export interface RoomShareState {
   active: boolean;
   live: boolean;
   status: RecordingStatus | null;
@@ -112,6 +123,21 @@ export class RecordingsService implements OnModuleInit {
       this.logger.warn(
         `reconciled lost session room=${room?.slug ?? row.roomId} recording=${row.id} status=${row.status}`,
       );
+      if (room) {
+        // Release both auxiliary services: a lost session must not leave a warm
+        // compositor tab or an SFU router behind for a finished room.
+        void this.compositor.discard(room.slug).catch(() => undefined);
+        void this.cleanupSfuRoom(room.slug);
+      }
+    }
+  }
+
+  /** Best-effort teardown of SFU router/participant state for a finished room. */
+  private async cleanupSfuRoom(slug: string): Promise<void> {
+    try {
+      await postSfuInternal(`/internal/rooms/${encodeURIComponent(slug)}/discard`);
+    } catch (err) {
+      this.logger.warn(`SFU cleanup failed for finished room ${slug}: ${errorMessage(err)}`);
     }
   }
 
@@ -328,6 +354,9 @@ export class RecordingsService implements OnModuleInit {
         throw new ConflictException(`room "${slug}" is no longer active`);
       }
     });
+    // The room is finished: release its SFU router and participant state so a
+    // later room reusing the slug starts from a clean slate.
+    await this.cleanupSfuRoom(slug);
     this.logger.log(
       `stopped room=${slug} status=${updates.status} file=${result.file ?? 'none'} s3=${s3Key ?? 'none'}`,
     );
@@ -347,6 +376,27 @@ export class RecordingsService implements OnModuleInit {
     if (room.ownerId !== userId) {
       throw new ForbiddenException('only the room owner can view the live session');
     }
+    return this.sessionView(room);
+  }
+
+  /**
+   * Public sharing state every member may observe, so non-owners can see when
+   * the owner is recording or live without being able to change it.
+   */
+  async shareState(slug: string): Promise<RoomShareState> {
+    const room = await this.rooms.findBySlug(slug);
+    const session = await this.sessionView(room);
+    return {
+      active: session.active,
+      live: session.live,
+      status: session.status,
+      startedAt: session.startedAt,
+      destinations: session.destinations,
+      error: session.error,
+    };
+  }
+
+  private async sessionView(room: Room): Promise<SessionState> {
     const latest = await this.recordings.findOne({
       where: { roomId: room.id },
       order: { createdAt: 'DESC' },

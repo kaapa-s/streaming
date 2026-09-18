@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { StudioValue } from '../studio/studioHandle';
+import type { PlatformProvider } from '../lib/platforms';
 import { useLiveComments } from './useLiveComments';
 import { usePlatformConnections } from './usePlatformConnections';
 import { useProgramPreview } from './useProgramPreview';
@@ -43,8 +44,16 @@ export function useStudioController(room: string): StudioValue {
     joined: session.joined,
     isOwner,
   });
+  // Non-owners cannot start/stop sharing; they mirror the room's sharing state so
+  // "Host is recording/live" is visible to everyone in the studio.
+  const sharedSharing = studioLayout.sharing;
+  const roomRecording = isOwner ? recording.recording : !!sharedSharing?.active;
+  const roomLive = isOwner ? recording.live : !!sharedSharing?.live;
+  const roomLiveDestinations = isOwner
+    ? recording.liveDestinations
+    : ((sharedSharing?.destinations ?? []) as PlatformProvider[]);
   const platforms = usePlatformConnections(Boolean(auth.user), setError);
-  const liveToYoutube = recording.live && recording.liveDestinations.includes('youtube');
+  const liveToYoutube = roomLive && roomLiveDestinations.includes('youtube');
   const comments = useLiveComments({
     room,
     live: liveToYoutube,
@@ -106,9 +115,9 @@ export function useStudioController(room: string): StudioValue {
     setFeatured: studioLayout.setFeatured,
     toggleSceneScreen: studioLayout.toggleSceneScreen,
     previewRef,
-    recording: recording.recording,
-    live: recording.live,
-    liveDestinations: recording.liveDestinations,
+    recording: roomRecording,
+    live: roomLive,
+    liveDestinations: roomLiveDestinations,
     recordingInfo: recording.recordingInfo,
     finishedRecording: recording.finishedRecording,
     setFinishedRecording: recording.setFinishedRecording,
@@ -120,6 +129,7 @@ export function useStudioController(room: string): StudioValue {
     stopRecording: recording.stopRecording,
     toggleRecording: recording.toggleRecording,
     streamControlsLocked: recording.streamControlsLocked,
+    participants: studioLayout.participants,
     platforms: platforms.status,
     platformPending: platforms.pendingProvider,
     connectPlatform: (provider) => {

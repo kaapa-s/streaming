@@ -4,6 +4,7 @@ import type { LiveComment } from '../hooks/useLiveComments';
 import type { RemotePeer } from '@streaming/sfu-client';
 import type { AuthUser } from '../lib/auth';
 import type { CameraPreset } from '@streaming/canvas-compositor';
+import type { RoomParticipant } from '../lib/roomState';
 import type {
   AllPlatformStatus,
   OutboundDestination,
@@ -69,6 +70,7 @@ export type StudioValue = {
   stopRecording: () => void;
   toggleRecording: () => void;
   streamControlsLocked: boolean;
+  participants: RoomParticipant[];
   platforms: AllPlatformStatus;
   platformPending: PlatformProvider | null;
   connectPlatform: (provider: PlatformProvider) => void;

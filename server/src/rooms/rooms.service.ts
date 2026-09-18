@@ -41,6 +41,23 @@ function optionalSfuUrl(): string | undefined {
   return value || undefined;
 }
 
+export interface RoomParticipant {
+  id: string;
+  userId: string | null;
+  guestId: string | null;
+  displayName: string | null;
+  role: RoomRole;
+  inScene: boolean;
+}
+
+/** Authoritative, member-scoped room state every studio can converge on. */
+export interface RoomSnapshot {
+  room: { id: string; slug: string; name: string; status: Room['status'] };
+  role: RoomRole;
+  layout: RoomLayout;
+  participants: RoomParticipant[];
+}
+
 @Injectable()
 export class RoomsService {
   constructor(
@@ -249,6 +266,33 @@ export class RoomsService {
   async sceneMembers(slug: string, ownerId: string) {
     const { room } = await this.requireMembershipBySlug(slug, ownerId);
     return this.members.find({ where: { roomId: room.id }, order: { createdAt: 'ASC' } });
+  }
+
+  /**
+   * Everything a connected studio needs to converge: the authoritative scene,
+   * the room identity, and the participant roster (including off-scene members
+   * who are waiting for admission). Any member may read it; only the owner can
+   * change the layout or scene membership.
+   */
+  async roomSnapshot(slug: string, userId: string): Promise<RoomSnapshot> {
+    const { room, member } = await this.requireMembershipBySlug(slug, userId);
+    const participants = await this.members.find({
+      where: { roomId: room.id },
+      order: { createdAt: 'ASC' },
+    });
+    return {
+      room: { id: room.id, slug: room.slug, name: room.name, status: room.status },
+      role: member.role,
+      layout: roomLayoutOf(room),
+      participants: participants.map((entry) => ({
+        id: entry.id,
+        userId: entry.userId,
+        guestId: entry.guestId,
+        displayName: entry.displayName,
+        role: entry.role,
+        inScene: entry.inScene,
+      })),
+    };
   }
 
   async setSceneMembership(slug: string, ownerId: string, memberId: string, inScene: boolean) {

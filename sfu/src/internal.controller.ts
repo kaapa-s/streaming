@@ -6,13 +6,18 @@ import { SignalingGateway } from './signaling/signaling.gateway';
 export class InternalController {
   constructor(private readonly signaling: SignalingGateway, private readonly mediasoup: MediasoupService) {}
 
+  /** Prefer the dedicated internal secret, but accept the shared join secret locally. */
+  private expectedSecret(): string | undefined {
+    return process.env.SFU_INTERNAL_SECRET?.trim() || process.env.SFU_JOIN_SECRET?.trim();
+  }
+
   @Post('rooms/:slug/kick')
   async kick(
     @Param('slug') slug: string,
     @Body() body: { userId?: string },
     @Headers('x-internal-secret') secret?: string,
   ) {
-    const expected = process.env.SFU_INTERNAL_SECRET?.trim();
+    const expected = this.expectedSecret();
     if (!expected || secret !== expected || !body.userId) throw new UnauthorizedException();
     await this.signaling.kickUser(slug, body.userId);
     return { room: slug.trim().toLowerCase(), kicked: true };
@@ -20,7 +25,7 @@ export class InternalController {
 
   @Post('rooms/:slug/discard')
   async discard(@Param('slug') slug: string, @Headers('x-internal-secret') secret?: string) {
-    const expected = process.env.SFU_INTERNAL_SECRET?.trim();
+    const expected = this.expectedSecret();
     if (!expected || secret !== expected) throw new UnauthorizedException();
     await this.signaling.closeRoom(slug);
     // closeRoom also closes the router; keeping the service dependency here makes

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { sourceId, type CameraPreset, type LayoutState } from '@streaming/canvas-compositor';
 import type { RemotePeer } from '@streaming/sfu-client';
 import { apiFetch } from '../lib/auth';
+import type { RoomParticipant, RoomShareState, RoomSnapshot } from '../lib/roomState';
 
 const DEFAULT_LAYOUT: LayoutState = {
   cameraPreset: 'focus',
@@ -43,6 +44,39 @@ function sameLayout(a: LayoutState, b: LayoutState): boolean {
     a.cameraPreset === b.cameraPreset &&
     a.featuredId === b.featuredId &&
     sameIds(a.sceneScreenIds, b.sceneScreenIds)
+  );
+}
+
+function sameSharing(a: RoomShareState, b: RoomShareState): boolean {
+  return (
+    a.active === b.active &&
+    a.live === b.live &&
+    a.status === b.status &&
+    a.error === b.error &&
+    sameIds(a.destinations, b.destinations)
+  );
+}
+
+function sameParticipants(a: RoomParticipant[], b: RoomParticipant[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((participant, index) => {
+    const other = b[index];
+    return (
+      participant.id === other.id &&
+      participant.inScene === other.inScene &&
+      participant.displayName === other.displayName &&
+      participant.role === other.role
+    );
+  });
+}
+
+/** Identity guard so the 1.2s poll does not re-render the studio when nothing changed. */
+function sameSnapshot(a: RoomSnapshot, b: RoomSnapshot): boolean {
+  return (
+    a.room.status === b.room.status &&
+    sameLayout(a.layout, b.layout) &&
+    sameSharing(a.sharing, b.sharing) &&
+    sameParticipants(a.participants, b.participants)
   );
 }
 
@@ -90,6 +124,9 @@ type UseStudioLayoutArgs = {
  * The room owner edits it and pushes it to the API (which stores it and feeds the
  * compositor). Everyone else has read-only controls and mirrors the stored layout,
  * so their program preview follows the host instead of showing only themselves.
+ *
+ * `layout` is the *resolved* scene this browser can draw; the owner persists the
+ * raw desired scene so a temporarily missing source never rewrites the room.
  */
 export function useStudioLayout({
   room,
@@ -104,6 +141,12 @@ export function useStudioLayout({
   const [ownerLayout, setOwnerLayout] = useState<LayoutState>(DEFAULT_LAYOUT);
   // Last scene read back from the API (non-owners only).
   const [sharedLayout, setSharedLayout] = useState<LayoutState | null>(null);
+  // Authoritative snapshot (scene + participants + sharing) from the API.
+  const [snapshot, setSnapshot] = useState<RoomSnapshot | null>(null);
+  // The owner must read the stored scene before publishing, or a reconnect would
+  // overwrite the room with the default/fallback scene.
+  const [hydrated, setHydrated] = useState(false);
+  const hydratedRef = useRef(false);
 
   const { cameras, screens } = useMemo(
     () => visibleSources(localPeerId, localStream, localScreenStream, remotePeers),
@@ -123,48 +166,62 @@ export function useStudioLayout({
     return next;
   }, [desired, cameras, screens, autoFeature]);
 
-  // Owner: publish every change (persisted server-side + forwarded to the recorder).
+  // Owner: publish the raw scene on every change (persisted server-side + forwarded
+  // to the recorder). Wait for hydration so a reconnect does not clobber it.
   useEffect(() => {
-    if (!joined || !isOwner) return;
+    if (!joined || !isOwner || !hydrated) return;
     void apiFetch(`/api/rooms/${encodeURIComponent(room)}/layout`, {
       method: 'POST',
       body: JSON.stringify({
-        cameraPreset: layout.cameraPreset,
-        featuredId: layout.featuredId,
-        sceneScreenIds: layout.sceneScreenIds,
+        cameraPreset: ownerLayout.cameraPreset,
+        featuredId: ownerLayout.featuredId,
+        sceneScreenIds: ownerLayout.sceneScreenIds,
       }),
     }).catch((err: unknown) => {
       console.warn('[layout] failed to sync recorder', err);
     });
-  }, [joined, isOwner, layout, room]);
+  }, [joined, isOwner, hydrated, ownerLayout, room]);
 
-  // Leaving the session clears the scene, so the next join (possibly in another
-  // room) starts from the default instead of carrying a stale featured id.
+  // Leaving the session clears state, so the next join (possibly in another
+  // room) starts fresh instead of carrying a stale featured id.
   useEffect(() => {
     if (joined) return;
+    hydratedRef.current = false;
+    setHydrated(false);
+    setSnapshot(null);
     setOwnerLayout(DEFAULT_LAYOUT);
     setSharedLayout(null);
   }, [joined]);
 
-  // Speaker: mirror the owner's scene. Best-effort — a failed poll keeps the last
-  // known scene rather than dropping the viewer back to "just me".
+  // Everyone: mirror the authoritative room snapshot. Owners hydrate their local
+  // scene exactly once and keep their edits; non-owners follow it continuously.
   useEffect(() => {
-    if (!joined || isOwner) return;
+    if (!joined) return;
     let cancelled = false;
     let warned = false;
     const pull = async () => {
       try {
-        const res = await apiFetch(`/api/rooms/${encodeURIComponent(room)}/layout`);
+        const res = await apiFetch(`/api/rooms/${encodeURIComponent(room)}/state`);
         if (!res.ok || cancelled) return;
-        const next = (await res.json()) as LayoutState;
+        const next = (await res.json()) as RoomSnapshot;
         if (cancelled) return;
         warned = false;
-        setSharedLayout((prev) => (prev && sameLayout(prev, next) ? prev : next));
+        setSnapshot((prev) => (prev && sameSnapshot(prev, next) ? prev : next));
+        if (isOwner) {
+          if (!hydratedRef.current) {
+            hydratedRef.current = true;
+            // Hydrate the stored scene, unless the owner already made an edit.
+            setOwnerLayout((prev) => (sameLayout(prev, DEFAULT_LAYOUT) ? next.layout : prev));
+            setHydrated(true);
+          }
+        } else {
+          setSharedLayout((prev) => (prev && sameLayout(prev, next.layout) ? prev : next.layout));
+        }
       } catch (err) {
         // One line per outage: this runs on a timer and must not flood the console.
         if (!warned) {
           warned = true;
-          console.warn('[layout] failed to follow host scene', err);
+          console.warn('[layout] failed to follow room state', err);
         }
       }
     };
@@ -201,5 +258,12 @@ export function useStudioLayout({
     });
   };
 
-  return { layout, setCameraPreset, setFeatured, toggleSceneScreen };
+  return {
+    layout,
+    setCameraPreset,
+    setFeatured,
+    toggleSceneScreen,
+    sharing: snapshot?.sharing ?? null,
+    participants: snapshot?.participants ?? [],
+  };
 }

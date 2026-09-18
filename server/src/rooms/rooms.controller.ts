@@ -5,6 +5,7 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import type { AuthUser } from '../auth/jwt.strategy';
 import { CompositorClient } from '../recordings/compositor.client';
 import { RecordingsService } from '../recordings/recordings.service';
+import { postSfuInternal } from '../recordings/sfu-internal';
 import { AdmitInviteDto, CreateRoomDto, SetLayoutDto } from './dto/rooms.dto';
 import { RoomsService } from './rooms.service';
 import type { RoomLayout } from './room-layout';
@@ -56,16 +57,10 @@ export class RoomsController {
         // without turning a successful hard delete into a client retry loop.
         this.logger.warn(`discard compositor cleanup failed for ${slug}: ${String(err)}`);
       }
-      const sfuUrl = process.env.SFU_INTERNAL_URL?.trim();
-      const secret = process.env.SFU_INTERNAL_SECRET?.trim();
-      if (sfuUrl && secret) {
-        try {
-          await fetch(`${sfuUrl.replace(/\/$/, '')}/internal/rooms/${encodeURIComponent(slug)}/discard`, {
-            method: 'POST', headers: { 'X-Internal-Secret': secret },
-          });
-        } catch (err) {
-          this.logger.warn(`discard SFU cleanup failed for ${slug}: ${String(err)}`);
-        }
+      try {
+        await postSfuInternal(`/internal/rooms/${encodeURIComponent(slug)}/discard`);
+      } catch (err) {
+        this.logger.warn(`discard SFU cleanup failed for ${slug}: ${String(err)}`);
       }
     });
   }
@@ -113,15 +108,8 @@ export class RoomsController {
   }
 
   private async disconnectFromSfu(slug: string, userId: string): Promise<void> {
-    const base = process.env.SFU_INTERNAL_URL?.trim();
-    const secret = process.env.SFU_INTERNAL_SECRET?.trim();
-    if (!base || !secret) return;
     try {
-      await fetch(`${base.replace(/\/$/, '')}/internal/rooms/${encodeURIComponent(slug)}/kick`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Internal-Secret': secret },
-        body: JSON.stringify({ userId }),
-      });
+      await postSfuInternal(`/internal/rooms/${encodeURIComponent(slug)}/kick`, { userId });
     } catch (err) {
       this.logger.warn(`SFU participant disconnect failed for ${slug}: ${String(err)}`);
     }
@@ -147,13 +135,28 @@ export class RoomsController {
   }
 
   /**
-   * Current scene. Non-owner speakers poll this so their program preview follows
-   * whatever the owner last put on air.
+   * Current scene only. Kept for lightweight consumers; studios use `:slug/state`
+   * for the scene plus participant and sharing state.
    */
   @Get(':slug/layout')
   @UseGuards(JwtAuthGuard)
   getLayout(@Param('slug') slug: string, @CurrentUser() user: AuthUser): Promise<RoomLayout> {
     return this.rooms.getLayout(slug, user.id);
+  }
+
+  /**
+   * Authoritative room state for every connected studio: scene, participant
+   * roster, and the member-visible sharing state. Members read it; the owner is
+   * the only writer of the layout/sharing fields it reflects.
+   */
+  @Get(':slug/state')
+  @UseGuards(JwtAuthGuard)
+  async getState(@Param('slug') slug: string, @CurrentUser() user: AuthUser) {
+    const [snapshot, sharing] = await Promise.all([
+      this.rooms.roomSnapshot(slug, user.id),
+      this.recordings.shareState(slug),
+    ]);
+    return { ...snapshot, sharing };
   }
 
   @Post(':slug/layout')

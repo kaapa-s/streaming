@@ -47,34 +47,46 @@ export function StudioHeader({
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
-        {live ? (
-          <Button variant="danger" loading={recordingPending} onClick={onStop}>
-            <RecordingDot active />
-            Stop live
-            <span className="font-mono tabular-nums">{elapsed}</span>
-          </Button>
-        ) : recording ? (
-          <Button variant="danger" loading={recordingPending} onClick={onStop}>
-            <RecordingDot active />
-            Stop recording
-            <span className="font-mono tabular-nums">{elapsed}</span>
-          </Button>
-        ) : (
-          <Button variant="danger" loading={recordingPending} onClick={onStartRecording}>
-            <RecordingDot />
-            Start recording
-          </Button>
-        )}
+        {isRoomOwner ? (
+          <>
+            {live ? (
+              <Button variant="danger" loading={recordingPending} onClick={onStop}>
+                <RecordingDot active />
+                Stop live
+                <span className="font-mono tabular-nums">{elapsed}</span>
+              </Button>
+            ) : recording ? (
+              <Button variant="danger" loading={recordingPending} onClick={onStop}>
+                <RecordingDot active />
+                Stop recording
+                <span className="font-mono tabular-nums">{elapsed}</span>
+              </Button>
+            ) : (
+              <Button variant="danger" loading={recordingPending} onClick={onStartRecording}>
+                <RecordingDot />
+                Start recording
+              </Button>
+            )}
 
-        {!live && (
-          <Button disabled={recordingPending} onClick={onOpenGoLive}>
-            Go live ▾
-          </Button>
-        )}
-        {isRoomOwner && roomStatus === 'created' && !recording && (
-          <Button variant="danger" disabled={recordingPending} onClick={onDiscard}>
-            Discard room
-          </Button>
+            {!live && (
+              <Button disabled={recordingPending} onClick={onOpenGoLive}>
+                Go live ▾
+              </Button>
+            )}
+            {roomStatus === 'created' && !recording && (
+              <Button variant="danger" disabled={recordingPending} onClick={onDiscard}>
+                Discard room
+              </Button>
+            )}
+          </>
+        ) : (
+          <span className="text-xs text-ink-muted">
+            {live
+              ? 'The host is live — you are following their program.'
+              : recording
+                ? 'The host is recording — you are following their program.'
+                : 'Waiting for the host to start.'}
+          </span>
         )}
       </div>
     </header>
