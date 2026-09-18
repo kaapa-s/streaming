@@ -71,6 +71,10 @@ export type StudioValue = {
   toggleRecording: () => void;
   streamControlsLocked: boolean;
   participants: RoomParticipant[];
+  participantPendingId: string | null;
+  participantError: string;
+  setParticipantScene: (memberId: string, inScene: boolean) => void;
+  kickParticipant: (memberId: string) => void;
   platforms: AllPlatformStatus;
   platformPending: PlatformProvider | null;
   connectPlatform: (provider: PlatformProvider) => void;

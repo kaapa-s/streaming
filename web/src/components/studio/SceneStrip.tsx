@@ -1,7 +1,12 @@
 import { sourceId, type CameraPreset } from '@streaming/canvas-compositor';
 import type { RemotePeer } from '@streaming/sfu-client';
 import { Camera, CameraOff, Mic, MicOff, Monitor } from 'lucide-react';
-import { participantName, type RoomParticipant } from '../../lib/roomState';
+import {
+  participantName,
+  ROOM_CAPACITY,
+  SCENE_CAPACITY,
+  type RoomParticipant,
+} from '../../lib/roomState';
 import { LAYOUT_OPTIONS } from './layoutIcons';
 import { VideoTile } from './VideoTile';
 
@@ -20,6 +25,10 @@ type SceneStripProps = {
   sceneScreenIds: string[];
   canEditLayout: boolean;
   participants: RoomParticipant[];
+  participantPendingId: string | null;
+  participantError: string;
+  onSetParticipantScene: (memberId: string, inScene: boolean) => void;
+  onKickParticipant: (memberId: string) => void;
   onCameraPreset: (preset: CameraPreset) => void;
   onFeature: (sourceId: string) => void;
   onToggleSceneScreen: (sourceId: string) => void;
@@ -40,12 +49,76 @@ export function SceneStrip({
   sceneScreenIds,
   canEditLayout,
   participants,
+  participantPendingId,
+  participantError,
+  onSetParticipantScene,
+  onKickParticipant,
   onCameraPreset,
   onFeature,
   onToggleSceneScreen,
 }: SceneStripProps) {
   const localCameraId = localPeerId ? sourceId(localPeerId, 'camera') : null;
   const localScreenId = localPeerId ? sourceId(localPeerId, 'screen') : null;
+
+  const onScene = participants.filter((participant) => participant.inScene);
+  const offScene = participants.filter((participant) => !participant.inScene);
+
+  const renderParticipant = (participant: RoomParticipant) => {
+    // Only the owner moderates, and never themselves (the owner is always on scene).
+    const canManage = canEditLayout && participant.role !== 'owner';
+    const pending = participantPendingId === participant.id;
+    return (
+      <li
+        key={participant.id}
+        className={`flex items-center gap-1.5 rounded-full border py-1 pl-2.5 pr-1 text-[11px] font-medium ${
+          participant.inScene ? 'border-accent/40 text-ink' : 'border-border text-ink-subtle'
+        }`}
+      >
+        <span title={participant.inScene ? 'On scene' : 'Waiting for admission'}>
+          {participantName(participant)}
+          {participant.role === 'owner' ? ' · host' : ''}
+        </span>
+        {canManage && (
+          <span className="flex items-center gap-1">
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => onSetParticipantScene(participant.id, !participant.inScene)}
+              title={
+                participant.inScene
+                  ? 'Remove from the scene (keeps them in the room)'
+                  : 'Admit to the scene'
+              }
+              className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                participant.inScene
+                  ? 'border-border text-ink-muted hover:border-danger hover:text-danger'
+                  : 'border-accent text-accent hover:bg-accent/10'
+              }`}
+            >
+              {participant.inScene ? 'Remove' : 'Admit'}
+            </button>
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => {
+                if (
+                  window.confirm(
+                    `Kick ${participantName(participant)} from the room? They will be disconnected.`,
+                  )
+                ) {
+                  onKickParticipant(participant.id);
+                }
+              }}
+              title="Kick from the room"
+              className="rounded-full border border-danger/50 px-2 py-0.5 text-[10px] font-semibold text-danger transition-colors hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Kick
+            </button>
+          </span>
+        )}
+      </li>
+    );
+  };
 
   return (
     <section className="border-t border-border bg-surface-raised px-5 py-4">
@@ -59,23 +132,40 @@ export function SceneStrip({
       </h2>
 
       {participants.length > 0 && (
-        <ul className="mb-3 flex flex-wrap gap-1.5" aria-label="Room participants">
-          {participants.map((participant) => (
-            <li
-              key={participant.id}
-              className={`rounded-full border px-2.5 py-1 text-[11px] font-medium ${
-                participant.inScene
-                  ? 'border-accent/40 text-ink'
-                  : 'border-border text-ink-subtle'
-              }`}
-              title={participant.inScene ? 'On scene' : 'Waiting for admission'}
+        <div className="mb-3 space-y-2">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+            <p className="text-[11px] font-medium text-ink-muted">Participants</p>
+            <p className="text-[11px] text-ink-subtle">
+              Scene {onScene.length}/{SCENE_CAPACITY} · Room {participants.length}/{ROOM_CAPACITY}
+            </p>
+          </div>
+          {onScene.length > 0 && (
+            <ul className="flex flex-wrap gap-1.5" aria-label="Participants on scene">
+              {onScene.map(renderParticipant)}
+            </ul>
+          )}
+          {offScene.length > 0 && (
+            <div>
+              <p className="mb-1.5 text-[11px] font-semibold text-ink-muted">
+                Waiting to be admitted ({offScene.length})
+              </p>
+              <ul
+                className="flex flex-wrap gap-1.5"
+                aria-label="Participants waiting to be admitted"
+              >
+                {offScene.map(renderParticipant)}
+              </ul>
+            </div>
+          )}
+          {participantError && (
+            <p
+              role="alert"
+              className="rounded-lg border border-danger/40 bg-danger/5 px-3 py-2 text-xs font-medium text-danger"
             >
-              {participantName(participant)}
-              {participant.role === 'owner' ? ' · host' : ''}
-              {participant.inScene ? '' : ' · off scene'}
-            </li>
-          ))}
-        </ul>
+              {participantError}
+            </p>
+          )}
+        </div>
       )}
 
       <div className="flex flex-col gap-4">

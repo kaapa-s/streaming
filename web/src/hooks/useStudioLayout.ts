@@ -1,8 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { sourceId, type CameraPreset, type LayoutState } from '@streaming/canvas-compositor';
 import type { RemotePeer } from '@streaming/sfu-client';
-import { apiFetch } from '../lib/auth';
-import type { RoomParticipant, RoomShareState, RoomSnapshot } from '../lib/roomState';
+import { apiFetch, kickRoomMember, setRoomMemberScene } from '../lib/auth';
+import {
+  ROOM_CAPACITY,
+  SCENE_CAPACITY,
+  type RoomParticipant,
+  type RoomShareState,
+  type RoomSnapshot,
+} from '../lib/roomState';
 
 const DEFAULT_LAYOUT: LayoutState = {
   cameraPreset: 'focus',
@@ -68,6 +74,23 @@ function sameParticipants(a: RoomParticipant[], b: RoomParticipant[]): boolean {
       participant.role === other.role
     );
   });
+}
+
+/**
+ * Turn a failed owner participant mutation into an actionable message. The
+ * server caps membership (15) and scene size (10); a raw 409 body would otherwise
+ * reach the roster as "scene is full" with no next step.
+ */
+function participantActionMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : 'Request failed';
+  const lower = message.toLowerCase();
+  if (lower.includes('scene is full')) {
+    return `Scene is full (${SCENE_CAPACITY}/${SCENE_CAPACITY}). Remove someone from the scene before admitting another member.`;
+  }
+  if (lower.includes('room is full')) {
+    return `Room is full (${ROOM_CAPACITY}/${ROOM_CAPACITY}). Kick someone before adding another member.`;
+  }
+  return message;
 }
 
 /** Identity guard so the 1.2s poll does not re-render the studio when nothing changed. */
@@ -147,6 +170,9 @@ export function useStudioLayout({
   // overwrite the room with the default/fallback scene.
   const [hydrated, setHydrated] = useState(false);
   const hydratedRef = useRef(false);
+  // Owner participant moderation: which member is mid-request and the last error.
+  const [participantPendingId, setParticipantPendingId] = useState<string | null>(null);
+  const [participantError, setParticipantError] = useState('');
 
   const { cameras, screens } = useMemo(
     () => visibleSources(localPeerId, localStream, localScreenStream, remotePeers),
@@ -191,6 +217,8 @@ export function useStudioLayout({
     setSnapshot(null);
     setOwnerLayout(DEFAULT_LAYOUT);
     setSharedLayout(null);
+    setParticipantPendingId(null);
+    setParticipantError('');
   }, [joined]);
 
   // Everyone: mirror the authoritative room snapshot. Owners hydrate their local
@@ -258,6 +286,55 @@ export function useStudioLayout({
     });
   };
 
+  /**
+   * Owner-only participant moderation. The mutation updates the local snapshot
+   * optimistically so the roster reacts immediately; the 1.2s poll then reconciles
+   * with the server's authoritative state.
+   */
+  const mutateParticipant = (
+    memberId: string,
+    run: () => Promise<void>,
+    apply: (prev: RoomSnapshot) => RoomSnapshot,
+  ) => {
+    if (!isOwner) return;
+    setParticipantPendingId(memberId);
+    setParticipantError('');
+    void (async () => {
+      try {
+        await run();
+        setSnapshot((prev) => (prev ? apply(prev) : prev));
+      } catch (err) {
+        setParticipantError(participantActionMessage(err));
+      } finally {
+        setParticipantPendingId(null);
+      }
+    })();
+  };
+
+  const setParticipantScene = (memberId: string, inScene: boolean) => {
+    mutateParticipant(
+      memberId,
+      () => setRoomMemberScene(room, memberId, inScene).then(() => undefined),
+      (prev) => ({
+        ...prev,
+        participants: prev.participants.map((participant) =>
+          participant.id === memberId ? { ...participant, inScene } : participant,
+        ),
+      }),
+    );
+  };
+
+  const kickParticipant = (memberId: string) => {
+    mutateParticipant(
+      memberId,
+      () => kickRoomMember(room, memberId),
+      (prev) => ({
+        ...prev,
+        participants: prev.participants.filter((participant) => participant.id !== memberId),
+      }),
+    );
+  };
+
   return {
     layout,
     setCameraPreset,
@@ -265,5 +342,9 @@ export function useStudioLayout({
     toggleSceneScreen,
     sharing: snapshot?.sharing ?? null,
     participants: snapshot?.participants ?? [],
+    participantPendingId,
+    participantError,
+    setParticipantScene,
+    kickParticipant,
   };
 }

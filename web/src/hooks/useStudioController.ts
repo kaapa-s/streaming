@@ -130,6 +130,10 @@ export function useStudioController(room: string): StudioValue {
     toggleRecording: recording.toggleRecording,
     streamControlsLocked: recording.streamControlsLocked,
     participants: studioLayout.participants,
+    participantPendingId: studioLayout.participantPendingId,
+    participantError: studioLayout.participantError,
+    setParticipantScene: studioLayout.setParticipantScene,
+    kickParticipant: studioLayout.kickParticipant,
     platforms: platforms.status,
     platformPending: platforms.pendingProvider,
     connectPlatform: (provider) => {

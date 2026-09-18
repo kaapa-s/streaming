@@ -33,6 +33,11 @@ export type RoomSnapshot = {
   sharing: RoomShareState;
 };
 
+/** Server-enforced scene cap: at most this many members may be on scene. */
+export const SCENE_CAPACITY = 10;
+/** Server-enforced room cap: at most this many members may belong to a room. */
+export const ROOM_CAPACITY = 15;
+
 export function participantName(participant: RoomParticipant): string {
   return participant.displayName?.trim() || (participant.guestId ? 'Guest' : 'Member');
 }
