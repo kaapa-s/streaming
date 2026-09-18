@@ -30,14 +30,15 @@ export class AdmitInviteDto {
   @MinLength(32)
   declare token: string;
 
+  /**
+   * Ignored. Membership identity comes from the authenticated JWT, never from a
+   * client-supplied name. Kept optional so existing API clients that still send
+   * it are not rejected by `forbidNonWhitelisted`.
+   */
   @IsOptional()
   @IsString()
   @MinLength(1)
   declare displayName?: string;
-
-  @IsOptional()
-  @IsString()
-  declare guestId?: string;
 }
 
 export class SetLayoutDto {

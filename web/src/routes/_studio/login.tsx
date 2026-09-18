@@ -6,8 +6,8 @@ import { ensureLoggedOut } from '../../studio/studioStage';
 import { useStudio } from '../../studio/useStudio';
 
 export const Route = createFileRoute('/_studio/login')({
-  beforeLoad: ({ context }) => {
-    ensureLoggedOut(context.studioHandle);
+  beforeLoad: ({ context, search }) => {
+    ensureLoggedOut(context.studioHandle, search);
   },
   component: LoginPage,
 });

@@ -1,6 +1,6 @@
-import { Body, Controller, Get, Inject, Logger, Param, Post, Query, Req, Res, UseGuards, forwardRef } from '@nestjs/common';
-import type { Request, Response } from 'express';
-import { JwtAuthGuard, OptionalJwtAuthGuard } from '../auth/auth.guards';
+import { Body, Controller, Get, Inject, Logger, Param, Post, Query, Res, UseGuards, forwardRef } from '@nestjs/common';
+import type { Response } from 'express';
+import { JwtAuthGuard } from '../auth/auth.guards';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { AuthUser } from '../auth/jwt.strategy';
 import { CompositorClient } from '../recordings/compositor.client';
@@ -35,9 +35,9 @@ export class RoomsController {
   }
 
   @Post('invite/admit')
-  @UseGuards(OptionalJwtAuthGuard)
-  admitInvite(@Body() body: AdmitInviteDto, @Req() req: Request & { user?: AuthUser }) {
-    return this.rooms.admitInvite(body.token, req.user, body.displayName, body.guestId);
+  @UseGuards(JwtAuthGuard)
+  admitInvite(@Body() body: AdmitInviteDto, @CurrentUser() user: AuthUser) {
+    return this.rooms.admitInvite(body.token, user);
   }
 
   @Post(':slug/invites')

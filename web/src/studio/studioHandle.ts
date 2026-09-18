@@ -36,7 +36,6 @@ export type StudioValue = {
   roomStatus: 'created' | 'active' | 'finished' | null;
   joining: boolean;
   join: () => Promise<void>;
-  joinWithAdmission: (admission: { room: { slug: string }; joinToken: string; sfuUrl?: string; role: 'owner' | 'speaker' | 'viewer' }, displayName: string) => Promise<void>;
   leave: () => Promise<void>;
   roomRole: 'owner' | 'speaker' | 'viewer' | null;
   localPeerId: string | null;

@@ -15,7 +15,6 @@ export type RoomShareState = {
 export type RoomParticipant = {
   id: string;
   userId: string | null;
-  guestId: string | null;
   displayName: string | null;
   role: 'owner' | 'speaker' | 'viewer';
   inScene: boolean;
@@ -39,5 +38,5 @@ export const SCENE_CAPACITY = 10;
 export const ROOM_CAPACITY = 15;
 
 export function participantName(participant: RoomParticipant): string {
-  return participant.displayName?.trim() || (participant.guestId ? 'Guest' : 'Member');
+  return participant.displayName?.trim() || 'Member';
 }

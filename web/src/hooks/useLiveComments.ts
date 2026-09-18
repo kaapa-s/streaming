@@ -33,7 +33,7 @@ type UseLiveCommentsArgs = {
   room: string;
   /** True while the room is live to a comments-capable destination. */
   live: boolean;
-  /** True for an authenticated room participant; guests never subscribe. */
+  /** True for an authenticated room participant. */
   enabled: boolean;
   setError: (message: string) => void;
   setPreviewOverlay: (overlay: CommentOverlay | null) => void;

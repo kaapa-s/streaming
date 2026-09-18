@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
-import { createHash, randomBytes, randomUUID } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import { issueJoinToken } from '@streaming/join-token';
 import { Recording, Room, RoomInvite, RoomMember, type RoomRole } from '../entities';
 import type { AuthUser } from '../auth/jwt.strategy';
@@ -44,7 +44,6 @@ function optionalSfuUrl(): string | undefined {
 export interface RoomParticipant {
   id: string;
   userId: string | null;
-  guestId: string | null;
   displayName: string | null;
   role: RoomRole;
   inScene: boolean;
@@ -260,34 +259,38 @@ export class RoomsService {
     return { ok: true };
   }
 
-  async admitInvite(token: string, user: AuthUser | undefined, displayName?: string, guestId?: string) {
+  /**
+   * Admit an authenticated invitee. Membership is keyed solely by the
+   * authenticated `userId`; no client-supplied identifier can create or resume
+   * a membership, so a kicked or banned person cannot mint a new identity.
+   */
+  async admitInvite(token: string, user: AuthUser) {
     const invite = await this.invites.findOne({ where: { tokenHash: hashInvite(token) }, relations: { room: true } });
     if (!invite || invite.revokedAt || invite.room.status === 'finished') throw new ForbiddenException('invalid or unavailable invite');
     const room = invite.room;
-    let member = user
-      ? await this.members.findOne({ where: { roomId: room.id, userId: user.id } })
-      : guestId ? await this.members.findOne({ where: { roomId: room.id, guestId } }) : null;
+    let member = await this.members.findOne({ where: { roomId: room.id, userId: user.id } });
     if (!member) {
-      const name = user?.name?.trim() || displayName?.trim();
-      if (!name) throw new BadRequestException('display name is required for guests');
       const count = await this.members.count({ where: { roomId: room.id } });
       if (count >= 15) throw new ConflictException('room is full');
-      const identity = user ? { userId: user.id, guestId: null } : { userId: null, guestId: guestId || randomUUID() };
       // Invitees start off-scene and consume no scene slot until the owner admits them.
-      member = await this.members.save(this.members.create({ roomId: room.id, ...identity, displayName: name, role: 'speaker', inScene: false }));
+      member = await this.members.save(this.members.create({
+        roomId: room.id,
+        userId: user.id,
+        displayName: user.name?.trim() || user.email,
+        role: 'speaker',
+        inScene: false,
+      }));
     }
-    const identity = user ? user.id : `guest:${member.guestId}`;
-    const name = user?.name || member.displayName || 'Guest';
+    const name = user.name || member.displayName || 'Member';
     // A waiting member gets no SFU token: off-scene clients must not connect
     // until the owner admits them and joinBySlug authorizes the join.
     return {
       room: { id: room.id, slug: room.slug },
       role: member.role,
-      guestId: member.guestId,
       inScene: member.inScene,
       ...(member.inScene
         ? {
-          joinToken: issueJoinToken({ roomSlug: room.slug, userId: identity, name, role: 'speaker', inScene: true, canManage: member.role === 'owner' }),
+          joinToken: issueJoinToken({ roomSlug: room.slug, userId: user.id, name, role: 'speaker', inScene: true, canManage: member.role === 'owner' }),
           sfuUrl: optionalSfuUrl(),
         }
         : {}),
@@ -318,7 +321,6 @@ export class RoomsService {
       participants: participants.map((entry) => ({
         id: entry.id,
         userId: entry.userId,
-        guestId: entry.guestId,
         displayName: entry.displayName,
         role: entry.role,
         inScene: entry.inScene,
@@ -344,7 +346,7 @@ export class RoomsService {
         if (count >= 10) throw new ConflictException('scene is full');
       }
       await manager.update(RoomMember, { id: lockedTarget.id }, { inScene });
-      return { id: lockedTarget.id, userId: lockedTarget.userId ?? `guest:${lockedTarget.guestId}`, inScene };
+      return { id: lockedTarget.id, userId: lockedTarget.userId ?? '', inScene };
     });
     return result;
   }
@@ -356,7 +358,7 @@ export class RoomsService {
     if (!target) throw new NotFoundException('room member not found');
     if (target.role === 'owner') throw new ForbiddenException('the owner cannot be kicked');
     await this.members.remove(target);
-    return { ok: true, userId: target.userId ?? `guest:${target.guestId}` };
+    return { ok: true, userId: target.userId ?? '' };
   }
 
   /** Service token for the headless compositor (no end-user session). */

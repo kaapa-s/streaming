@@ -137,35 +137,6 @@ export function useStudioSession({
     }
   };
 
-  const joinWithAdmission = async (
-    admission: { room: { slug: string }; joinToken: string; sfuUrl?: string; role: 'owner' | 'speaker' | 'viewer' },
-    displayName: string,
-  ) => {
-    if (joiningRef.current) return;
-    joiningRef.current = true;
-    setJoining(true);
-    setError('');
-    try {
-      if (!navigator.mediaDevices?.getUserMedia) throw new Error('Camera/mic unavailable: use HTTPS or localhost.');
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } }, audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
-      setRoomRole(admission.role);
-      setLocalStream(stream);
-      const sfu = new SfuClient({ onPeersChanged: (peers) => { const nextPeers = [...peers]; setRemotePeers(nextPeers); updateDiagnostics(nextPeers); } });
-      sfuRef.current = sfu;
-      await sfu.join(admission.room.slug, displayName, 'speaker', admission.joinToken, admission.sfuUrl);
-      await sfu.publish(stream);
-      setLocalPeerId(sfu.peerId);
-      setJoinedRoom(admission.room.slug);
-      setJoined(true);
-      setJoining(false);
-    } catch (err) {
-      sfuRef.current?.close(); sfuRef.current = null; joiningRef.current = false; setJoining(false);
-      const message = err instanceof Error ? err.message : String(err);
-      setError(message);
-      throw err;
-    }
-  };
-
   const stopScreenShare = () => {
     void runScreen(async () => {
       setError('');
@@ -245,7 +216,6 @@ export function useStudioSession({
     localScreenStream,
     remotePeers,
     join,
-    joinWithAdmission,
     leave,
     toggleScreenShare,
     stopScreenShare,

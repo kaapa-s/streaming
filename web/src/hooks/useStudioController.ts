@@ -54,8 +54,7 @@ export function useStudioController(room: string): StudioValue {
     : ((sharedSharing?.destinations ?? []) as PlatformProvider[]);
   const platforms = usePlatformConnections(Boolean(auth.user), setError);
   const liveToYoutube = roomLive && roomLiveDestinations.includes('youtube');
-  // Comments are a room-participant surface: authenticated members only, never
-  // unauthenticated guests.
+  // Comments are a room-participant surface: authenticated members only.
   const canComment = Boolean(auth.user) && session.joined;
   const comments = useLiveComments({
     room,
@@ -94,7 +93,6 @@ export function useStudioController(room: string): StudioValue {
     roomStatus: session.roomStatus,
     joining: session.joining,
     join: session.join,
-    joinWithAdmission: session.joinWithAdmission,
     leave: async () => {
       recording.resetUi();
       await session.leave();

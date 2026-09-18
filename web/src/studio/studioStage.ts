@@ -11,16 +11,22 @@ function readJoined(studioHandle: StudioHandle) {
   return studioHandle.tryGet()?.joined ?? false;
 }
 
-/** Public auth pages — only for signed-out users. */
-export function ensureLoggedOut(studioHandle: StudioHandle): void {
-  if (readUser(studioHandle)) {
-    throw redirect({ to: '/dashboard', replace: true, search: keepStudioSearch });
+/** Public auth pages — only for signed-out users. An invite returns to `/join`. */
+export function ensureLoggedOut(
+  studioHandle: StudioHandle,
+  search?: { room?: string; invite?: string },
+): void {
+  if (!readUser(studioHandle)) return;
+  const invite = search?.invite?.trim();
+  if (invite) {
+    throw redirect({ to: '/join', replace: true, search: { room: search?.room ?? '', invite } });
   }
+  throw redirect({ to: '/dashboard', replace: true, search: keepStudioSearch });
 }
 
-/** Authenticated app shell (New recording, Settings). */
-export function ensureAuthenticated(studioHandle: StudioHandle, allowInvite = false): void {
-  if (!readUser(studioHandle) && !allowInvite) {
+/** Authenticated app shell (New recording, Settings) and room entry. */
+export function ensureAuthenticated(studioHandle: StudioHandle): void {
+  if (!readUser(studioHandle)) {
     throw redirect({ to: '/login', replace: true, search: keepStudioSearch });
   }
 }
@@ -30,13 +36,14 @@ export function ensureJoinLobby(studioHandle: StudioHandle, search: { room?: str
   if (!search.room && !search.invite && readUser(studioHandle)) {
     throw redirect({ to: '/dashboard', replace: true, search: keepStudioSearch });
   }
-  ensureAuthenticated(studioHandle, Boolean(search.invite));
+  // Invite links require an account: the invite is preserved through login, and
+  // the server keys membership by the authenticated user id.
+  ensureAuthenticated(studioHandle);
 }
 
 /** `/live` — signed in and joined. */
 export function ensureLiveSession(studioHandle: StudioHandle): void {
-  // An admitted guest has a scoped SFU token but no application JWT.
-  if (!readJoined(studioHandle) && !readUser(studioHandle)) {
+  if (!readUser(studioHandle)) {
     throw redirect({ to: '/login', replace: true, search: keepStudioSearch });
   }
   if (!readJoined(studioHandle)) {

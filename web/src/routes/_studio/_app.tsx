@@ -8,7 +8,7 @@ import { ensureAuthenticated } from '../../studio/studioStage';
 import { useStudio } from '../../studio/useStudio';
 
 export const Route = createFileRoute('/_studio/_app')({
-  beforeLoad: ({ context, search }) => ensureAuthenticated(context.studioHandle, Boolean(search.invite)),
+  beforeLoad: ({ context }) => ensureAuthenticated(context.studioHandle),
   component: AppShell,
 });
 
