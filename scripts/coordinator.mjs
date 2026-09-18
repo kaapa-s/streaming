@@ -199,7 +199,8 @@ async function pipeline() {
     record(name, 'passed');
   }
 
-  const gateStep = steps.find((step) => step.name === 'verifier:npm run quality-gate');
+  const gateSteps = steps.filter((step) => step.name === 'verifier:npm run quality-gate');
+  const gateStep = gateSteps.at(-1);
   if (gateStep && gateStep.status !== 'passed') throw new Error(`quality gate failed: ${gateStep.detail ?? 'see artifacts'}`);
   record('quality-gate-handoff', 'passed');
 }
