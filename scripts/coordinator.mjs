@@ -172,6 +172,9 @@ async function pipeline() {
   worker = await runWorker('implementer', 'implementer', worktreeDir);
   writeFileSync(join(artifactDir, 'implementer.json'), JSON.stringify(worker, null, 2));
   if (worker.code !== 0) { record('implementer', 'failed', worker.stderr || worker.stdout); stoppedBy = 'implementer'; return; }
+  // Stage the implementation so brand-new untracked files are included in the
+  // patch, the changed-path set, and the protected-path guard.
+  await git(worktreeDir, ['add', '-A']);
   const implementDiff = await implementedDiff(worktreeDir);
   writeFileSync(join(artifactDir, 'implement.patch'), implementDiff.text);
   record('implementer', 'passed', `${(await changedPaths(worktreeDir)).length} changed path(s), diff ${implementDiff.text.length} bytes`);
