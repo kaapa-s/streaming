@@ -1,7 +1,9 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import type {
+  CommentCapabilities,
   LiveChatAdapter,
   NormalizedComment,
+  PlatformId,
   PollCommentsResult,
   ResolveChatInput,
   ResolvedChatSession,
@@ -32,6 +34,7 @@ interface LiveChatMessageList {
     authorDetails?: {
       displayName?: string;
       profileImageUrl?: string;
+      channelId?: string;
       isChatOwner?: boolean;
       isChatModerator?: boolean;
     };
@@ -48,12 +51,17 @@ interface LiveChatInsertResponse {
   authorDetails?: {
     displayName?: string;
     profileImageUrl?: string;
+    channelId?: string;
   };
 }
 
 const YT_API = 'https://www.googleapis.com/youtube/v3';
 /** REST path for liveChatMessages.list / insert — not the camelCase resource name. */
 const LIVE_CHAT_MESSAGES_PATH = 'liveChat/messages';
+/** REST path for liveChatBans.insert. */
+const LIVE_CHAT_BANS_PATH = 'liveChat/bans';
+const MIN_BAN_SECONDS = 60;
+const MAX_BAN_SECONDS = 86_400;
 const UPCOMING_CHAT_STATUSES = new Set(['live', 'testing']);
 
 function parseYoutubeErrorBody(body: string): string | undefined {
@@ -124,6 +132,14 @@ export function pickLiveBroadcast(
 export class YoutubeLiveChatAdapter implements LiveChatAdapter {
   private readonly logger = new Logger(YoutubeLiveChatAdapter.name);
 
+  readonly provider: PlatformId = 'youtube';
+
+  capabilities(): CommentCapabilities {
+    // YouTube supports replies, message deletion, and temporary/permanent bans.
+    // On-screen pinning is a room overlay feature and works for any text comment.
+    return { reply: true, remove: true, ban: true, pin: true };
+  }
+
   async resolveChatSession(input: ResolveChatInput): Promise<ResolvedChatSession> {
     const [active, upcoming] = await Promise.all([
       this.listBroadcasts(input.accessToken, 'active'),
@@ -169,6 +185,7 @@ export class YoutubeLiveChatAdapter implements LiveChatAdapter {
         id: item.id,
         platform: 'youtube',
         author: item.authorDetails?.displayName ?? 'Unknown',
+        authorId: item.authorDetails?.channelId,
         authorAvatarUrl: item.authorDetails?.profileImageUrl,
         text,
         publishedAt: item.snippet?.publishedAt ?? new Date().toISOString(),
@@ -219,6 +236,7 @@ export class YoutubeLiveChatAdapter implements LiveChatAdapter {
       id: data.id ?? `local-${Date.now()}`,
       platform: 'youtube',
       author: data.authorDetails?.displayName ?? 'You',
+      authorId: data.authorDetails?.channelId,
       authorAvatarUrl: data.authorDetails?.profileImageUrl,
       text:
         data.snippet?.textMessageDetails?.messageText ??
@@ -227,6 +245,69 @@ export class YoutubeLiveChatAdapter implements LiveChatAdapter {
       publishedAt: data.snippet?.publishedAt ?? new Date().toISOString(),
       canReply: true,
     };
+  }
+
+  /** Delete a single live chat message. Idempotent on YouTube's side. */
+  async removeComment(accessToken: string, _chatId: string, commentId: string): Promise<void> {
+    const url = `${YT_API}/${LIVE_CHAT_MESSAGES_PATH}?id=${encodeURIComponent(commentId)}`;
+    const res = await fetch(url, {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: 'application/json',
+      },
+    });
+    if (!res.ok) {
+      const body = await this.readErrorBody(res);
+      this.logger.warn(
+        `YouTube DELETE ${url} -> ${res.status} ${res.statusText} body=${body}`,
+      );
+      throw youtubeHttpError('liveChatMessages.delete', res, body, url);
+    }
+  }
+
+  /**
+   * Ban or time out a live chat participant. `durationSeconds` present means a
+   * temporary timeout; omitted means a permanent ban.
+   */
+  async banAuthor(
+    accessToken: string,
+    chatId: string,
+    authorId: string,
+    durationSeconds?: number,
+  ): Promise<void> {
+    const snippet: Record<string, unknown> = {
+      liveChatId: chatId,
+      bannedUserDetails: { channelId: authorId },
+    };
+    if (durationSeconds === undefined) {
+      snippet.type = 'permanent';
+    } else {
+      const seconds = Math.min(
+        MAX_BAN_SECONDS,
+        Math.max(MIN_BAN_SECONDS, Math.round(durationSeconds)),
+      );
+      snippet.type = 'temporary';
+      snippet.banDurationSeconds = seconds;
+    }
+
+    const url = `${YT_API}/${LIVE_CHAT_BANS_PATH}?part=snippet`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ snippet }),
+    });
+    if (!res.ok) {
+      const body = await this.readErrorBody(res);
+      this.logger.warn(
+        `YouTube POST ${url} -> ${res.status} ${res.statusText} body=${body}`,
+      );
+      throw youtubeHttpError('liveChatBans.insert', res, body, url);
+    }
   }
 
   private async listBroadcasts(

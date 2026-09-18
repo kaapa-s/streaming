@@ -1,6 +1,6 @@
 import type { AuthMode } from '../lib/authMode';
 import type { FinishedRecording } from '../components/studio/RecordingFinishedModal';
-import type { LiveComment } from '../hooks/useLiveComments';
+import type { CommentCapabilities, LiveComment } from '../hooks/useLiveComments';
 import type { RemotePeer } from '@streaming/sfu-client';
 import type { AuthUser } from '../lib/auth';
 import type { CameraPreset } from '@streaming/canvas-compositor';
@@ -80,6 +80,8 @@ export type StudioValue = {
   connectPlatform: (provider: PlatformProvider) => void;
   disconnectPlatform: (provider: PlatformProvider) => void;
   comments: LiveComment[];
+  commentProvider: string;
+  commentCapabilities: CommentCapabilities;
   commentsSessionActive: boolean;
   commentsSessionTitle?: string;
   commentsSessionPending: boolean;
@@ -89,8 +91,12 @@ export type StudioValue = {
   replyPending: boolean;
   sendReply: () => void;
   pinComment: (comment: LiveComment) => void;
+  removeComment: (comment: LiveComment) => void;
+  banCommentAuthor: (comment: LiveComment, durationSeconds?: number) => void;
+  commentActionPendingId: string | null;
   clearOverlay: () => void;
   pinnedCommentId: string | null;
+  canComment: boolean;
   isRoomOwner: boolean;
 };
 

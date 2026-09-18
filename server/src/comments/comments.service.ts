@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ForbiddenException,
   HttpException,
   Inject,
   Injectable,
@@ -13,7 +12,13 @@ import type { AuthUser } from '../auth/jwt.strategy';
 import { YoutubeOAuthService } from '../platforms/youtube-oauth.service';
 import { CompositorClient } from '../recordings/compositor.client';
 import { RoomsService } from '../rooms/rooms.service';
-import type { ChatBindStatus, CommentOverlayPayload, NormalizedComment } from './types';
+import type {
+  ChatBindStatus,
+  CommentCapabilities,
+  CommentOverlayPayload,
+  NormalizedComment,
+  PlatformId,
+} from './types';
 import { LiveChatEndedError } from './types';
 import { YoutubeLiveChatAdapter } from './youtube-live-chat.adapter';
 
@@ -69,21 +74,39 @@ export class CommentsService {
       requireMembershipBySlug(
         slug: string,
         userId: string,
-      ): Promise<{ room: { slug: string }; member: { role: string } }>;
+      ): Promise<{ room: { slug: string; ownerId: string }; member: { role: string } }>;
     },
     @Inject(YoutubeOAuthService)
     private readonly youtubeOAuth: Pick<YoutubeOAuthService, 'getValidAccessToken'>,
-    private readonly youtubeChat: YoutubeLiveChatAdapter,
+    // Only YouTube is wired today; the service talks to it through the
+    // provider-neutral LiveChatAdapter surface.
+    private readonly chatProvider: YoutubeLiveChatAdapter,
     @Inject(CompositorClient)
     private readonly compositor: Pick<CompositorClient, 'setOverlay'>,
   ) {}
 
-  private async requireOwner(slug: string, user: AuthUser) {
-    const { room, member } = await this.rooms.requireMembershipBySlug(slug, user.id);
-    if (member.role !== 'owner') {
-      throw new ForbiddenException('only the room owner can manage live comments');
-    }
+  /**
+   * Any room participant may view and moderate comments; there is no separate
+   * moderator role. Provider specifics stop at the adapter boundary.
+   */
+  private async requireParticipant(slug: string, user: AuthUser) {
+    const { room } = await this.rooms.requireMembershipBySlug(slug, user.id);
     return room;
+  }
+
+  provider(): PlatformId {
+    return this.chatProvider.provider;
+  }
+
+  capabilities(): CommentCapabilities {
+    return this.chatProvider.capabilities();
+  }
+
+  private requireCapability(action: keyof CommentCapabilities): void {
+    if (this.chatProvider.capabilities()[action]) return;
+    throw new BadRequestException(
+      `${this.chatProvider.provider} does not support ${action} for live comments`,
+    );
   }
 
   sessionBindStatus(slug: string): ChatBindStatus | undefined {
@@ -122,19 +145,27 @@ export class CommentsService {
     chatId?: string;
     title?: string;
     videoId?: string;
+    provider: PlatformId;
+    capabilities: CommentCapabilities;
   }> {
-    const room = await this.requireOwner(slug, user);
-    await this.youtubeOAuth.getValidAccessToken(user.id);
-    this.bindForLiveRoom(room.slug, user.id);
+    const room = await this.requireParticipant(slug, user);
     const session = this.sessions.get(room.slug);
-    if (!session) {
+    // The broadcast (and its provider credentials) belongs to the room owner, so
+    // any participant observes/moderates through the owner's bound session.
+    const ownerUserId = session?.ownerUserId ?? room.ownerId;
+    await this.youtubeOAuth.getValidAccessToken(ownerUserId);
+    this.bindForLiveRoom(room.slug, ownerUserId);
+    const bound = this.sessions.get(room.slug);
+    if (!bound) {
       throw new BadRequestException('YouTube is not connected');
     }
     return {
-      status: session.bindStatus,
-      chatId: session.chatId,
-      title: session.title,
-      videoId: session.videoId,
+      status: bound.bindStatus,
+      chatId: bound.chatId,
+      title: bound.title,
+      videoId: bound.videoId,
+      provider: this.provider(),
+      capabilities: this.capabilities(),
     };
   }
 
@@ -174,7 +205,7 @@ export class CommentsService {
     fail: (err: unknown) => void,
   ): Promise<() => void> {
     try {
-      const room = await this.requireOwner(slug, user);
+      const room = await this.requireParticipant(slug, user);
       const session = this.sessions.get(room.slug);
       if (!session) {
         fail(
@@ -205,7 +236,8 @@ export class CommentsService {
   }
 
   async reply(slug: string, user: AuthUser, text: string): Promise<NormalizedComment> {
-    const room = await this.requireOwner(slug, user);
+    const room = await this.requireParticipant(slug, user);
+    this.requireCapability('reply');
     const session = this.sessions.get(room.slug);
     if (!session) {
       throw new BadRequestException('No active comments session');
@@ -213,10 +245,81 @@ export class CommentsService {
     if (!session.chatId) {
       throw new ServiceUnavailableException('YouTube chat is still connecting');
     }
-    const accessToken = await this.youtubeOAuth.getValidAccessToken(user.id);
-    const comment = await this.youtubeChat.postReply(accessToken, session.chatId, text);
+    const accessToken = await this.youtubeOAuth.getValidAccessToken(session.ownerUserId);
+    const comment = await this.chatProvider.postReply(accessToken, session.chatId, text);
     this.ingestComments(session, [comment]);
     return comment;
+  }
+
+  /** Delete/hide a single comment. */
+  async removeComment(slug: string, user: AuthUser, commentId: string): Promise<{ ok: true }> {
+    const room = await this.requireParticipant(slug, user);
+    this.requireCapability('remove');
+    const session = this.requireLiveSession(room.slug);
+    const remove = this.chatProvider.removeComment;
+    if (!remove) {
+      throw new BadRequestException(
+        `${this.chatProvider.provider} does not support removing comments`,
+      );
+    }
+    const accessToken = await this.youtubeOAuth.getValidAccessToken(session.ownerUserId);
+    await remove.call(this.chatProvider, accessToken, session.chatId as string, commentId);
+    this.dropComments(session, (c) => c.id === commentId);
+    this.broadcast(session, {
+      type: 'removed',
+      data: JSON.stringify({ id: commentId }),
+    });
+    return { ok: true };
+  }
+
+  /**
+   * Ban or time out a comment author. `durationSeconds` omitted means a permanent
+   * ban where the provider distinguishes the two.
+   */
+  async banAuthor(
+    slug: string,
+    user: AuthUser,
+    authorId: string,
+    durationSeconds?: number,
+  ): Promise<{ ok: true }> {
+    const room = await this.requireParticipant(slug, user);
+    this.requireCapability('ban');
+    const session = this.requireLiveSession(room.slug);
+    const ban = this.chatProvider.banAuthor;
+    if (!ban) {
+      throw new BadRequestException(
+        `${this.chatProvider.provider} does not support banning comment authors`,
+      );
+    }
+    const accessToken = await this.youtubeOAuth.getValidAccessToken(session.ownerUserId);
+    await ban.call(this.chatProvider, accessToken, session.chatId as string, authorId, durationSeconds);
+    this.dropComments(session, (c) => c.authorId === authorId);
+    this.broadcast(session, {
+      type: 'banned',
+      data: JSON.stringify({ authorId }),
+    });
+    return { ok: true };
+  }
+
+  private requireLiveSession(roomSlug: string): RoomChatSession {
+    const session = this.sessions.get(roomSlug);
+    if (!session) {
+      throw new BadRequestException('No active comments session');
+    }
+    if (!session.chatId) {
+      throw new ServiceUnavailableException('YouTube chat is still connecting');
+    }
+    return session;
+  }
+
+  /** Drop buffered comments matching a predicate and let subscribers prune them. */
+  private dropComments(session: RoomChatSession, match: (c: NormalizedComment) => boolean): void {
+    const kept: NormalizedComment[] = [];
+    for (const c of session.comments) {
+      if (match(c)) session.seenIds.delete(c.id);
+      else kept.push(c);
+    }
+    session.comments = kept;
   }
 
   async setOverlay(
@@ -224,7 +327,8 @@ export class CommentsService {
     user: AuthUser,
     comment: { author: string; text: string } | null,
   ): Promise<{ ok: true; overlay: CommentOverlayPayload | null }> {
-    await this.requireOwner(slug, user);
+    await this.requireParticipant(slug, user);
+    if (comment) this.requireCapability('pin');
     const overlay: CommentOverlayPayload | null = comment
       ? {
           author: comment.author,
@@ -275,7 +379,7 @@ export class CommentsService {
     ) {
       try {
         const accessToken = await this.youtubeOAuth.getValidAccessToken(session.ownerUserId);
-        const resolved = await this.youtubeChat.resolveChatSession({ accessToken });
+        const resolved = await this.chatProvider.resolveChatSession({ accessToken });
         if (
           this.sessions.get(session.roomSlug) !== session ||
           session.bindGeneration !== generation
@@ -339,7 +443,7 @@ export class CommentsService {
     let nextDelay = 5000;
     try {
       const accessToken = await this.youtubeOAuth.getValidAccessToken(session.ownerUserId);
-      const result = await this.youtubeChat.pollComments(
+      const result = await this.chatProvider.pollComments(
         accessToken,
         session.chatId,
         session.pageToken,
@@ -397,6 +501,8 @@ export class CommentsService {
       data: JSON.stringify({
         bindStatus: session.bindStatus,
         title: session.title,
+        provider: this.provider(),
+        capabilities: this.capabilities(),
       }),
     };
     push(event);

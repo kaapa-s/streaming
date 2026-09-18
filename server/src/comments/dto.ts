@@ -1,7 +1,11 @@
 import { Type } from 'class-transformer';
 import {
+  IsInt,
+  IsOptional,
   IsString,
+  Max,
   MaxLength,
+  Min,
   MinLength,
   ValidateIf,
   ValidateNested,
@@ -12,6 +16,27 @@ export class ReplyCommentDto {
   @MinLength(1)
   @MaxLength(200)
   declare text: string;
+}
+
+export class RemoveCommentDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(200)
+  declare commentId: string;
+}
+
+export class BanCommentAuthorDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(200)
+  declare authorId: string;
+
+  /** Present for a timeout; omitted for a permanent ban. */
+  @IsOptional()
+  @IsInt()
+  @Min(60)
+  @Max(86_400)
+  declare durationSeconds?: number;
 }
 
 export class OverlayCommentDto {

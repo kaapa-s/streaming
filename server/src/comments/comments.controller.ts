@@ -5,7 +5,12 @@ import { JwtAuthGuard } from '../auth/auth.guards';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { AuthUser } from '../auth/jwt.strategy';
 import { CommentsService } from './comments.service';
-import { ReplyCommentDto, SetOverlayDto } from './dto';
+import {
+  BanCommentAuthorDto,
+  RemoveCommentDto,
+  ReplyCommentDto,
+  SetOverlayDto,
+} from './dto';
 
 @Controller('rooms/:slug')
 @UseGuards(JwtAuthGuard)
@@ -29,6 +34,24 @@ export class CommentsController {
     @Body() body: ReplyCommentDto,
   ) {
     return this.comments.reply(slug, user, body.text);
+  }
+
+  @Post('comments/remove')
+  remove(
+    @Param('slug') slug: string,
+    @CurrentUser() user: AuthUser,
+    @Body() body: RemoveCommentDto,
+  ) {
+    return this.comments.removeComment(slug, user, body.commentId);
+  }
+
+  @Post('comments/ban')
+  ban(
+    @Param('slug') slug: string,
+    @CurrentUser() user: AuthUser,
+    @Body() body: BanCommentAuthorDto,
+  ) {
+    return this.comments.banAuthor(slug, user, body.authorId, body.durationSeconds);
   }
 
   @Post('overlay')

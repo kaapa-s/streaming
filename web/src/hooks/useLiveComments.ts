@@ -4,21 +4,37 @@ import { apiFetch } from '../lib/auth';
 
 export type LiveComment = {
   id: string;
-  platform: 'youtube';
+  platform: string;
   author: string;
+  authorId?: string;
   authorAvatarUrl?: string;
   text: string;
   publishedAt: string;
   canReply: boolean;
 };
 
+export type CommentCapabilities = {
+  reply: boolean;
+  remove: boolean;
+  ban: boolean;
+  pin: boolean;
+};
+
+const NO_CAPABILITIES: CommentCapabilities = {
+  reply: false,
+  remove: false,
+  ban: false,
+  pin: false,
+};
+
 type ChatBindStatus = 'connecting' | 'active' | 'failed';
 
 type UseLiveCommentsArgs = {
   room: string;
+  /** True while the room is live to a comments-capable destination. */
   live: boolean;
-  isOwner: boolean;
-  youtubeConnected: boolean;
+  /** True for an authenticated room participant; guests never subscribe. */
+  enabled: boolean;
   setError: (message: string) => void;
   setPreviewOverlay: (overlay: CommentOverlay | null) => void;
 };
@@ -71,16 +87,18 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
 export function useLiveComments({
   room,
   live,
-  isOwner,
-  youtubeConnected,
+  enabled,
   setError,
   setPreviewOverlay,
 }: UseLiveCommentsArgs) {
   const [comments, setComments] = useState<LiveComment[]>([]);
   const [sessionActive, setSessionActive] = useState(false);
   const [sessionTitle, setSessionTitle] = useState<string | undefined>();
+  const [provider, setProvider] = useState('');
+  const [capabilities, setCapabilities] = useState<CommentCapabilities>(NO_CAPABILITIES);
   const [replyText, setReplyText] = useState('');
   const [replyPending, setReplyPending] = useState(false);
+  const [actionPendingId, setActionPendingId] = useState<string | null>(null);
   const [sessionPending, setSessionPending] = useState(false);
   const [bindFailed, setBindFailed] = useState(false);
   const [pinnedId, setPinnedId] = useState<string | null>(null);
@@ -100,11 +118,13 @@ export function useLiveComments({
   };
 
   useEffect(() => {
-    if (!live || !isOwner || !youtubeConnected) {
+    if (!live || !enabled) {
       stopStream();
       setSessionActive(false);
       setSessionPending(false);
       setBindFailed(false);
+      setCapabilities(NO_CAPABILITIES);
+      setProvider('');
       setComments((prev) => (prev.length === 0 ? prev : []));
       if (!live) clearPinned();
       return;
@@ -115,6 +135,16 @@ export function useLiveComments({
     setSessionPending(true);
     setBindFailed(false);
     setError('');
+
+    const applyCapabilities = (payload: {
+      provider?: string;
+      capabilities?: Partial<CommentCapabilities>;
+    }) => {
+      if (payload.provider) setProvider(payload.provider);
+      if (payload.capabilities) {
+        setCapabilities({ ...NO_CAPABILITIES, ...payload.capabilities });
+      }
+    };
 
     const applyBindStatus = (status: ChatBindStatus, title?: string) => {
       if (title) setSessionTitle(title);
@@ -148,7 +178,13 @@ export function useLiveComments({
         return;
       }
       if (event === 'status') {
-        const statusPayload = payload as { bindStatus?: ChatBindStatus; title?: string };
+        const statusPayload = payload as {
+          bindStatus?: ChatBindStatus;
+          title?: string;
+          provider?: string;
+          capabilities?: Partial<CommentCapabilities>;
+        };
+        applyCapabilities(statusPayload);
         if (statusPayload.bindStatus) {
           applyBindStatus(statusPayload.bindStatus, statusPayload.title);
         }
@@ -169,13 +205,21 @@ export function useLiveComments({
             return next.slice(-200);
           });
         }
+      } else if (event === 'removed') {
+        const removed = payload as { id?: string };
+        if (removed.id) {
+          setComments((prev) => prev.filter((c) => c.id !== removed.id));
+          setPinnedId((prev) => (prev === removed.id ? null : prev));
+        }
+      } else if (event === 'banned') {
+        const banned = payload as { authorId?: string };
+        if (banned.authorId) {
+          setComments((prev) => prev.filter((c) => c.authorId !== banned.authorId));
+        }
       } else if (event === 'error') {
         const errPayload = payload as { message?: string };
-        console.error('[comments] youtube stream error', errPayload);
-        setError(
-          errPayload.message?.trim() ||
-            `YouTube comments error: ${JSON.stringify(errPayload)}`,
-        );
+        console.error('[comments] stream error', errPayload);
+        setError(errPayload.message?.trim() || `Comments error: ${JSON.stringify(errPayload)}`);
       }
     };
 
@@ -213,7 +257,13 @@ export function useLiveComments({
           if (!res.ok) {
             setError(await parseError(res));
           } else {
-            const body = (await res.json()) as { status?: ChatBindStatus; title?: string };
+            const body = (await res.json()) as {
+              status?: ChatBindStatus;
+              title?: string;
+              provider?: string;
+              capabilities?: Partial<CommentCapabilities>;
+            };
+            applyCapabilities(body);
             if (body.status) applyBindStatus(body.status, body.title);
           }
           await openStream();
@@ -235,11 +285,11 @@ export function useLiveComments({
     };
     // Overlay setter is not an input to this subscription.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [live, isOwner, youtubeConnected, room, setError]);
+  }, [live, enabled, room, setError]);
 
   const sendReply = async () => {
     const text = replyText.trim();
-    if (!text || !isOwner) return;
+    if (!text || !capabilities.reply) return;
     setReplyPending(true);
     setError('');
     try {
@@ -250,14 +300,14 @@ export function useLiveComments({
       if (!res.ok) throw new Error(await parseError(res));
       setReplyText('');
     } catch (err) {
-      setError(reportCommentsError('youtube reply failed', err));
+      setError(reportCommentsError('comment reply failed', err));
     } finally {
       setReplyPending(false);
     }
   };
 
   const pinComment = async (comment: LiveComment) => {
-    if (!isOwner) return;
+    if (!capabilities.pin) return;
     setError('');
     const until = Date.now() + 10_000;
     setPreviewOverlay({ author: comment.author, text: comment.text, until });
@@ -275,6 +325,42 @@ export function useLiveComments({
       if (!res.ok) throw new Error(await parseError(res));
     } catch (err) {
       setError(reportCommentsError('pin comment failed', err));
+    }
+  };
+
+  const removeComment = async (comment: LiveComment) => {
+    if (!capabilities.remove) return;
+    setActionPendingId(comment.id);
+    setError('');
+    try {
+      const res = await apiFetch(`/api/rooms/${encodeURIComponent(room)}/comments/remove`, {
+        method: 'POST',
+        body: JSON.stringify({ commentId: comment.id }),
+      });
+      if (!res.ok) throw new Error(await parseError(res));
+      setComments((prev) => prev.filter((c) => c.id !== comment.id));
+    } catch (err) {
+      setError(reportCommentsError('remove comment failed', err));
+    } finally {
+      setActionPendingId(null);
+    }
+  };
+
+  const banCommentAuthor = async (comment: LiveComment, durationSeconds?: number) => {
+    if (!capabilities.ban || !comment.authorId) return;
+    setActionPendingId(comment.id);
+    setError('');
+    try {
+      const res = await apiFetch(`/api/rooms/${encodeURIComponent(room)}/comments/ban`, {
+        method: 'POST',
+        body: JSON.stringify({ authorId: comment.authorId, durationSeconds }),
+      });
+      if (!res.ok) throw new Error(await parseError(res));
+      setComments((prev) => prev.filter((c) => c.authorId !== comment.authorId));
+    } catch (err) {
+      setError(reportCommentsError('ban comment author failed', err));
+    } finally {
+      setActionPendingId(null);
     }
   };
 
@@ -296,13 +382,17 @@ export function useLiveComments({
     sessionTitle,
     sessionPending,
     bindFailed,
+    provider,
+    capabilities,
     replyText,
     setReplyText,
     replyPending,
     sendReply,
     pinComment,
+    removeComment,
+    banCommentAuthor,
+    actionPendingId,
     clearOverlay,
     pinnedId,
-    isOwner,
   };
 }

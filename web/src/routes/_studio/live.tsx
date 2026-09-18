@@ -106,10 +106,10 @@ function LivePage() {
             </div>
           </section>
 
-          {liveToYoutube && (
+          {liveToYoutube && s.canComment && (
             <CommentsPanel
-              isOwner={s.isRoomOwner}
-              youtubeConnected={s.platforms.youtube.connected}
+              provider={s.commentProvider}
+              capabilities={s.commentCapabilities}
               live={liveToYoutube}
               sessionActive={s.commentsSessionActive}
               sessionTitle={s.commentsSessionTitle}
@@ -122,6 +122,9 @@ function LivePage() {
               pinnedCommentId={s.pinnedCommentId}
               onPin={s.pinComment}
               onClearOverlay={s.clearOverlay}
+              actionPendingId={s.commentActionPendingId}
+              onRemove={s.removeComment}
+              onBan={s.banCommentAuthor}
             />
           )}
         </div>

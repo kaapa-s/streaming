@@ -54,11 +54,13 @@ export function useStudioController(room: string): StudioValue {
     : ((sharedSharing?.destinations ?? []) as PlatformProvider[]);
   const platforms = usePlatformConnections(Boolean(auth.user), setError);
   const liveToYoutube = roomLive && roomLiveDestinations.includes('youtube');
+  // Comments are a room-participant surface: authenticated members only, never
+  // unauthenticated guests.
+  const canComment = Boolean(auth.user) && session.joined;
   const comments = useLiveComments({
     room,
     live: liveToYoutube,
-    isOwner,
-    youtubeConnected: platforms.status.youtube.connected,
+    enabled: canComment,
     setError,
     setPreviewOverlay,
   });
@@ -143,6 +145,8 @@ export function useStudioController(room: string): StudioValue {
       void platforms.disconnect(provider);
     },
     comments: comments.comments,
+    commentProvider: comments.provider,
+    commentCapabilities: comments.capabilities,
     commentsSessionActive: comments.sessionActive,
     commentsSessionTitle: comments.sessionTitle,
     commentsSessionPending: comments.sessionPending,
@@ -156,10 +160,18 @@ export function useStudioController(room: string): StudioValue {
     pinComment: (c) => {
       void comments.pinComment(c);
     },
+    removeComment: (c) => {
+      void comments.removeComment(c);
+    },
+    banCommentAuthor: (c, durationSeconds) => {
+      void comments.banCommentAuthor(c, durationSeconds);
+    },
+    commentActionPendingId: comments.actionPendingId,
     clearOverlay: () => {
       void comments.clearOverlay();
     },
     pinnedCommentId: comments.pinnedId,
+    canComment,
     isRoomOwner: isOwner,
   };
 }

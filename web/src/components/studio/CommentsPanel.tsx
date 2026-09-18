@@ -1,9 +1,9 @@
 import { Button } from '../Button';
-import type { LiveComment } from '../../hooks/useLiveComments';
+import type { CommentCapabilities, LiveComment } from '../../hooks/useLiveComments';
 
 type CommentsPanelProps = {
-  isOwner: boolean;
-  youtubeConnected: boolean;
+  provider: string;
+  capabilities: CommentCapabilities;
   live: boolean;
   sessionActive: boolean;
   sessionTitle?: string;
@@ -16,11 +16,18 @@ type CommentsPanelProps = {
   pinnedCommentId: string | null;
   onPin: (comment: LiveComment) => void;
   onClearOverlay: () => void;
+  actionPendingId: string | null;
+  onRemove: (comment: LiveComment) => void;
+  onBan: (comment: LiveComment, durationSeconds?: number) => void;
 };
 
+function actionTitle(supported: boolean, provider: string, action: string): string | undefined {
+  return supported ? undefined : `${provider || 'This'} comments do not support ${action}`;
+}
+
 export function CommentsPanel({
-  isOwner,
-  youtubeConnected,
+  provider,
+  capabilities,
   live,
   sessionActive,
   sessionTitle,
@@ -33,35 +40,28 @@ export function CommentsPanel({
   pinnedCommentId,
   onPin,
   onClearOverlay,
+  actionPendingId,
+  onRemove,
+  onBan,
 }: CommentsPanelProps) {
   if (!live) return null;
 
-  if (!isOwner) {
-    return (
-      <section className="flex flex-col gap-2.5 min-h-0 max-h-[min(70vh,640px)] rounded-xl border border-border bg-surface-raised p-3">
-        <h2 className="text-xs font-semibold tracking-[0.12em] uppercase text-ink-subtle">
-          YouTube chat
-        </h2>
-        <p className="text-sm text-ink-muted">Only the room owner can manage live comments.</p>
-      </section>
-    );
-  }
+  const providerLabel = provider
+    ? provider.charAt(0).toUpperCase() + provider.slice(1)
+    : 'Live';
+  const busyId = actionPendingId;
 
   return (
     <section className="flex flex-col gap-2.5 min-h-0 max-h-[min(70vh,640px)] rounded-xl border border-border bg-surface-raised p-3">
       <h2 className="text-xs font-semibold tracking-[0.12em] uppercase text-ink-subtle">
-        YouTube chat
+        {providerLabel} chat
       </h2>
 
-      {!youtubeConnected && (
-        <p className="text-sm text-ink-muted">Connect YouTube in Settings to pull live chat.</p>
-      )}
-
-      {youtubeConnected && !sessionActive && (
+      {!sessionActive && (
         <p className="text-sm text-ink-muted">
           {bindFailed
-            ? 'Could not connect to YouTube chat yet. Waiting for the broadcast to go live…'
-            : 'Connecting to YouTube chat…'}
+            ? 'Could not connect to live chat yet. Waiting for the broadcast to go live…'
+            : 'Connecting to live chat…'}
         </p>
       )}
 
@@ -83,13 +83,42 @@ export function CommentsPanel({
                   <strong className="text-xs text-accent">{c.author}</strong>
                   <span>{c.text}</span>
                 </div>
-                <div>
+                <div className="flex flex-wrap items-center gap-3">
                   <button
                     type="button"
-                    className="bg-transparent p-0 text-xs font-semibold text-accent hover:underline"
+                    className="bg-transparent p-0 text-xs font-semibold text-accent hover:underline disabled:cursor-default disabled:text-ink-subtle disabled:no-underline"
+                    disabled={!capabilities.pin}
+                    title={actionTitle(capabilities.pin, providerLabel, 'on-screen comments')}
                     onClick={() => onPin(c)}
                   >
                     On screen
+                  </button>
+                  <button
+                    type="button"
+                    className="bg-transparent p-0 text-xs font-semibold text-danger hover:underline disabled:cursor-default disabled:text-ink-subtle disabled:no-underline"
+                    disabled={!capabilities.remove || busyId === c.id}
+                    title={actionTitle(capabilities.remove, providerLabel, 'deleting comments')}
+                    onClick={() => onRemove(c)}
+                  >
+                    Delete
+                  </button>
+                  <button
+                    type="button"
+                    className="bg-transparent p-0 text-xs font-semibold text-danger hover:underline disabled:cursor-default disabled:text-ink-subtle disabled:no-underline"
+                    disabled={!capabilities.ban || !c.authorId || busyId === c.id}
+                    title={actionTitle(capabilities.ban, providerLabel, 'banning authors')}
+                    onClick={() => onBan(c, 300)}
+                  >
+                    Timeout 5m
+                  </button>
+                  <button
+                    type="button"
+                    className="bg-transparent p-0 text-xs font-semibold text-danger hover:underline disabled:cursor-default disabled:text-ink-subtle disabled:no-underline"
+                    disabled={!capabilities.ban || !c.authorId || busyId === c.id}
+                    title={actionTitle(capabilities.ban, providerLabel, 'banning authors')}
+                    onClick={() => onBan(c)}
+                  >
+                    Ban
                   </button>
                 </div>
               </div>
@@ -110,12 +139,17 @@ export function CommentsPanel({
             <input
               className="flex-1 min-w-0 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-accent"
               type="text"
-              placeholder="Reply on YouTube…"
+              placeholder={`Reply on ${providerLabel}…`}
               value={replyText}
               onChange={(e) => onReplyTextChange(e.target.value)}
               maxLength={200}
+              disabled={!capabilities.reply}
             />
-            <Button type="submit" loading={replyPending} disabled={!replyText.trim()}>
+            <Button
+              type="submit"
+              loading={replyPending}
+              disabled={!capabilities.reply || !replyText.trim()}
+            >
               Send
             </Button>
           </form>
