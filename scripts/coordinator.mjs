@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { join, relative, resolve } from 'node:path';
@@ -8,8 +8,11 @@ const root = resolve(new URL('..', import.meta.url).pathname);
 const issueId = process.argv.find((value) => value.startsWith('--issue='))?.slice('--issue='.length);
 const runId = `${new Date().toISOString().replaceAll(/[:.]/g, '-')}-${process.pid}-${randomUUID().slice(0, 8)}`;
 const artifactDir = resolve(process.env.COORDINATOR_ARTIFACT_DIR ?? join(root, 'e2e', 'coordinator-artifacts', runId));
-const worktreeDir = resolve(process.env.COORDINATOR_WORKTREE_ROOT ?? join(root, '.worktrees'), `${issueId ?? 'issue'}-${runId}`);
+const worktreeDir = root;
+const branchName = `agent/${issueId ?? 'issue'}-${runId}`;
 const model = process.env.OPENROUTER_MODEL ?? 'openrouter/auto';
+const openRouterKeyFile = process.env.OPENROUTER_API_KEY_FILE ?? '/Users/kaapa/dev/openrouter';
+const openRouterApiKey = process.env.OPENROUTER_API_KEY ?? (existsSync(openRouterKeyFile) ? readFileSync(openRouterKeyFile, 'utf8').trim() : '');
 const timeoutMs = Number(process.env.COORDINATOR_TIMEOUT_MS ?? 1_200_000);
 const defaultVerifyCommands = ['npm run lint --prefix server', 'npm run typecheck --prefix server', 'npm run test --prefix server', 'npm run lint --prefix sfu', 'npm run typecheck --prefix sfu', 'npm run lint --prefix web', 'npm run lint --prefix compositor', 'npm run typecheck --prefix compositor', 'npm run test --prefix compositor', 'npm run quality-gate'];
 const verifyCommands = (process.env.COORDINATOR_VERIFY_COMMANDS ?? defaultVerifyCommands.join(';;')).split(';;').map((value) => value.trim()).filter(Boolean);
@@ -21,7 +24,7 @@ let issue = null;
 let escalator = null;
 let finalDiff = '';
 let isolator = null;
-let worktreeCreated = false;
+let branchCreated = false;
 let stoppedBy = null;
 let worker = null;
 let handoffWritten = false;
@@ -93,11 +96,12 @@ function promptFor(role, extra = {}) {
 
 async function runWorker(role, agent, cwd) {
   const target = process.env.COORDINATOR_HERDR_TARGET;
+  const env = openRouterApiKey ? { OPENROUTER_API_KEY: openRouterApiKey } : {};
   if (target) {
-    const result = await runGroup('herdr', ['agent', 'prompt', target, promptFor(role), '--wait', '--timeout', String(timeoutMs)], cwd);
+    const result = await runGroup('herdr', ['agent', 'prompt', target, promptFor(role), '--wait', '--timeout', String(timeoutMs)], cwd, env);
     return { kind: 'herdr', target, ...result };
   }
-  const result = await runGroup(process.env.OPENCODE_BIN ?? 'opencode', ['run', '--agent', agent, '--model', model, '--format', 'json', '--auto', promptFor(role)], cwd);
+  const result = await runGroup(process.env.OPENCODE_BIN ?? 'opencode', ['run', '--agent', agent, '--model', model, '--format', 'json', '--auto', promptFor(role)], cwd, env);
   return { kind: 'opencode', target: null, ...result };
 }
 
@@ -150,14 +154,19 @@ async function pipeline() {
   if (!['open', 'in_progress'].includes(issue.status)) throw new Error(`Issue ${issueId} is not executable in status ${issue.status}`);
   writeFileSync(join(artifactDir, 'issue.json'), JSON.stringify(issue, null, 2));
 
-  record('worktree', 'running');
-  mkdirSync(resolve(worktreeDir, '..'), { recursive: true });
-  const created = await git(root, ['worktree', 'add', '--detach', worktreeDir, 'HEAD']);
-  writeFileSync(join(artifactDir, 'worktree.log'), `${created.stdout}${created.stderr}`);
-  if (created.code !== 0) throw new Error(`worktree creation failed: ${created.stderr || created.stdout}`);
-  worktreeCreated = true;
+  const status = await git(root, ['status', '--porcelain']);
+  if (status.code !== 0) throw new Error(`repository status failed: ${status.stderr || status.stdout}`);
+  if (status.stdout.trim()) throw new Error('local main must be clean before starting a branch run');
+  const currentBranch = await git(root, ['branch', '--show-current']);
+  if (currentBranch.code !== 0 || currentBranch.stdout.trim() !== 'main') throw new Error(`branch run must start from local main, found ${currentBranch.stdout.trim() || 'detached HEAD'}`);
+
+  record('branch', 'running');
+  const created = await git(root, ['switch', '-c', branchName, 'main']);
+  writeFileSync(join(artifactDir, 'branch.log'), `${created.stdout}${created.stderr}`);
+  if (created.code !== 0) throw new Error(`branch creation failed: ${created.stderr || created.stdout}`);
+  branchCreated = true;
   await isolationConfirmed(worktreeDir);
-  record('worktree', 'passed', worktreeDir);
+  record('branch', 'passed', branchName);
 
   record('implementer', 'running');
   worker = await runWorker('implementer', 'implementer', worktreeDir);
@@ -204,6 +213,7 @@ async function escalate() {
     QUALITY_AGENT_TRIGGER_ISSUE: issueId,
     QUALITY_AGENT_MAX_RUNS: process.env.QUALITY_AGENT_MAX_RUNS ?? '1',
     OPENROUTER_MODEL: model,
+    ...(openRouterApiKey ? { OPENROUTER_API_KEY: openRouterApiKey } : {}),
   });
   let payload = null;
   const lines = String(result.stdout ?? '').trim().split('\n');
@@ -227,7 +237,7 @@ async function handoff(status, summary, blocker = 'none') {
   const paths = existsSync(join(artifactDir, 'changed-paths.json')) ? JSON.parse(readFileSync(join(artifactDir, 'changed-paths.json'), 'utf8')) : [];
   const checks = steps.map((step) => `${step.name}:${step.status}`).join(' | ');
   const classifier = (escalator && escalator.payload && escalator.payload.classification) ? ` classifier=${escalator.payload.classification}` : '';
-  const text = [`STATUS: ${status}`, `ISSUE: ${issueId}`, `SUMMARY: ${summary}`, `CHANGED: ${paths.join(', ') || 'none'}`, `CHECKS: ${checks}${classifier}`, `BLOCKER: ${blocker}`, `DECISION: ${status === 'NEEDS_DECISION' ? 'review artifacts at ' + artifactDir + '; classify as product or gate defect' : 'none'}`, `NEXT: Inspect ${artifactDir} and decide whether to apply or discard the isolated worktree changes.`].join('\n');
+  const text = [`STATUS: ${status}`, `ISSUE: ${issueId}`, `SUMMARY: ${summary}`, `CHANGED: ${paths.join(', ') || 'none'}`, `CHECKS: ${checks}${classifier}`, `BLOCKER: ${blocker}`, `DECISION: ${status === 'NEEDS_DECISION' ? 'review artifacts at ' + artifactDir + '; classify as product or gate defect' : 'none'}`, `NEXT: Inspect ${artifactDir} and manually test the retained branch ${branchName}.`].join('\n');
   writeFileSync(join(artifactDir, 'handoff.txt'), `${text}\n`);
   const result = await run('bd', ['comment', issueId, text, '--json']);
   writeFileSync(join(artifactDir, 'handoff-result.json'), JSON.stringify(result, null, 2));
@@ -237,12 +247,7 @@ async function handoff(status, summary, blocker = 'none') {
 
 async function cleanup() {
   killChildren();
-  if (worktreeCreated) {
-    const result = await git(root, ['worktree', 'remove', '--force', worktreeDir]);
-    writeFileSync(join(artifactDir, 'cleanup.json'), JSON.stringify(result, null, 2));
-    if (result.code !== 0 && existsSync(worktreeDir)) log(`worktree survivor: ${worktreeDir}`);
-    if (result.code === 0) { try { rmSync(resolve(worktreeDir, '..'), { recursive: false }); } catch {} }
-  }
+  if (branchCreated) writeFileSync(join(artifactDir, 'cleanup.json'), JSON.stringify({ branch: branchName, retained: true }, null, 2));
 }
 
 async function listSupervised() {
@@ -274,7 +279,7 @@ try {
       escalator = { status: 'failed', error: String(error) };
     }
   }
-  if (worktreeCreated) await obtainFinalDiff(worktreeDir);
+  if (branchCreated) await obtainFinalDiff(worktreeDir);
   const summary = outcome === 'passed' ? `Coordinator pipeline completed; no commit, push, or issue closure performed.` : `Coordinator stopped at ${stoppedBy}; artifacts preserved for human decision.`;
   await handoff(outcome === 'passed' ? 'DONE' : 'NEEDS_DECISION', summary, stoppedBy ?? 'none');
 } catch (error) {
@@ -292,7 +297,7 @@ try {
 } finally {
   try { await cleanup(); } catch {}
   const supervised = await listSupervised();
-  const report = { schemaVersion: 'coordinator/v1', runId, issue: issueId, outcome, stoppedBy, artifactDir, worktreeDir, isolator, worker, escalator, steps, controlledWorktrees: supervised, worktreeRemoved: !existsSync(worktreeDir) };
+  const report = { schemaVersion: 'coordinator/v1', runId, issue: issueId, outcome, stoppedBy, artifactDir, branchName, checkout: worktreeDir, isolator, worker, escalator, steps, controlledWorktrees: supervised, branchRetained: branchCreated };
   writeFileSync(join(artifactDir, 'run-report.json'), JSON.stringify(report, null, 2));
   process.stdout.write(`${JSON.stringify(report)}\n`);
   if (outcome !== 'passed') process.exitCode = 1;
