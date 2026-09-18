@@ -9,6 +9,7 @@ type StudioHeaderProps = {
   onStartRecording: () => void;
   onStop: () => void;
   onOpenGoLive: () => void;
+  onOpenInvites: () => void;
   onLeaveSessions: () => void;
   roomStatus: 'created' | 'active' | 'finished' | null;
   isRoomOwner: boolean;
@@ -23,6 +24,7 @@ export function StudioHeader({
   onStartRecording,
   onStop,
   onOpenGoLive,
+  onOpenInvites,
   onLeaveSessions,
   roomStatus,
   isRoomOwner,
@@ -73,6 +75,9 @@ export function StudioHeader({
                 Go live ▾
               </Button>
             )}
+            <Button disabled={recordingPending} onClick={onOpenInvites}>
+              Invite people
+            </Button>
             {roomStatus === 'created' && !recording && (
               <Button variant="danger" disabled={recordingPending} onClick={onDiscard}>
                 Discard room

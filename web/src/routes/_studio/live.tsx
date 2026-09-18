@@ -2,6 +2,7 @@ import { createFileRoute, useBlocker, useNavigate } from '@tanstack/react-router
 import { useRef, useState } from 'react';
 import { CommentsPanel } from '../../components/studio/CommentsPanel';
 import { GoLiveModal } from '../../components/studio/GoLiveModal';
+import { InviteModal } from '../../components/studio/InviteModal';
 import { RecordingFinishedModal } from '../../components/studio/RecordingFinishedModal';
 import { SceneStrip } from '../../components/studio/SceneStrip';
 import { StudioHeader } from '../../components/studio/StudioHeader';
@@ -23,6 +24,7 @@ function LivePage() {
   const navigate = useNavigate();
   const [sessionName] = useLocalStorageState(SESSION_NAME_KEY, 'Studio session');
   const [goLiveOpen, setGoLiveOpen] = useState(false);
+  const [inviteOpen, setInviteOpen] = useState(false);
   const [discardError, setDiscardError] = useState('');
 
   const discard = () => {
@@ -80,6 +82,7 @@ function LivePage() {
         onStartRecording={s.startRecording}
         onStop={s.stopRecording}
         onOpenGoLive={() => setGoLiveOpen(true)}
+        onOpenInvites={() => setInviteOpen(true)}
         onLeaveSessions={leaveToSessions}
       />
 
@@ -162,6 +165,8 @@ function LivePage() {
           }}
         />
       )}
+
+      {inviteOpen && <InviteModal slug={s.room} onClose={() => setInviteOpen(false)} />}
 
       {s.finishedRecording && (
         <RecordingFinishedModal

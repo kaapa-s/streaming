@@ -222,14 +222,34 @@ export class RoomsService {
     return this.joinBySlug(room.slug, user);
   }
 
-  async createInvite(slug: string, ownerId: string): Promise<{ token: string; url: string }> {
+  async createInvite(slug: string, ownerId: string): Promise<{ id: string; token: string; url: string }> {
     const room = await this.findBySlug(slug);
     if (room.ownerId !== ownerId) throw new ForbiddenException('only the room owner can manage invites');
     if (room.status === 'finished') throw new ForbiddenException('room is finished');
     const token = randomBytes(32).toString('base64url');
-    await this.invites.save(this.invites.create({ roomId: room.id, tokenHash: hashInvite(token), revokedAt: null }));
+    const invite = await this.invites.save(
+      this.invites.create({ roomId: room.id, tokenHash: hashInvite(token), revokedAt: null }),
+    );
     const base = process.env.WEB_PUBLIC_URL?.replace(/\/$/, '') ?? '';
-    return { token, url: `${base}/join?invite=${encodeURIComponent(token)}` };
+    return { id: invite.id, token, url: `${base}/join?invite=${encodeURIComponent(token)}` };
+  }
+
+  /**
+   * Owner-facing invite metadata. Deliberately selects only non-secret columns so
+   * a stored token hash can never leak through the list surface.
+   */
+  async listInvites(
+    slug: string,
+    ownerId: string,
+  ): Promise<Array<{ id: string; createdAt: Date; revokedAt: Date | null }>> {
+    const room = await this.findBySlug(slug);
+    if (room.ownerId !== ownerId) throw new ForbiddenException('only the room owner can manage invites');
+    const invites = await this.invites.find({
+      where: { roomId: room.id },
+      order: { createdAt: 'DESC' },
+      select: { id: true, createdAt: true, revokedAt: true },
+    });
+    return invites.map(({ id, createdAt, revokedAt }) => ({ id, createdAt, revokedAt }));
   }
 
   async revokeInvite(id: string, ownerId: string): Promise<{ ok: true }> {

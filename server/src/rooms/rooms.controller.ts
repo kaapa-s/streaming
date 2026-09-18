@@ -46,6 +46,13 @@ export class RoomsController {
     return this.rooms.createInvite(slug, user.id);
   }
 
+  /** Owner-only invite metadata; never returns token material. */
+  @Get(':slug/invites')
+  @UseGuards(JwtAuthGuard)
+  listInvites(@Param('slug') slug: string, @CurrentUser() user: AuthUser) {
+    return this.rooms.listInvites(slug, user.id);
+  }
+
   @Post(':slug/discard')
   @UseGuards(JwtAuthGuard)
   async discard(@Param('slug') slug: string, @CurrentUser() user: AuthUser) {

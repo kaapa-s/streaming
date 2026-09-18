@@ -242,6 +242,34 @@ export async function admitInvite(token: string, displayName?: string, guestId?:
   return res.json();
 }
 
+export interface RoomInviteSummary {
+  id: string;
+  createdAt: string;
+  revokedAt: string | null;
+}
+
+/** Create a reusable invite. The full URL is returned once and never persisted. */
+export async function createRoomInvite(slug: string): Promise<{ id: string; token: string; url: string }> {
+  const res = await apiFetch(`/api/rooms/${encodeURIComponent(slug)}/invites`, { method: 'POST' });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json() as Promise<{ id: string; token: string; url: string }>;
+}
+
+/** Owner-only invite metadata: ids and revocation state, never token material. */
+export async function listRoomInvites(slug: string): Promise<RoomInviteSummary[]> {
+  const res = await apiFetch(`/api/rooms/${encodeURIComponent(slug)}/invites`);
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json() as Promise<RoomInviteSummary[]>;
+}
+
+export async function revokeRoomInvite(slug: string, inviteId: string): Promise<void> {
+  const res = await apiFetch(
+    `/api/rooms/${encodeURIComponent(slug)}/invites/${encodeURIComponent(inviteId)}/revoke`,
+    { method: 'POST' },
+  );
+  if (!res.ok) throw new Error(await parseError(res));
+}
+
 export async function joinRoom(slug: string): Promise<{
   room: { id: string; slug: string; name: string; status: 'created' | 'active' | 'finished' };
   role: 'owner' | 'speaker' | 'viewer';
