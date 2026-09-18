@@ -64,6 +64,7 @@ export class SessionsController {
       cameraPreset: body.cameraPreset,
       featuredId: body.featuredId,
       sceneScreenIds: body.sceneScreenIds,
+      sceneCameraIds: body.sceneCameraIds,
     });
   }
 }

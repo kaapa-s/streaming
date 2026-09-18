@@ -49,10 +49,10 @@ export type StudioValue = {
   screenPending: boolean;
   screenLabel: string;
   cameraPreset: CameraPreset;
-  featuredId: string | null;
   sceneScreenIds: string[];
+  /** Resolved program cameras the owner has placed on the scene. */
+  sceneCameraIds: string[];
   setCameraPreset: (preset: CameraPreset) => void;
-  setFeatured: (sourceId: string) => void;
   toggleSceneScreen: (sourceId: string) => void;
   previewRef: (node: HTMLDivElement | null) => void;
   recording: boolean;
@@ -72,7 +72,7 @@ export type StudioValue = {
   participants: RoomParticipant[];
   participantPendingId: string | null;
   participantError: string;
-  setParticipantScene: (memberId: string, inScene: boolean) => void;
+  toggleParticipantScene: (memberId: string, cameraSourceId: string, inScene: boolean) => void;
   kickParticipant: (memberId: string) => void;
   platforms: AllPlatformStatus;
   platformPending: PlatformProvider | null;

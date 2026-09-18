@@ -9,13 +9,19 @@ declare global {
     | undefined;
   var __clearOverlay: (() => void) | undefined;
   var __setLayout:
-    | ((state: { cameraPreset: string; featuredId: string | null; sceneScreenIds: string[] }) => void)
+    | ((state: {
+        cameraPreset: string;
+        featuredId: string | null;
+        sceneScreenIds: string[];
+        sceneCameraIds?: string[];
+      }) => void)
     | undefined;
   var __getLayoutSnapshot:
     | (() => {
         cameraPreset: string;
         featuredId: string | null;
         sceneScreenIds: string[];
+        sceneCameraIds?: string[];
         effective: string;
         sources: string[];
       })

@@ -201,7 +201,7 @@ export async function createRoom(name: string): Promise<OwnedRoom> {
   return res.json() as Promise<OwnedRoom>;
 }
 
-/** Admit an invite. A waiting invitee has `inScene: false` and no join token. */
+/** Resolve an invite into membership. Invitees join directly and start off-scene. */
 export async function admitInvite(token: string): Promise<{
   room: { id: string; slug: string };
   role: 'owner' | 'speaker' | 'viewer';
@@ -251,7 +251,7 @@ export interface RoomMemberSceneResult {
   inScene: boolean;
 }
 
-/** Owner-only: admit an off-scene member to the scene or remove them from it. */
+/** Owner-only: place a member's camera on the program or take it off. */
 export async function setRoomMemberScene(
   slug: string,
   memberId: string,

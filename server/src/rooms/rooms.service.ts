@@ -9,7 +9,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
 import { createHash, randomBytes } from 'crypto';
 import { issueJoinToken } from '@streaming/join-token';
-import { Recording, Room, RoomInvite, RoomMember, type RoomRole } from '../entities';
+import { Recording, Room, RoomBlock, RoomInvite, RoomMember, type RoomRole } from '../entities';
 import type { AuthUser } from '../auth/jwt.strategy';
 import {
   defaultRoomLayout,
@@ -67,7 +67,14 @@ export class RoomsService {
     private readonly members: Repository<RoomMember>,
     @InjectRepository(RoomInvite)
     private readonly invites: Repository<RoomInvite>,
+    @InjectRepository(RoomBlock)
+    private readonly blocks: Repository<RoomBlock>,
   ) {}
+
+  /** Room-scoped blocklist: a kicked account can never be re-admitted by token or slug. */
+  private async isBlocked(roomId: string, userId: string): Promise<boolean> {
+    return (await this.blocks.count({ where: { roomId, userId } })) > 0;
+  }
 
   async create(input: { name?: string; slug?: string }, owner: AuthUser): Promise<Room> {
     const current = await this.rooms.findOne({ where: { ownerId: owner.id, status: 'created' } });
@@ -189,17 +196,21 @@ export class RoomsService {
   }> {
     const room = await this.findBySlug(slug);
     if (room.status === 'finished') throw new ForbiddenException('room is finished');
-    let member = await this.members.findOne({ where: { roomId: room.id, userId: user.id } });
+    if (await this.isBlocked(room.id, user.id)) {
+      throw new ForbiddenException('you have been removed from this room');
+    }
+    const member = await this.members.findOne({ where: { roomId: room.id, userId: user.id } });
     if (!member) throw new ForbiddenException('an invite is required to join this room');
-    if (!member.inScene) throw new ForbiddenException('the owner has not admitted you to the scene');
     const role = member.role;
 
+    // Everyone joins the call directly. Scene membership no longer gates the SFU:
+    // it only marks whether the owner has placed this camera on the program.
     const joinToken = issueJoinToken({
       roomSlug: room.slug,
       userId: user.id,
       name: user.name,
       role: 'speaker',
-      inScene: true,
+      inScene: member.inScene,
       canManage: member.role === 'owner',
     });
 
@@ -262,17 +273,20 @@ export class RoomsService {
   /**
    * Admit an authenticated invitee. Membership is keyed solely by the
    * authenticated `userId`; no client-supplied identifier can create or resume
-   * a membership, so a kicked or banned person cannot mint a new identity.
+   * a membership. A kicked account is refused by the room-scoped blocklist.
    */
   async admitInvite(token: string, user: AuthUser) {
     const invite = await this.invites.findOne({ where: { tokenHash: hashInvite(token) }, relations: { room: true } });
     if (!invite || invite.revokedAt || invite.room.status === 'finished') throw new ForbiddenException('invalid or unavailable invite');
     const room = invite.room;
+    if (await this.isBlocked(room.id, user.id)) {
+      throw new ForbiddenException('you have been removed from this room');
+    }
     let member = await this.members.findOne({ where: { roomId: room.id, userId: user.id } });
     if (!member) {
       const count = await this.members.count({ where: { roomId: room.id } });
       if (count >= 15) throw new ConflictException('room is full');
-      // Invitees start off-scene and consume no scene slot until the owner admits them.
+      // Invitees join directly off-scene; the owner promotes them from their camera tile.
       member = await this.members.save(this.members.create({
         roomId: room.id,
         userId: user.id,
@@ -282,18 +296,20 @@ export class RoomsService {
       }));
     }
     const name = user.name || member.displayName || 'Member';
-    // A waiting member gets no SFU token: off-scene clients must not connect
-    // until the owner admits them and joinBySlug authorizes the join.
+    // Scene membership only controls program placement; it never blocks the join.
     return {
       room: { id: room.id, slug: room.slug },
       role: member.role,
       inScene: member.inScene,
-      ...(member.inScene
-        ? {
-          joinToken: issueJoinToken({ roomSlug: room.slug, userId: user.id, name, role: 'speaker', inScene: true, canManage: member.role === 'owner' }),
-          sfuUrl: optionalSfuUrl(),
-        }
-        : {}),
+      joinToken: issueJoinToken({
+        roomSlug: room.slug,
+        userId: user.id,
+        name,
+        role: 'speaker',
+        inScene: member.inScene,
+        canManage: member.role === 'owner',
+      }),
+      sfuUrl: optionalSfuUrl(),
     };
   }
 
@@ -357,7 +373,20 @@ export class RoomsService {
     const target = await this.members.findOne({ where: { id: memberId, roomId: room.id } });
     if (!target) throw new NotFoundException('room member not found');
     if (target.role === 'owner') throw new ForbiddenException('the owner cannot be kicked');
-    await this.members.remove(target);
+    // Block first, then drop membership, in one transaction: a partially applied
+    // kick must never leave the room without a durable rejoin ban.
+    await this.dataSource.transaction(async (manager) => {
+      if (target.userId) {
+        await manager
+          .createQueryBuilder()
+          .insert()
+          .into(RoomBlock)
+          .values({ roomId: room.id, userId: target.userId })
+          .orIgnore()
+          .execute();
+      }
+      await manager.remove(RoomMember, target);
+    });
     return { ok: true, userId: target.userId ?? '' };
   }
 

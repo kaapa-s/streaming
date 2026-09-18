@@ -34,6 +34,8 @@ export type RoomState = {
 export interface RemotePeer {
   id: string;
   name: string;
+  /** Durable account id from the join token; used to map peers to room members. */
+  userId: string;
   /** Camera + mic tracks. */
   stream: MediaStream;
   /** Screen-share video, when this peer is sharing. */
@@ -50,6 +52,7 @@ interface ProducerInfo {
   producerId: string;
   peerId: string;
   peerName: string;
+  userId: string;
   kind: 'audio' | 'video';
   appData?: { source?: MediaSource };
 }
@@ -310,7 +313,7 @@ export class SfuClient {
 
     let peer = this.peers.get(info.peerId);
     if (!peer) {
-      peer = { id: info.peerId, name: info.peerName, stream: new MediaStream() };
+      peer = { id: info.peerId, name: info.peerName, userId: info.userId, stream: new MediaStream() };
       this.peers.set(info.peerId, peer);
     }
 

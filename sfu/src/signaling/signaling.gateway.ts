@@ -73,6 +73,7 @@ function producerInfo(member: Peer, producer: types.Producer) {
     producerId: producer.id,
     peerId: member.id,
     peerName: member.name,
+    userId: member.userId,
     kind: producer.kind,
     appData: { source: resolveMediaSource(producer.appData) },
   };
@@ -168,12 +169,9 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
       const room = claims.roomSlug;
       const name = claims.name;
       const role: PeerRole = claims.role;
-      if (role === 'speaker' && claims.inScene !== true) {
-        throw new Error('participant is not admitted to the scene');
-      }
       const existingPeers = this.rooms.get(room);
       if (role === 'speaker' && existingPeers && [...existingPeers].filter((peer) => peer.role === 'speaker').length >= 10) {
-        throw new Error('scene is full');
+        throw new Error('too many connected speakers (max 10)');
       }
       if (data.room != null && String(data.room) !== room) {
         throw new Error('join token room mismatch');

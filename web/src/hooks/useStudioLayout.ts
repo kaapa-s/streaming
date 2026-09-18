@@ -16,6 +16,9 @@ const DEFAULT_LAYOUT: LayoutState = {
   sceneScreenIds: [],
 };
 
+/** Stable empty roster so memo deps do not churn before the first snapshot. */
+const NO_PARTICIPANTS: RoomParticipant[] = [];
+
 /** How often a non-owner speaker re-reads the owner's scene from the API. */
 const LAYOUT_POLL_MS = 1_200;
 
@@ -45,11 +48,30 @@ function sameIds(a: string[], b: string[]): boolean {
   return a.every((id, i) => id === b[i]);
 }
 
+function sameOptionalIds(a: string[] | undefined, b: string[] | undefined): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  return sameIds(a, b);
+}
+
 function sameLayout(a: LayoutState, b: LayoutState): boolean {
   return (
     a.cameraPreset === b.cameraPreset &&
     a.featuredId === b.featuredId &&
-    sameIds(a.sceneScreenIds, b.sceneScreenIds)
+    sameIds(a.sceneScreenIds, b.sceneScreenIds) &&
+    sameOptionalIds(a.sceneCameraIds, b.sceneCameraIds)
+  );
+}
+
+/** Match a room participant to the SFU peer that carries their media. */
+function peerForParticipant(
+  participant: RoomParticipant,
+  remotePeers: RemotePeer[],
+): RemotePeer | undefined {
+  return (
+    remotePeers.find((peer) => participant.userId && peer.userId === participant.userId) ??
+    remotePeers.find(
+      (peer) => participant.displayName !== null && peer.name === participant.displayName,
+    )
   );
 }
 
@@ -78,14 +100,14 @@ function sameParticipants(a: RoomParticipant[], b: RoomParticipant[]): boolean {
 
 /**
  * Turn a failed owner participant mutation into an actionable message. The
- * server caps membership (15) and scene size (10); a raw 409 body would otherwise
- * reach the roster as "scene is full" with no next step.
+ * server caps membership (15) and program cameras (10); a raw 409 body would
+ * otherwise reach the roster as "scene is full" with no next step.
  */
 function participantActionMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : 'Request failed';
   const lower = message.toLowerCase();
   if (lower.includes('scene is full')) {
-    return `Scene is full (${SCENE_CAPACITY}/${SCENE_CAPACITY}). Remove someone from the scene before admitting another member.`;
+    return `Scene is full (${SCENE_CAPACITY}/${SCENE_CAPACITY}). Take someone off the program before adding another camera.`;
   }
   if (lower.includes('room is full')) {
     return `Room is full (${ROOM_CAPACITY}/${ROOM_CAPACITY}). Kick someone before adding another member.`;
@@ -117,17 +139,25 @@ export function resolveLayout(
   screens: string[],
   autoFeature: string | null,
 ): LayoutState {
+  // `sceneCameraIds` undefined is legacy "every live camera on program"; an array
+  // (even []) is authoritative and gates off-scene cameras to Sources only.
+  const sceneCameraIds =
+    desired.sceneCameraIds === undefined
+      ? undefined
+      : desired.sceneCameraIds.filter((id) => cameras.includes(id));
+  const programCameras = sceneCameraIds ?? cameras;
   let featuredId = desired.featuredId;
-  if (!featuredId || !cameras.includes(featuredId)) {
+  if (!featuredId || !programCameras.includes(featuredId)) {
     featuredId =
-      autoFeature && cameras.includes(autoFeature)
+      autoFeature && programCameras.includes(autoFeature)
         ? autoFeature
-        : [...cameras].sort((a, b) => a.localeCompare(b))[0] ?? null;
+        : [...programCameras].sort((a, b) => a.localeCompare(b))[0] ?? null;
   }
   return {
     cameraPreset: desired.cameraPreset,
     featuredId,
     sceneScreenIds: desired.sceneScreenIds.filter((id) => screens.includes(id)),
+    ...(sceneCameraIds !== undefined ? { sceneCameraIds } : {}),
   };
 }
 
@@ -179,7 +209,49 @@ export function useStudioLayout({
     [localPeerId, localStream, localScreenStream, remotePeers],
   );
   const autoFeature = localPeerId && localStream ? sourceId(localPeerId, 'camera') : null;
-  const desired = isOwner ? ownerLayout : (sharedLayout ?? DEFAULT_LAYOUT);
+  const participants = snapshot?.participants ?? NO_PARTICIPANTS;
+
+  /**
+   * Owner program cameras: the owner's own camera always, plus every participant
+   * the owner has placed in scene, mapped to the SFU peer carrying their media
+   * (by userId, then display name). Off-scene members keep publishing and stay in
+   * Sources; they are simply not composited. Non-owners mirror the stored array.
+   *
+   * Identity is stabilized so peer track churn does not re-POST an identical scene.
+   */
+  const ownerSceneCameraIdsRef = useRef<string[]>([]);
+  const ownerSceneCameraIds = useMemo<string[] | undefined>(() => {
+    if (!isOwner) return undefined;
+    const next: string[] = [];
+    const seen = new Set<string>();
+    const add = (id: string) => {
+      if (!seen.has(id)) {
+        seen.add(id);
+        next.push(id);
+      }
+    };
+    if (autoFeature) add(autoFeature);
+    for (const participant of participants) {
+      if (!participant.inScene || participant.role === 'owner') continue;
+      const peer = peerForParticipant(participant, remotePeers);
+      if (peer) add(sourceId(peer.id, 'camera'));
+    }
+    const prev = ownerSceneCameraIdsRef.current;
+    if (sameIds(prev, next)) return prev;
+    ownerSceneCameraIdsRef.current = next;
+    return next;
+  }, [isOwner, autoFeature, participants, remotePeers]);
+
+  const desiredRef = useRef<LayoutState>(DEFAULT_LAYOUT);
+  const desired = useMemo<LayoutState>(() => {
+    const next = isOwner
+      ? { ...ownerLayout, sceneCameraIds: ownerSceneCameraIds }
+      : (sharedLayout ?? DEFAULT_LAYOUT);
+    const prev = desiredRef.current;
+    if (sameLayout(prev, next)) return prev;
+    desiredRef.current = next;
+    return next;
+  }, [isOwner, ownerLayout, ownerSceneCameraIds, sharedLayout]);
 
   // Keep object identity stable when nothing changed: peers re-emit on every
   // track add/remove and the preview re-runs its layout effect on identity change.
@@ -202,17 +274,19 @@ export function useStudioLayout({
         cameraPreset: ownerLayout.cameraPreset,
         featuredId: ownerLayout.featuredId,
         sceneScreenIds: ownerLayout.sceneScreenIds,
+        sceneCameraIds: ownerSceneCameraIds,
       }),
     }).catch((err: unknown) => {
       console.warn('[layout] failed to sync recorder', err);
     });
-  }, [joined, isOwner, hydrated, ownerLayout, room]);
+  }, [joined, isOwner, hydrated, ownerLayout, ownerSceneCameraIds, room]);
 
   // Leaving the session clears state, so the next join (possibly in another
   // room) starts fresh instead of carrying a stale featured id.
   useEffect(() => {
     if (joined) return;
     hydratedRef.current = false;
+    ownerSceneCameraIdsRef.current = [];
     setHydrated(false);
     setSnapshot(null);
     setOwnerLayout(DEFAULT_LAYOUT);
@@ -268,13 +342,6 @@ export function useStudioLayout({
     );
   };
 
-  const setFeatured = (featuredId: string) => {
-    if (!isOwner) return;
-    setOwnerLayout((prev) =>
-      prev.featuredId === featuredId ? prev : { ...prev, featuredId },
-    );
-  };
-
   const toggleSceneScreen = (id: string) => {
     if (!isOwner) return;
     setOwnerLayout((prev) => {
@@ -288,13 +355,14 @@ export function useStudioLayout({
 
   /**
    * Owner-only participant moderation. The mutation updates the local snapshot
-   * optimistically so the roster reacts immediately; the 1.2s poll then reconciles
+   * optimistically so the tiles react immediately; the 1.2s poll then reconciles
    * with the server's authoritative state.
    */
   const mutateParticipant = (
     memberId: string,
     run: () => Promise<void>,
     apply: (prev: RoomSnapshot) => RoomSnapshot,
+    onSuccess?: () => void,
   ) => {
     if (!isOwner) return;
     setParticipantPendingId(memberId);
@@ -303,6 +371,7 @@ export function useStudioLayout({
       try {
         await run();
         setSnapshot((prev) => (prev ? apply(prev) : prev));
+        onSuccess?.();
       } catch (err) {
         setParticipantError(participantActionMessage(err));
       } finally {
@@ -311,7 +380,17 @@ export function useStudioLayout({
     })();
   };
 
-  const setParticipantScene = (memberId: string, inScene: boolean) => {
+  /**
+   * Owner-only: put a participant's camera on the program or take it off, the
+   * same gesture as toggling a shared screen. Scene membership gates nothing
+   * server-side beyond the program camera cap and the stored roster flag; the
+   * featured camera follows so the program preview (and the recorder) updates.
+   */
+  const toggleParticipantScene = (
+    memberId: string,
+    cameraSourceId: string,
+    inScene: boolean,
+  ) => {
     mutateParticipant(
       memberId,
       () => setRoomMemberScene(room, memberId, inScene).then(() => undefined),
@@ -321,6 +400,16 @@ export function useStudioLayout({
           participant.id === memberId ? { ...participant, inScene } : participant,
         ),
       }),
+      () => {
+        setOwnerLayout((prev) => {
+          if (inScene) {
+            return prev.featuredId === cameraSourceId
+              ? prev
+              : { ...prev, featuredId: cameraSourceId };
+          }
+          return prev.featuredId === cameraSourceId ? { ...prev, featuredId: null } : prev;
+        });
+      },
     );
   };
 
@@ -338,13 +427,15 @@ export function useStudioLayout({
   return {
     layout,
     setCameraPreset,
-    setFeatured,
     toggleSceneScreen,
+    // Resolved program cameras; legacy layouts (undefined) put every live camera
+    // on program, so expose the full available list for the Sources marker.
+    sceneCameraIds: layout.sceneCameraIds ?? cameras,
     sharing: snapshot?.sharing ?? null,
-    participants: snapshot?.participants ?? [],
+    participants,
     participantPendingId,
     participantError,
-    setParticipantScene,
+    toggleParticipantScene,
     kickParticipant,
   };
 }

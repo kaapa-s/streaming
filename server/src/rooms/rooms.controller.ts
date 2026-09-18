@@ -100,10 +100,9 @@ export class RoomsController {
     @Body() body: { inScene?: boolean },
     @CurrentUser() user: AuthUser,
   ) {
-    return this.rooms.setSceneMembership(slug, user.id, memberId, body.inScene === true).then(async (result) => {
-      if (!result.inScene) await this.disconnectFromSfu(slug, result.userId);
-      return result;
-    });
+    // Scene membership is presentation-only: removing a camera from the program
+    // keeps the participant connected so the owner can promote them again.
+    return this.rooms.setSceneMembership(slug, user.id, memberId, body.inScene === true);
   }
 
   @Post(':slug/members/:memberId/kick')

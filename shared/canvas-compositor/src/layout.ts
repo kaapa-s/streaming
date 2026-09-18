@@ -16,6 +16,12 @@ export interface LayoutState {
   featuredId: string | null;
   /** `${peerId}:screen` ids on program. Live screens not listed stay in Sources only. */
   sceneScreenIds: string[];
+  /**
+   * `${peerId}:camera` ids on program. Live cameras not listed stay in Sources
+   * only. When `undefined` every live camera is on program (legacy stored
+   * layouts); when defined (including `[]`) only the listed cameras are.
+   */
+  sceneCameraIds?: string[];
 }
 
 export interface Placement {
@@ -32,6 +38,8 @@ export interface LayoutSnapshot {
   cameraPreset: CameraPreset;
   featuredId: string | null;
   sceneScreenIds: string[];
+  /** Program cameras; omitted when the layout predates scene-camera gating. */
+  sceneCameraIds?: string[];
   effective: LayoutPreset;
   sources: string[];
   /** Camera sources whose peer audio is included in the program mix. */
@@ -64,6 +72,18 @@ function byId(a: LayoutSource, b: LayoutSource): number {
 
 function camerasOf(sources: LayoutSource[]): LayoutSource[] {
   return sources.filter((source) => source.kind === 'camera');
+}
+
+/**
+ * Live cameras allowed on program. Legacy layouts (no `sceneCameraIds`) keep
+ * composing every connected camera; once the owner has set scene membership
+ * (`sceneCameraIds` defined, including `[]`) off-scene cameras stay in Sources.
+ */
+function programCamerasOf(state: LayoutState, sources: LayoutSource[]): LayoutSource[] {
+  const cameras = camerasOf(sources);
+  if (state.sceneCameraIds === undefined) return cameras;
+  const onScene = new Set(state.sceneCameraIds);
+  return cameras.filter((source) => onScene.has(source.id));
 }
 
 function screensOf(sources: LayoutSource[]): LayoutSource[] {
@@ -226,7 +246,7 @@ export function layoutSolve(
   height: number,
 ): Placement[] {
   const preset = effectivePreset(state, sources);
-  const cameras = camerasOf(sources);
+  const cameras = programCamerasOf(state, sources);
   const screens = sceneScreensOf(state, sources);
   const featured = resolveFeatured(state, cameras);
 

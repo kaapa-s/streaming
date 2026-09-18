@@ -12,6 +12,7 @@ declare global {
         cameraPreset: 'focus' | 'pip-left' | 'pip-right' | 'grid';
         featuredId: string | null;
         sceneScreenIds: string[];
+        sceneCameraIds?: string[];
       }) => void)
     | undefined;
   var __getLayoutSnapshot:
@@ -19,6 +20,7 @@ declare global {
         cameraPreset: string;
         featuredId: string | null;
         sceneScreenIds: string[];
+        sceneCameraIds?: string[];
         effective: string;
         sources: string[];
       })

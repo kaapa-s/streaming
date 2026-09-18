@@ -449,6 +449,7 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
       cameraPreset: state.cameraPreset,
       featuredId: state.featuredId,
       sceneScreenIds: state.sceneScreenIds ?? [],
+      sceneCameraIds: state.sceneCameraIds,
     };
     if (audioCtx) {
       for (const entry of entries.values()) bindPeerAudio(entry, entry.stream);
@@ -461,6 +462,8 @@ export function createCompositor(options: CompositorOptions = {}): Compositor {
       cameraPreset: layoutState.cameraPreset,
       featuredId: layoutState.featuredId,
       sceneScreenIds: [...layoutState.sceneScreenIds],
+      sceneCameraIds:
+        layoutState.sceneCameraIds === undefined ? undefined : [...layoutState.sceneCameraIds],
       effective: effectivePreset(layoutState, sources),
       sources: sources.map((source) => source.id).sort((a, b) => a.localeCompare(b)),
       audioSourceIds: [...entries.values()]

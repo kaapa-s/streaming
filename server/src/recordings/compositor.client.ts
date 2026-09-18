@@ -78,6 +78,8 @@ export class CompositorClient {
       cameraPreset: 'focus' | 'pip-left' | 'pip-right' | 'grid';
       featuredId: string | null;
       sceneScreenIds: string[];
+      /** Omitted means every live camera (legacy layouts). */
+      sceneCameraIds?: string[];
     },
   ): Promise<{ room: string; ok: boolean }> {
     return this.request('POST', `/internal/rooms/${encodeURIComponent(slug)}/layout`, layout);

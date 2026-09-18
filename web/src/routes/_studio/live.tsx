@@ -140,16 +140,15 @@ function LivePage() {
           onToggleCamera={s.toggleCamera}
           onToggleMicrophone={s.toggleMicrophone}
           cameraPreset={s.cameraPreset}
-          featuredId={s.featuredId}
           sceneScreenIds={s.sceneScreenIds}
+          sceneCameraIds={s.sceneCameraIds}
           canEditLayout={s.isRoomOwner}
           participants={s.participants}
           participantPendingId={s.participantPendingId}
           participantError={s.participantError}
-          onSetParticipantScene={s.setParticipantScene}
+          onToggleParticipantScene={s.toggleParticipantScene}
           onKickParticipant={s.kickParticipant}
           onCameraPreset={s.setCameraPreset}
-          onFeature={s.setFeatured}
           onToggleSceneScreen={s.toggleSceneScreen}
         />
       </div>

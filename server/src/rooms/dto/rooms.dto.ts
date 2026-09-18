@@ -53,4 +53,10 @@ export class SetLayoutDto {
   @IsArray()
   @IsString({ each: true })
   declare sceneScreenIds: string[];
+
+  /** Program cameras; omitted by legacy clients means every live camera. */
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  declare sceneCameraIds?: string[];
 }

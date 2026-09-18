@@ -33,6 +33,8 @@ interface LayoutPayload {
   cameraPreset: 'focus' | 'pip-left' | 'pip-right' | 'grid';
   featuredId: string | null;
   sceneScreenIds: string[];
+  /** Program cameras; omitted means every live camera (legacy layouts). */
+  sceneCameraIds?: string[];
 }
 
 interface RoomSession {

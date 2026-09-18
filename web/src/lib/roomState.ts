@@ -27,6 +27,8 @@ export type RoomSnapshot = {
     cameraPreset: 'focus' | 'pip-left' | 'pip-right' | 'grid';
     featuredId: string | null;
     sceneScreenIds: string[];
+    /** Program cameras; omitted by legacy rooms means every live camera. */
+    sceneCameraIds?: string[];
   };
   participants: RoomParticipant[];
   sharing: RoomShareState;

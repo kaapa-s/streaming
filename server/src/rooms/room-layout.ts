@@ -17,6 +17,12 @@ export interface RoomLayout {
   featuredId: string | null;
   /** Source ids of screen shares (`<peerId>:screen`) composited into the scene. */
   sceneScreenIds: string[];
+  /**
+   * Source ids of cameras (`<peerId>:camera`) composited into the scene. Omitted
+   * by legacy rows/clients, which means every live camera (pre-gating behavior);
+   * an explicit array — including `[]` — gates off-scene cameras to Sources only.
+   */
+  sceneCameraIds?: string[];
 }
 
 /** Fresh copy — callers must never share a mutable array with the default. */
@@ -42,9 +48,14 @@ export function normalizeRoomLayout(input: unknown): RoomLayout {
   const sceneScreenIds = Array.isArray(raw.sceneScreenIds)
     ? raw.sceneScreenIds.filter((id): id is string => typeof id === 'string' && id.length > 0)
     : [];
+  // Absent stays absent (legacy = all cameras); a present array is authoritative.
+  const sceneCameraIds = Array.isArray(raw.sceneCameraIds)
+    ? raw.sceneCameraIds.filter((id): id is string => typeof id === 'string' && id.length > 0)
+    : undefined;
   return {
     cameraPreset: isCameraPreset(raw.cameraPreset) ? raw.cameraPreset : 'focus',
     featuredId,
     sceneScreenIds,
+    ...(sceneCameraIds !== undefined ? { sceneCameraIds } : {}),
   };
 }

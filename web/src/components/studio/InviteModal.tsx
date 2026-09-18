@@ -103,7 +103,8 @@ export function InviteModal({ slug, onClose }: InviteModalProps) {
               Invite people
             </h2>
             <p className="mt-1 text-sm text-ink-muted">
-              Create a reusable link. New invitees join off-scene and wait for you to admit them.
+              Create a reusable link. New invitees join off-scene; click their camera to put them
+              on the program.
             </p>
           </div>
           <Button variant="ghost" onClick={onClose}>

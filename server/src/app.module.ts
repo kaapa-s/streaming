@@ -10,6 +10,7 @@ import {
   Room,
   RoomMember,
   RoomInvite,
+  RoomBlock,
   User,
 } from './entities';
 import { PlatformsModule } from './platforms/platforms.module';
@@ -32,6 +33,7 @@ import { UsersModule } from './users/users.module';
           Room,
           RoomMember,
           RoomInvite,
+          RoomBlock,
           Recording,
           PlatformConnection,
         ],

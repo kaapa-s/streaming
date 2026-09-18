@@ -4,6 +4,7 @@ export { Room } from './room.entity';
 export type { RoomStatus } from './room.entity';
 export { RoomMember } from './room-member.entity';
 export { RoomInvite } from './room-invite.entity';
+export { RoomBlock } from './room-block.entity';
 export type { RoomRole } from './room-member.entity';
 export { Recording, ACTIVE_RECORDING_STATUSES } from './recording.entity';
 export type { RecordingStatus } from './recording.entity';
