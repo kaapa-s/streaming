@@ -41,7 +41,7 @@ NEXT: <recommended coordinator action>
 - Treat `idle` as “inspect now,” not as proof of success. Confirm the structured report, changed files, tests, and Beads state.
 - Treat `blocked` as a user-facing event. Surface the exact decision, options, and recommendation; do not make an architectural or scope decision silently.
 - If a worker is unresponsive, inspect output first, then send one focused follow-up. Interrupt or kill it only after recording why and preserving its work. After killing a worker, immediately report that event and the preserved work to the user.
-- Before starting the next issue, review the diff, run appropriate quality gates, and either close the completed issue or explain why it remains open.
+- After the current issue's implementation is complete, review the diff and run the appropriate quality gates, then either close the completed issue or explain why it remains open. Do not run gates as a pre-implementation baseline.
 - Do not claim an issue is complete based only on static checks when its acceptance criteria require a live integration run.
 - Notify the user promptly on: completion, blocker, decision request, worker failure, environment recovery, or any change in scope.
 - When the user explicitly authorizes committing and pushing the accepted work, have the relevant workers finalize their Beads comments/state and commits as directed, verify the handoff, then close only the worker agents/workspaces started by the coordinator so the Herdr UI stays clean. Preserve their output and artifacts before cleanup.
@@ -49,6 +49,8 @@ NEXT: <recommended coordinator action>
 ## Quality gates and the human stop point
 
 The repository has deterministic local quality gates (see `docs/quality-gate-local.md`; run with `npm run quality-gate`). The gates were specified after the task descriptions and are authoritative. Tests and gate code are never touched without human supervision.
+
+Assume a clean checkout passes the gate. Do not run the gate, or any baseline verification, before implementation; run it only after the implementation is complete.
 
 Stop point: the feature is implemented, the quality gate fails, and a human makes the call.
 

@@ -9,7 +9,7 @@ const issueId = process.argv.find((value) => value.startsWith('--issue='))?.slic
 const outputPath = process.argv.find((value) => value.startsWith('--output='))?.slice('--output='.length);
 const commentEnabled = process.env.PLAN_COMMENT !== '0';
 const agentEnabled = process.env.PLAN_AGENT !== '0';
-const model = process.env.OPENROUTER_MODEL ?? 'openrouter/auto';
+const model = process.env.OPENROUTER_MODEL ?? 'openrouter/openrouter/auto';
 
 if (!issueId) {
   process.stderr.write('Usage: npm run plan -- --issue=<epic> [--output=<path>]\n');

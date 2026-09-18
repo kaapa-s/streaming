@@ -1,7 +1,7 @@
 ---
 description: Implement exactly one prepared Beads issue on the coordinator-created branch.
 mode: primary
-model: openrouter/auto
+model: openrouter/openrouter/auto
 permission:
   edit: allow
   bash: allow

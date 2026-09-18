@@ -1,6 +1,6 @@
 ---
 description: Read-only judgment review for plan/v1 execution plans
-model: openrouter/auto
+model: openrouter/openrouter/auto
 temperature: 0
 permission:
   edit: deny

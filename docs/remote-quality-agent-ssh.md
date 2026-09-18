@@ -68,7 +68,7 @@ Set the key only in the remote shell or in an operator-managed secret store:
 
 ```bash
 export OPENROUTER_API_KEY='replace-in-the-remote-shell-only'
-export OPENROUTER_MODEL="${OPENROUTER_MODEL:-openrouter/auto}"
+export OPENROUTER_MODEL="${OPENROUTER_MODEL:-openrouter/openrouter/auto}"
 export QUALITY_AGENT_MAX_RUNS="${QUALITY_AGENT_MAX_RUNS:-3}"
 ```
 

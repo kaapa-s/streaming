@@ -1,7 +1,7 @@
 ---
 description: Review one coordinator branch without modifying it.
 mode: primary
-model: openrouter/auto
+model: openrouter/openrouter/auto
 permission:
   edit: deny
   bash: allow
