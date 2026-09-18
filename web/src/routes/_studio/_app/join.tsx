@@ -14,7 +14,7 @@ function RoomLobby() {
   const { room, invite } = Route.useSearch();
   const navigate = useNavigate();
   const s = useStudio();
-  const attemptedRoom = useRef('');
+  const attemptedRoom = useRef<string | null>(null);
   const [displayName, setDisplayName] = useState('');
   const [admitting, setAdmitting] = useState(false);
   const [admittedRoom, setAdmittedRoom] = useState('');
@@ -38,13 +38,16 @@ function RoomLobby() {
       void navigate({ to: '/live', search: liveStudioSearch });
       return;
     }
-    if (s.joining || attemptedRoom.current === room) return;
-    attemptedRoom.current = room;
+    // Invite-only URLs have room === ''; key off the invite token so the first
+    // attempt is not mistaken for the empty initial ref value.
+    const attemptKey = room.trim() ? room : `invite:${invite ?? ''}`;
+    if (s.joining || attemptedRoom.current === attemptKey) return;
+    attemptedRoom.current = attemptKey;
     const inviteToken = invite;
     void (async () => {
       try {
         let target = room;
-        if (inviteToken) {
+        if (inviteToken && !room.trim()) {
           const admitted = await admitInvite(inviteToken);
           target = admitted.room.slug;
           setAdmittedRoom(target);
