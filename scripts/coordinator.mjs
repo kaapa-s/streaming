@@ -90,6 +90,14 @@ async function bd(args) {
   return parseJson(result.stdout, `bd ${args.join(' ')}`);
 }
 
+async function claimIssue(reason) {
+  const result = await run('bd', ['update', issueId, '--claim', '--json']);
+  if (result.code !== 0) throw new Error(`Beads claim failed: ${result.stderr || result.stdout}`);
+  const claimed = parseJson(result.stdout, `bd update ${issueId} --claim`);
+  record(`beads-claim:${reason}`, 'passed', `${issueId} claimed`);
+  return claimed;
+}
+
 function promptFor(role, extra = {}) {
   return JSON.stringify({ role, issue, runId, artifactDir:relative(root, artifactDir), checkout: relative(root, worktreeDir), allowedProductPaths: ['server/', 'sfu/', 'web/', 'compositor/', 'shared/', 'scripts/'], protectedPatterns, ...extra });
 }
@@ -159,6 +167,7 @@ async function pipeline() {
   if (status.stdout.trim()) throw new Error('local main must be clean before starting a branch run');
   const currentBranch = await git(root, ['branch', '--show-current']);
   if (currentBranch.code !== 0 || currentBranch.stdout.trim() !== 'main') throw new Error(`branch run must start from local main, found ${currentBranch.stdout.trim() || 'detached HEAD'}`);
+  await claimIssue('start');
 
   record('branch', 'running');
   const created = await git(root, ['switch', '-c', branchName, 'main']);
@@ -184,6 +193,7 @@ async function pipeline() {
   const violations = protectedViolations(paths);
   if (violations.length) { record('protected-path-guard', 'failed', violations.join(', ')); stoppedBy = 'protected-path-guard'; return; }
   record('protected-path-guard', 'passed', `${paths.length} changed path(s)`);
+  await claimIssue('post-implementation');
 
   record('reviewer', 'running');
   const review = await runWorker('reviewer', 'reviewer', worktreeDir);
@@ -191,6 +201,7 @@ async function pipeline() {
   const reviewFailed = review.code !== 0 || reviewPayload?.status === 'failed';
   if (reviewFailed) { record('reviewer', 'failed', review.stderr || reviewPayload?.summary || reviewPayload?.findings || review.stdout); stoppedBy = 'reviewer'; return; }
   record('reviewer', 'passed');
+  await claimIssue('pre-verification');
 
   for (const command of verifyCommands) {
     const parts = commandParts(command);
