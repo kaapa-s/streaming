@@ -35,15 +35,15 @@ export const PLATFORM_META: Record<
   youtube: {
     label: 'YouTube',
     connectLabel: 'Connect YouTube',
-    disconnectedHelp: 'Connect your channel to enable Go live (stream key and live chat).',
-    connectedHelp: 'Saved for Go live — not used for local recording. Copy the key from YouTube Studio → Go live.',
+    disconnectedHelp: 'Connect your channel to enable streaming (stream key and live chat).',
+    connectedHelp: 'Saved for streaming — not used for private streams. Copy the key from YouTube Studio → Go live.',
     keyPlaceholder: 'rtmp://… / stream key',
     accountFallback: 'YouTube channel',
   },
   facebook: {
     label: 'Facebook',
     connectLabel: 'Connect Facebook',
-    disconnectedHelp: 'Connect your Facebook account to enable Go live with a Live Producer stream key.',
+    disconnectedHelp: 'Connect your Facebook account to enable streaming with a Live Producer stream key.',
     connectedHelp:
       'Copy the stream key from Meta Live Producer / Business Suite. Bare keys are sent to Facebook RTMPS ingest.',
     keyPlaceholder: 'rtmps://… / stream key',

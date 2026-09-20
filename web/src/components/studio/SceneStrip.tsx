@@ -1,8 +1,12 @@
 import { sourceId, type CameraPreset } from '@streaming/canvas-compositor';
 import type { RemotePeer } from '@streaming/sfu-client';
-import { Camera, CameraOff, Mic, MicOff, Monitor } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { participantName, type RoomParticipant } from '../../lib/roomState';
+import {
+  ROOM_CAPACITY,
+  SCENE_CAPACITY,
+  participantName,
+  type RoomParticipant,
+} from '../../lib/roomState';
 import { KickParticipantModal } from './KickParticipantModal';
 import { LAYOUT_OPTIONS } from './layoutIcons';
 import { VideoTile } from './VideoTile';
@@ -13,10 +17,7 @@ type SceneStripProps = {
   localPeerId: string | null;
   remotePeers: RemotePeer[];
   screenPending: boolean;
-  onToggleScreenShare: () => void;
   onRemoveLocalScreen: () => void;
-  onToggleCamera: () => void;
-  onToggleMicrophone: () => void;
   cameraPreset: CameraPreset;
   sceneScreenIds: string[];
   /** Resolved camera sources currently on the program (owner's scene). */
@@ -37,10 +38,7 @@ export function SceneStrip({
   localPeerId,
   remotePeers,
   screenPending,
-  onToggleScreenShare,
   onRemoveLocalScreen,
-  onToggleCamera,
-  onToggleMicrophone,
   cameraPreset,
   sceneScreenIds,
   sceneCameraIds,
@@ -89,6 +87,7 @@ export function SceneStrip({
               key={participant.id}
               stream={peer?.stream ?? null}
               label={participantName(participant)}
+              waiting={!inScene}
               selected={cameraId ? sceneCameraIds.includes(cameraId) : inScene}
               onSelect={
                 cameraId
@@ -134,24 +133,12 @@ export function SceneStrip({
         Scene
         {!canEditLayout && (
           <span className="normal-case tracking-normal text-[11px] font-medium text-ink-muted">
-            Following the host — their layout drives your preview and the recording.
+            Following the host — their layout drives your preview and the stream.
           </span>
         )}
       </h2>
 
       <div className="flex flex-col gap-4">
-        {localStream && (
-          <div className="flex gap-2">
-            <button type="button" onClick={onToggleCamera} className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs font-semibold">
-              {localStream.getVideoTracks()[0]?.enabled ? <Camera size={16} /> : <CameraOff size={16} />}
-              Camera
-            </button>
-            <button type="button" onClick={onToggleMicrophone} className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs font-semibold">
-              {localStream.getAudioTracks()[0]?.enabled ? <Mic size={16} /> : <MicOff size={16} />}
-              Microphone
-            </button>
-          </div>
-        )}
         {canEditLayout && (
           <div>
             <p className="text-xs font-medium text-ink-muted mb-2">Layout</p>
@@ -177,17 +164,14 @@ export function SceneStrip({
         )}
 
         <div>
-          <p className="text-xs font-medium text-ink-muted mb-2">Sources</p>
+          <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+            <p className="text-xs font-medium text-ink-muted">Sources</p>
+            <p className="text-[11px] text-ink-subtle">
+              Scene {participants.filter((participant) => participant.inScene).length}/
+              {SCENE_CAPACITY} · Stream {participants.length}/{ROOM_CAPACITY}
+            </p>
+          </div>
           <div className="flex flex-wrap gap-3">
-            <button
-              type="button"
-              onClick={onToggleScreenShare}
-              disabled={screenPending || !!localScreenStream}
-              className="relative overflow-hidden rounded-lg aspect-video w-[140px] flex flex-col items-center justify-center gap-1.5 border-2 border-dashed border-border bg-surface-muted text-ink-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50 disabled:hover:border-border disabled:hover:text-ink-muted"
-            >
-              <Monitor size={20} strokeWidth={1.5} />
-              <span className="text-[11px] font-semibold leading-tight">Share screen</span>
-            </button>
             {localStream && (
               <VideoTile
                 stream={localStream}

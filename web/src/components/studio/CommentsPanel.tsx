@@ -60,7 +60,7 @@ export function CommentsPanel({
       {!sessionActive && (
         <p className="text-sm text-ink-muted">
           {bindFailed
-            ? 'Could not connect to live chat yet. Waiting for the broadcast to go live…'
+            ? 'Could not connect to live chat yet. Waiting for the stream to go live…'
             : 'Connecting to live chat…'}
         </p>
       )}

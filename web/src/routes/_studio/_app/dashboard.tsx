@@ -28,14 +28,14 @@ function DashboardPage() {
 
   return (
     <div className="max-w-3xl">
-      <h1 className="text-2xl font-semibold tracking-tight">Create a room</h1>
-      <p className="mt-2 text-sm text-ink-muted">Your new room opens immediately. Recording stays stopped until you start it.</p>
+      <h1 className="text-2xl font-semibold tracking-tight">Create a stream</h1>
+      <p className="mt-2 text-sm text-ink-muted">Your new stream opens immediately. Streaming stays stopped until you start it.</p>
       <form onSubmit={submit} className="mt-7 flex flex-col gap-3 rounded-xl border border-border bg-surface-raised p-5 shadow-sm sm:flex-row sm:items-end">
         <label className="flex flex-1 flex-col gap-2">
-          <span className="text-sm font-medium">Room name</span>
+          <span className="text-sm font-medium">Stream name</span>
           <input className="rounded-lg border border-border bg-surface px-3.5 py-2.5 outline-none focus:border-accent disabled:opacity-50" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Product launch" required disabled={creating} />
         </label>
-        <Button type="submit" variant="primary" loading={creating}>{creating ? 'Creating…' : 'Create room'}</Button>
+        <Button type="submit" variant="primary" loading={creating}>{creating ? 'Creating…' : 'Create stream'}</Button>
       </form>
       {error && <p className="mt-3 text-sm text-danger">{errorWithRoomLink(error)}</p>}
     </div>
@@ -48,5 +48,5 @@ function errorMessage(error: unknown): string {
 function errorWithRoomLink(message: string) {
   const match = message.match(/current room:?\s*([a-zA-Z0-9_-]+)/);
   if (!match) return message;
-  return <>{message} <Link to="/join" search={{ room: match[1] }} className="font-semibold underline">Open existing room</Link></>;
+  return <>{message} <Link to="/join" search={{ room: match[1] }} className="font-semibold underline">Open existing stream</Link></>;
 }

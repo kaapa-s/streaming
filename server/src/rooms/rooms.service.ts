@@ -238,28 +238,35 @@ export class RoomsService {
     if (room.status === 'finished') throw new ForbiddenException('room is finished');
     const token = randomBytes(32).toString('base64url');
     const invite = await this.invites.save(
-      this.invites.create({ roomId: room.id, tokenHash: hashInvite(token), revokedAt: null }),
+      this.invites.create({ roomId: room.id, tokenHash: hashInvite(token), token, revokedAt: null }),
     );
     const base = process.env.WEB_PUBLIC_URL?.replace(/\/$/, '') ?? '';
     return { id: invite.id, token, url: `${base}/join?invite=${encodeURIComponent(token)}` };
   }
 
   /**
-   * Owner-facing invite metadata. Deliberately selects only non-secret columns so
-   * a stored token hash can never leak through the list surface.
+   * Owner-facing invite metadata. The token hash never leaves the server; the
+   * raw token is only used to rebuild the canonical URL for the owner.
    */
   async listInvites(
     slug: string,
     ownerId: string,
-  ): Promise<Array<{ id: string; createdAt: Date; revokedAt: Date | null }>> {
+  ): Promise<Array<{ id: string; createdAt: Date; revokedAt: Date | null; url: string | null }>> {
     const room = await this.findBySlug(slug);
     if (room.ownerId !== ownerId) throw new ForbiddenException('only the room owner can manage invites');
     const invites = await this.invites.find({
       where: { roomId: room.id },
       order: { createdAt: 'DESC' },
-      select: { id: true, createdAt: true, revokedAt: true },
+      select: { id: true, createdAt: true, revokedAt: true, token: true },
     });
-    return invites.map(({ id, createdAt, revokedAt }) => ({ id, createdAt, revokedAt }));
+    const base = process.env.WEB_PUBLIC_URL?.replace(/\/$/, '') ?? '';
+    return invites.map(({ id, createdAt, revokedAt, token }) => ({
+      id,
+      createdAt,
+      revokedAt,
+      url:
+        token && !revokedAt ? `${base}/join?invite=${encodeURIComponent(token)}` : null,
+    }));
   }
 
   async revokeInvite(id: string, ownerId: string): Promise<{ ok: true }> {

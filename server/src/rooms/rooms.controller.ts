@@ -46,7 +46,7 @@ export class RoomsController {
     return this.rooms.createInvite(slug, user.id);
   }
 
-  /** Owner-only invite metadata; never returns token material. */
+  /** Owner-only invite metadata; returns the canonical URL for active invites. */
   @Get(':slug/invites')
   @UseGuards(JwtAuthGuard)
   listInvites(@Param('slug') slug: string, @CurrentUser() user: AuthUser) {

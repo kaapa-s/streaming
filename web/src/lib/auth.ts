@@ -221,6 +221,8 @@ export interface RoomInviteSummary {
   id: string;
   createdAt: string;
   revokedAt: string | null;
+  /** Canonical invite URL for active invites; null for revoked or legacy links. */
+  url: string | null;
 }
 
 /** Create a reusable invite. The full URL is returned once and never persisted. */
@@ -230,7 +232,7 @@ export async function createRoomInvite(slug: string): Promise<{ id: string; toke
   return res.json() as Promise<{ id: string; token: string; url: string }>;
 }
 
-/** Owner-only invite metadata: ids and revocation state, never token material. */
+/** Owner-only invite metadata: ids, revocation state, and the canonical URL. */
 export async function listRoomInvites(slug: string): Promise<RoomInviteSummary[]> {
   const res = await apiFetch(`/api/rooms/${encodeURIComponent(slug)}/invites`);
   if (!res.ok) throw new Error(await parseError(res));

@@ -9,8 +9,8 @@ type KickParticipantModalProps = {
 };
 
 /**
- * Irreversible moderation action: a kick disconnects the participant and writes
- * a room-scoped block, so the group cannot be rejoined with the invite link.
+ * Irreversible moderation action: a removal disconnects the participant and
+ * writes a stream-scoped block, so the group cannot rejoin with the invite link.
  */
 export function KickParticipantModal({
   participantName,
@@ -33,10 +33,10 @@ export function KickParticipantModal({
       >
         <div>
           <h2 id="kick-title" className="text-lg font-semibold text-ink">
-            Remove {participantName} from the room?
+            Remove {participantName} from the stream?
           </h2>
           <p className="mt-1 text-sm text-ink-muted leading-relaxed">
-            They will be disconnected and cannot rejoin this room, even with the invite link.
+            They will be disconnected and cannot rejoin this stream, even with the invite link.
             This cannot be undone.
           </p>
         </div>
@@ -50,7 +50,7 @@ export function KickParticipantModal({
             Cancel
           </Button>
           <Button variant="danger" loading={pending} onClick={onConfirm}>
-            {pending ? 'Removing…' : 'Remove from room'}
+            {pending ? 'Removing…' : 'Remove from stream'}
           </Button>
         </div>
       </div>

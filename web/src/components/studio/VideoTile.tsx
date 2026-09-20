@@ -6,6 +6,7 @@ export function VideoTile({
   stream,
   label,
   sharing,
+  waiting,
   selected,
   onSelect,
   onRemove,
@@ -14,6 +15,8 @@ export function VideoTile({
   stream: MediaStream | null;
   label: string;
   sharing?: boolean;
+  /** Member is connected but not on the program yet. */
+  waiting?: boolean;
   selected?: boolean;
   onSelect?: () => void;
   onRemove?: () => void;
@@ -101,6 +104,11 @@ export function VideoTile({
       {sharing && (
         <span className="absolute top-1.5 right-1.5 bg-accent text-white px-1.5 py-0.5 rounded text-[10px] font-bold tracking-wide uppercase pointer-events-none">
           Sharing
+        </span>
+      )}
+      {waiting && (
+        <span className="absolute top-1.5 left-1.5 z-10 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white pointer-events-none">
+          Waiting
         </span>
       )}
       {onSelect && (

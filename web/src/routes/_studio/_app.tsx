@@ -4,6 +4,7 @@ import { Settings, Plus } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { listOwnedRooms, type OwnedRoom } from '../../lib/auth';
 import { keepStudioSearch } from '../../lib/studioSearch';
+import { sidebarStatusLabel } from '../../lib/streamLabels';
 import { ensureAuthenticated } from '../../studio/studioStage';
 import { useStudio } from '../../studio/useStudio';
 
@@ -23,11 +24,11 @@ function AppShell() {
 
   return <div className="min-h-screen flex bg-surface text-ink">
     <aside className="w-64 shrink-0 border-r border-border bg-surface-raised flex flex-col px-4 py-5">
-      <div className="px-2 mb-6"><p className="text-xs font-semibold tracking-[0.14em] uppercase text-ink-subtle">Rooms</p></div>
+      <div className="px-2 mb-6"><p className="text-xs font-semibold tracking-[0.14em] uppercase text-ink-subtle">Streams</p></div>
       <nav className="flex flex-col gap-1">
-        <p className="px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink-subtle">Current room</p>
-        {current ? <RoomLink room={current} /> : <Link to="/dashboard" search={keepStudioSearch} className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-accent hover:bg-surface-muted"><Plus size={16} /> Add new room</Link>}
-        {finished.length > 0 && <p className="mt-5 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink-subtle">Finished rooms</p>}
+        <p className="px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink-subtle">Current stream</p>
+        {current ? <RoomLink room={current} /> : <Link to="/dashboard" search={keepStudioSearch} className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-accent hover:bg-surface-muted"><Plus size={16} /> Add new stream</Link>}
+        {finished.length > 0 && <p className="mt-5 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink-subtle">Past streams</p>}
         {finished.map((room) => <RoomLink key={room.id} room={room} />)}
       </nav>
       <div className="mt-auto flex flex-col gap-1">
@@ -40,15 +41,7 @@ function AppShell() {
 }
 
 function RoomLink({ room }: { room: OwnedRoom }) {
-  const label = room.status === 'created'
-    ? 'Not started'
-    : room.status === 'active'
-      ? 'Recording'
-      : room.media?.status === 'failed'
-        ? 'Failed'
-        : room.media?.status === 'uploading' || room.media?.status === 'stopping'
-          ? 'Processing'
-          : 'Finished';
+  const label = sidebarStatusLabel(room.status, room.media?.status);
   const failing = room.media?.status === 'failed';
   const chip = room.status === 'active'
     ? <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-accent"><span className="inline-block size-1.5 rounded-full bg-accent" />{label}</span>

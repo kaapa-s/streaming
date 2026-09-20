@@ -1,10 +1,11 @@
 import { createFileRoute, useBlocker, useNavigate } from '@tanstack/react-router';
 import { useRef, useState } from 'react';
 import { CommentsPanel } from '../../components/studio/CommentsPanel';
-import { GoLiveModal } from '../../components/studio/GoLiveModal';
+import { StartStreamModal } from '../../components/studio/GoLiveModal';
 import { InviteModal } from '../../components/studio/InviteModal';
 import { RecordingFinishedModal } from '../../components/studio/RecordingFinishedModal';
 import { SceneStrip } from '../../components/studio/SceneStrip';
+import { StudioDock } from '../../components/studio/StudioDock';
 import { StudioHeader } from '../../components/studio/StudioHeader';
 import { useLocalStorageState } from '../../hooks/useLocalStorageState';
 import { discardRoom } from '../../lib/auth';
@@ -23,12 +24,12 @@ function LivePage() {
   const s = useStudio();
   const navigate = useNavigate();
   const [sessionName] = useLocalStorageState(SESSION_NAME_KEY, 'Studio session');
-  const [goLiveOpen, setGoLiveOpen] = useState(false);
+  const [streamOpen, setStreamOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [discardError, setDiscardError] = useState('');
 
   const discard = () => {
-    if (!window.confirm(`Discard ${s.roomName ?? sessionName}? This permanently deletes the room and its invites.`)) return;
+    if (!window.confirm(`Discard ${s.roomName ?? sessionName}? This permanently deletes the stream and its invites.`)) return;
     void (async () => {
       try {
         await discardRoom(s.room);
@@ -45,13 +46,13 @@ function LivePage() {
 
   // Block in-app navigation away from /live during an active session
   useBlocker({
-    // useBlocker enables beforeunload by default; only warn while recording/live
+    // useBlocker enables beforeunload by default; only warn while streaming
     enableBeforeUnload: () => activeSessionRef.current,
     shouldBlockFn: ({ next }) => {
       if (!activeSessionRef.current) return false;
       if (next.pathname === '/live') return false;
       const confirmed = window.confirm(
-        'You have an active recording session. Are you sure you want to leave?',
+        'You have an active stream. Are you sure you want to leave?',
       );
       if (confirmed) {
         void s.leave();
@@ -76,12 +77,11 @@ function LivePage() {
         roomStatus={s.roomStatus}
         isRoomOwner={s.isRoomOwner}
         onDiscard={discard}
-        recording={s.recording}
+        streaming={s.recording}
         live={s.live}
-        recordingPending={s.recordingPending}
-        onStartRecording={s.startRecording}
+        pending={s.recordingPending}
+        onStartStream={() => setStreamOpen(true)}
         onStop={s.stopRecording}
-        onOpenGoLive={() => setGoLiveOpen(true)}
         onOpenInvites={() => setInviteOpen(true)}
         onLeaveSessions={leaveToSessions}
       />
@@ -135,10 +135,7 @@ function LivePage() {
           localPeerId={s.localPeerId}
           remotePeers={s.remotePeers}
           screenPending={s.screenPending}
-          onToggleScreenShare={s.toggleScreenShare}
           onRemoveLocalScreen={s.stopScreenShare}
-          onToggleCamera={s.toggleCamera}
-          onToggleMicrophone={s.toggleMicrophone}
           cameraPreset={s.cameraPreset}
           sceneScreenIds={s.sceneScreenIds}
           sceneCameraIds={s.sceneCameraIds}
@@ -151,23 +148,35 @@ function LivePage() {
           onCameraPreset={s.setCameraPreset}
           onToggleSceneScreen={s.toggleSceneScreen}
         />
+
+        <div className="shrink-0 flex justify-center px-5 pb-3">
+          <StudioDock
+            localStream={s.localStream}
+            localScreenStream={s.localScreenStream}
+            screenPending={s.screenPending}
+            onToggleCamera={s.toggleCamera}
+            onToggleMicrophone={s.toggleMicrophone}
+            onToggleScreenShare={s.toggleScreenShare}
+            onStopScreenShare={s.stopScreenShare}
+          />
+        </div>
       </div>
 
       <footer className="px-5 py-2.5 min-h-10 text-sm text-ink-muted border-t border-border">
         {(s.error || discardError) && <span className="text-danger">{s.error || discardError}</span>}
         {!s.error && s.recordingInfo && <span>{s.recordingInfo}</span>}
-        {!s.error && !s.recordingInfo && !s.recording && <span>Ready · 1080p60</span>}
+        {!s.error && !s.recordingInfo && !s.recording && <span>Ready to stream · 1080p60</span>}
       </footer>
 
-      {goLiveOpen && (
-        <GoLiveModal
+      {streamOpen && (
+        <StartStreamModal
           platforms={s.platforms}
           streamKeys={s.streamKeys}
           pending={s.recordingPending}
-          onClose={() => setGoLiveOpen(false)}
-          onGoLive={(destinations) => {
-            s.goLive(destinations);
-            setGoLiveOpen(false);
+          onClose={() => setStreamOpen(false)}
+          onStart={(destinations) => {
+            s.startStream(destinations);
+            setStreamOpen(false);
           }}
         />
       )}

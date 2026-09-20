@@ -1,14 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { Trash2, UserPlus } from 'lucide-react';
 import { Button } from '../Button';
+import { streamStatusLabel } from '../../lib/streamLabels';
 
 type StudioHeaderProps = {
   sessionName: string;
-  recording: boolean;
+  streaming: boolean;
   live: boolean;
-  recordingPending: boolean;
-  onStartRecording: () => void;
+  pending: boolean;
+  onStartStream: () => void;
   onStop: () => void;
-  onOpenGoLive: () => void;
   onOpenInvites: () => void;
   onLeaveSessions: () => void;
   roomStatus: 'created' | 'active' | 'finished' | null;
@@ -18,83 +19,111 @@ type StudioHeaderProps = {
 
 export function StudioHeader({
   sessionName,
-  recording,
+  streaming,
   live,
-  recordingPending,
-  onStartRecording,
+  pending,
+  onStartStream,
   onStop,
-  onOpenGoLive,
   onOpenInvites,
   onLeaveSessions,
   roomStatus,
   isRoomOwner,
   onDiscard,
 }: StudioHeaderProps) {
-  const elapsed = useElapsedLabel(recording);
+  const elapsed = useElapsedLabel(streaming);
+  const statusLabel = streamStatusLabel(roomStatus, { active: streaming, live });
 
   return (
-    <header className="border-b border-border bg-surface-raised px-5 py-3 flex flex-col gap-3">
-      <div className="flex items-center gap-4 min-w-0">
-        <button
-          type="button"
-          onClick={onLeaveSessions}
-          className="text-sm font-medium text-ink-muted hover:text-ink shrink-0"
-        >
-          ← Sessions
-        </button>
-        <h1 className="text-base font-semibold text-ink truncate">{sessionName}</h1>
-        <span className={`text-xs font-bold tracking-widest shrink-0 ${recording ? `text-live ${live ? 'rec-pulse' : ''}` : 'text-ink-subtle'}`}>
-          {recording && live ? 'LIVE' : recording ? 'Recording' : roomStatus === 'created' ? 'Not started' : 'Ready'}
-        </span>
-      </div>
+    <header className="border-b border-border bg-surface-raised px-5 py-3 flex items-center gap-4 min-w-0">
+      <button
+        type="button"
+        onClick={onLeaveSessions}
+        className="text-sm font-medium text-ink-muted hover:text-ink shrink-0"
+      >
+        ← Streams
+      </button>
+      <h1 className="text-base font-semibold text-ink truncate">{sessionName}</h1>
+      <span
+        className={`text-xs font-bold tracking-widest shrink-0 ${
+          streaming ? `text-live ${live ? 'rec-pulse' : ''}` : 'text-ink-subtle'
+        }`}
+      >
+        {statusLabel}
+      </span>
 
-      <div className="flex items-center gap-2 flex-wrap">
+      <div className="ml-auto flex items-center gap-2 shrink-0">
         {isRoomOwner ? (
           <>
-            {live ? (
-              <Button variant="danger" loading={recordingPending} onClick={onStop}>
+            {streaming ? (
+              <Button variant="danger" loading={pending} onClick={onStop}>
                 <RecordingDot active />
-                Stop live
-                <span className="font-mono tabular-nums">{elapsed}</span>
-              </Button>
-            ) : recording ? (
-              <Button variant="danger" loading={recordingPending} onClick={onStop}>
-                <RecordingDot active />
-                Stop recording
+                Stop streaming
                 <span className="font-mono tabular-nums">{elapsed}</span>
               </Button>
             ) : (
-              <Button variant="danger" loading={recordingPending} onClick={onStartRecording}>
+              <Button variant="danger" loading={pending} onClick={onStartStream}>
                 <RecordingDot />
-                Start recording
+                Start streaming
               </Button>
             )}
-
-            {!live && (
-              <Button disabled={recordingPending} onClick={onOpenGoLive}>
-                Go live ▾
-              </Button>
-            )}
-            <Button disabled={recordingPending} onClick={onOpenInvites}>
-              Invite people
-            </Button>
-            {roomStatus === 'created' && !recording && (
-              <Button variant="danger" disabled={recordingPending} onClick={onDiscard}>
-                Discard room
-              </Button>
+            <IconAction
+              label="Invite"
+              disabled={pending}
+              onClick={onOpenInvites}
+              icon={<UserPlus size={18} />}
+            />
+            {roomStatus === 'created' && !streaming && (
+              <IconAction
+                label="Discard stream"
+                danger
+                disabled={pending}
+                onClick={onDiscard}
+                icon={<Trash2 size={18} />}
+              />
             )}
           </>
         ) : (
           <span className="text-xs text-ink-muted">
             {live
               ? 'The host is live — you are following their program.'
-              : recording
-                ? 'The host is recording — you are following their program.'
+              : streaming
+                ? 'The host is streaming — you are following their program.'
                 : 'Waiting for the host to start.'}
           </span>
         )}
       </div>
     </header>
+  );
+}
+
+function IconAction({
+  label,
+  icon,
+  danger = false,
+  disabled,
+  onClick,
+}: {
+  label: string;
+  icon: ReactNode;
+  danger?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      disabled={disabled}
+      onClick={onClick}
+      className={`inline-flex size-9 items-center justify-center rounded-lg border border-border transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+        danger
+          ? 'text-danger hover:border-danger/50 hover:bg-danger/10'
+          : 'text-ink-muted hover:border-border hover:bg-surface-muted hover:text-ink'
+      }`}
+    >
+      {icon}
+    </button>
   );
 }
 

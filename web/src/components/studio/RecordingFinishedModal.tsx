@@ -26,7 +26,7 @@ export function RecordingFinishedModal({ recording, onClose }: RecordingFinished
         }}
       >
         <h2 id="finished-recording-title" className="m-0 text-xl font-bold text-ink">
-          Recording finished
+          Stream completed
         </h2>
         {recording.downloadUrl ? (
           <p className="m-0 text-sm text-ink-muted leading-relaxed">
@@ -34,7 +34,7 @@ export function RecordingFinishedModal({ recording, onClose }: RecordingFinished
           </p>
         ) : (
           <p className="m-0 text-sm text-ink-muted leading-relaxed">
-            Your recording was saved on the server
+            Your stream was saved on the server
             {recording.file ? ` (${recording.file})` : ''}. Download is only available when cloud
             upload is configured.
           </p>

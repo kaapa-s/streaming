@@ -110,7 +110,7 @@ function participantActionMessage(error: unknown): string {
     return `Scene is full (${SCENE_CAPACITY}/${SCENE_CAPACITY}). Take someone off the program before adding another camera.`;
   }
   if (lower.includes('room is full')) {
-    return `Room is full (${ROOM_CAPACITY}/${ROOM_CAPACITY}). Kick someone before adding another member.`;
+    return `Stream is full (${ROOM_CAPACITY}/${ROOM_CAPACITY}). Remove someone before adding another member.`;
   }
   return message;
 }

@@ -64,8 +64,7 @@ export type StudioValue = {
   streamKeys: Record<PlatformProvider, string>;
   setStreamKey: (platform: PlatformProvider, value: string) => void;
   recordingPending: boolean;
-  startRecording: () => void;
-  goLive: (destinations: OutboundDestination[]) => void;
+  startStream: (destinations?: OutboundDestination[]) => void;
   stopRecording: () => void;
   toggleRecording: () => void;
   streamControlsLocked: boolean;

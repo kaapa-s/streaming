@@ -3,8 +3,9 @@ import { useCallback, useEffect, useState } from 'react';
 import { Button } from '../../../components/Button';
 import { apiFetch } from '../../../lib/auth';
 import { keepStudioSearch } from '../../../lib/studioSearch';
+import { mediaStatusLabel } from '../../../lib/streamLabels';
 
-export const Route = createFileRoute('/_studio/_app/rooms/$slug')({ component: FinishedRoomPage });
+export const Route = createFileRoute('/_studio/_app/rooms/$slug')({ component: FinishedStreamPage });
 
 type RoomStatus = 'created' | 'active' | 'finished';
 
@@ -33,14 +34,7 @@ function isProcessing(status: MediaStatus): boolean {
 }
 
 function statusLabel(status: MediaStatus): string {
-  switch (status) {
-    case 'starting': return 'Starting';
-    case 'recording': return 'Recording';
-    case 'stopping': return 'Stopping';
-    case 'uploading': return 'Processing';
-    case 'finished': return 'Ready';
-    case 'failed': return 'Failed';
-  }
+  return mediaStatusLabel(status);
 }
 
 function formatDuration(seconds: number | null): string {
@@ -83,13 +77,13 @@ async function loadRoomMedia(slug: string): Promise<{ room: RoomMeta; media: Med
     apiFetch(`/api/rooms/${encodeURIComponent(slug)}`),
     apiFetch(`/api/rooms/${encodeURIComponent(slug)}/media`),
   ]);
-  if (!roomResponse.ok) throw new Error(await readError(roomResponse, 'Unable to load this room'));
+  if (!roomResponse.ok) throw new Error(await readError(roomResponse, 'Unable to load this stream'));
   const room = (await roomResponse.json()) as RoomMeta;
   if (mediaResponse.status === 403) {
-    throw new ForbiddenError("Playback and download are available to the room's owner only.");
+    throw new ForbiddenError("Playback and download are available to the stream's owner only.");
   }
   if (!mediaResponse.ok) {
-    throw new Error(await readError(mediaResponse, 'Unable to load recorded media'));
+    throw new Error(await readError(mediaResponse, 'Unable to load stream media'));
   }
   const text = await mediaResponse.text();
   if (!text.trim()) return { room, media: null };
@@ -97,12 +91,12 @@ async function loadRoomMedia(slug: string): Promise<{ room: RoomMeta; media: Med
   try {
     payload = JSON.parse(text);
   } catch {
-    throw new Error('Unable to read room media');
+    throw new Error('Unable to read stream media');
   }
   return { room, media: mediaFromPayload(payload) };
 }
 
-function FinishedRoomPage() {
+function FinishedStreamPage() {
   const { slug } = Route.useParams();
   const navigate = useNavigate();
   const [room, setRoom] = useState<RoomMeta | null>(null);
@@ -119,7 +113,7 @@ function FinishedRoomPage() {
       setError('');
       setForbidden(false);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Unable to load room media');
+      setError(reason instanceof Error ? reason.message : 'Unable to load stream media');
       setForbidden(reason instanceof ForbiddenError);
     } finally {
       setLoading(false);
@@ -131,7 +125,7 @@ function FinishedRoomPage() {
     void load();
   }, [load]);
 
-  // An active/created room must never be viewed as a finished recording: hand it
+  // An active/created stream must never be viewed as a completed stream: hand it
   // back to the studio lobby instead of rendering a stale playback page.
   useEffect(() => {
     if (room && room.status !== 'finished') {
@@ -150,29 +144,29 @@ function FinishedRoomPage() {
   if (room && room.status !== 'finished') {
     return <div className="max-w-3xl">
       <h1 className="mt-5 text-2xl font-semibold tracking-tight">Opening {room.name}…</h1>
-      <p className="mt-2 text-sm text-ink-muted">This room is not finished, so it opens in the studio.</p>
+      <p className="mt-2 text-sm text-ink-muted">This stream is not finished, so it opens in the studio.</p>
     </div>;
   }
 
   return <div className="max-w-3xl">
-    <Link to="/dashboard" search={keepStudioSearch} className="text-sm font-semibold text-accent hover:text-accent-hover">← Rooms</Link>
+    <Link to="/dashboard" search={keepStudioSearch} className="text-sm font-semibold text-accent hover:text-accent-hover">← Streams</Link>
     <div className="mt-5 flex flex-wrap items-start justify-between gap-3">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">{room?.name ?? 'Finished room'}</h1>
-        <p className="mt-2 text-sm text-ink-muted">/{slug} · Read-only recording</p>
+        <h1 className="text-2xl font-semibold tracking-tight">{room?.name ?? 'Completed stream'}</h1>
+        <p className="mt-2 text-sm text-ink-muted">/{slug} · Read-only stream</p>
       </div>
       {media && <StatusChip status={media.status} />}
     </div>
 
-    {loading && <p className="mt-8 text-sm text-ink-muted">Loading recorded media…</p>}
+    {loading && <p className="mt-8 text-sm text-ink-muted">Loading stream media…</p>}
     {!loading && error && <div className="mt-8 rounded-xl border border-border bg-surface-raised p-6 shadow-sm">
       <p className={`text-sm ${forbidden ? 'text-ink-muted' : 'text-danger'}`}>{error}</p>
       {!forbidden && <Button className="mt-4" type="button" onClick={() => { setLoading(true); void load(); }}>Try again</Button>}
     </div>}
 
     {!loading && !error && !media && <div className="mt-8 rounded-xl border border-border bg-surface-raised p-6 shadow-sm">
-      <p className="text-sm text-ink-muted">No recorded media is available for this room.</p>
-      <Link to="/dashboard" search={keepStudioSearch} className="mt-4 inline-block rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-hover">Create a new room</Link>
+      <p className="text-sm text-ink-muted">No media is available for this stream.</p>
+      <Link to="/dashboard" search={keepStudioSearch} className="mt-4 inline-block rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-hover">Create a new stream</Link>
     </div>}
 
     {!loading && !error && media && <div className="mt-8 rounded-xl border border-border bg-surface-raised p-6 shadow-sm">
@@ -180,24 +174,24 @@ function FinishedRoomPage() {
 
       {media.playbackUrl && <video className="mt-5 w-full rounded-lg bg-black" controls preload="metadata" src={media.playbackUrl}>Your browser does not support video playback.</video>}
 
-      {media.playbackUrl && media.downloadUrl && <a className="mt-5 inline-block rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-hover" href={media.downloadUrl} download>Download recording</a>}
+      {media.playbackUrl && media.downloadUrl && <a className="mt-5 inline-block rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-hover" href={media.downloadUrl} download>Download stream</a>}
 
       {!media.playbackUrl && processing && <div className="mt-5 rounded-lg border border-border bg-surface-muted p-4">
-        <p className="text-sm font-medium text-ink">Processing your recording…</p>
-        <p className="mt-1 text-sm text-ink-muted">The recorded file is being finalized. This page refreshes automatically.</p>
+        <p className="text-sm font-medium text-ink">Processing your stream…</p>
+        <p className="mt-1 text-sm text-ink-muted">The stream file is being finalized. This page refreshes automatically.</p>
         <Button className="mt-4" type="button" onClick={() => { setLoading(true); void load(); }}>Check now</Button>
       </div>}
 
       {!media.playbackUrl && !processing && media.status === 'failed' && <div className="mt-5 rounded-lg border border-border bg-surface-muted p-4">
-        <p className="text-sm font-medium text-danger">Recording failed</p>
-        <p className="mt-1 text-sm text-ink-muted">{media.error || 'The recording could not be finalized.'}</p>
-        <p className="mt-1 text-sm text-ink-muted">This room is finished and cannot be reopened. Start a new room to record again.</p>
-        <Link to="/dashboard" search={keepStudioSearch} className="mt-4 inline-block rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-hover">Create a new room</Link>
+        <p className="text-sm font-medium text-danger">Stream failed</p>
+        <p className="mt-1 text-sm text-ink-muted">{media.error || 'The stream could not be finalized.'}</p>
+        <p className="mt-1 text-sm text-ink-muted">This stream is finished and cannot be reopened. Start a new stream to go again.</p>
+        <Link to="/dashboard" search={keepStudioSearch} className="mt-4 inline-block rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-hover">Create a new stream</Link>
       </div>}
 
       {!media.playbackUrl && !processing && media.status === 'finished' && <div className="mt-5 rounded-lg border border-border bg-surface-muted p-4">
-        <p className="text-sm font-medium text-ink">Recording saved without cloud storage</p>
-        <p className="mt-1 text-sm text-ink-muted">The recording finished, but this server cannot stream it for playback or download.</p>
+        <p className="text-sm font-medium text-ink">Stream saved without cloud storage</p>
+        <p className="mt-1 text-sm text-ink-muted">The stream finished, but this server cannot stream it for playback or download.</p>
         <Button className="mt-4" type="button" onClick={() => { setLoading(true); void load(); }}>Check again</Button>
       </div>}
     </div>}
@@ -219,10 +213,10 @@ function StatusChip({ status }: { status: MediaStatus }) {
 function MediaMetadata({ media }: { media: NonNullable<Media> }) {
   const items: Array<[string, string]> = [
     ['Duration', formatDuration(media.durationSeconds)],
-    ['Recorded', formatDateTime(media.startedAt)],
+    ['Started', formatDateTime(media.startedAt)],
     ['Finished', formatDateTime(media.endedAt)],
     ['Quality', media.resolution],
-    ['Mode', media.live ? 'Live recording' : 'Recording'],
+    ['Mode', media.live ? 'Live stream' : 'Private stream'],
   ];
   return <dl className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3">
     {items.map(([label, value]) => <div key={label}>

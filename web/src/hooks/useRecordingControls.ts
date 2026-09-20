@@ -89,13 +89,13 @@ export function useRecordingControls(
           setLive(!!body.live);
           setLiveDestinations(nextDestinations);
           setRecordingInfo(
-            body.live ? formatLiveInfo(nextDestinations) : 'Recording @ 1080p60',
+            body.live ? formatLiveInfo(nextDestinations) : 'Streaming privately @ 1080p60',
           );
         } else if (body.status === 'stopping' || body.status === 'uploading') {
           setRecording(false);
           setLive(false);
           setLiveDestinations([]);
-          setRecordingInfo('Finalizing recording…');
+          setRecordingInfo('Finalizing stream…');
         }
       } catch {
         // Restoring control is best-effort; a failed lookup must not block the studio.
@@ -146,21 +146,21 @@ export function useRecordingControls(
             setError(
               typeof body.error === 'string' && body.error.trim()
                 ? body.error
-                : 'Recording processing failed',
+                : 'Stream processing failed',
             );
           } else if (downloadUrl || file) {
             setFinishedRecording({
               ...(downloadUrl ? { downloadUrl } : {}),
               ...(file ? { file } : {}),
             });
-            setRecordingInfo(downloadUrl ? 'Recording saved' : 'Recording saved on server');
+            setRecordingInfo(downloadUrl ? 'Stream saved' : 'Stream saved on server');
           } else {
             setFinishedRecording(null);
             setRecordingInfo('');
           }
         } else {
           setRecordingInfo(
-            body.live ? formatLiveInfo(nextDestinations) : 'Recording @ 1080p60',
+            body.live ? formatLiveInfo(nextDestinations) : 'Streaming privately @ 1080p60',
           );
         }
       } catch (err) {
@@ -169,31 +169,26 @@ export function useRecordingControls(
     });
   };
 
-  const startRecording = () => {
-    if (recording || recordingPending) return;
-    runRecordingAction('start');
+  const stopRecording = () => {
+    if (!recording || recordingPending) return;
+    runRecordingAction('stop');
   };
 
-  const goLive = (destinations: OutboundDestination[]) => {
-    if (recordingPending) return;
-    if (recording) {
-      setError('Stop recording before going live');
-      return;
-    }
+  /**
+   * Single entry point for both private and simulcast streams. Destinations are
+   * optional: an empty list starts a private stream that is saved on the server.
+   */
+  const startStream = (destinations: OutboundDestination[] = []) => {
+    if (recording || recordingPending) return;
     for (const dest of destinations) {
       setStreamKey(dest.platform, dest.streamKey);
     }
     runRecordingAction('start', { destinations });
   };
 
-  const stopRecording = () => {
-    if (!recording || recordingPending) return;
-    runRecordingAction('stop');
-  };
-
   const toggleRecording = () => {
     if (recording) stopRecording();
-    else startRecording();
+    else startStream();
   };
 
   return {
@@ -206,8 +201,7 @@ export function useRecordingControls(
     streamKeys,
     setStreamKey,
     recordingPending,
-    startRecording,
-    goLive,
+    startStream,
     stopRecording,
     toggleRecording,
     resetUi,

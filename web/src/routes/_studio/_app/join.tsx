@@ -50,8 +50,8 @@ function RoomLobby() {
 
   if (!s.user) return null;
   return <div className="max-w-xl">
-    <h1 className="text-2xl font-semibold tracking-tight">Opening {room || 'room'}…</h1>
-    <p className="mt-2 text-sm text-ink-muted leading-relaxed">Joining the room studio. Recording remains stopped until you start it.</p>
+    <h1 className="text-2xl font-semibold tracking-tight">Opening {room || 'stream'}…</h1>
+    <p className="mt-2 text-sm text-ink-muted leading-relaxed">Joining the stream studio. Streaming remains stopped until you start it.</p>
     {(s.error || inviteError) && <p className="mt-3 text-sm text-danger">{s.error || inviteError}</p>}
   </div>;
 }

@@ -10,6 +10,14 @@ export class RoomInvite {
   @Column()
   declare tokenHash: string;
 
+  /**
+   * Raw token, stored so the canonical invite URL can be re-read by the owner.
+   * Null for legacy hash-only invites, which must be regenerated to share.
+   */
+  @Index({ unique: true })
+  @Column({ type: 'character varying', nullable: true })
+  declare token: string | null;
+
   @Index()
   @Column()
   declare roomId: string;
