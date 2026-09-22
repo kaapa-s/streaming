@@ -15,18 +15,6 @@ need() {
 need node
 need npm
 need docker
-need bd
-
-BD_VERSION="$(bd version | awk '{print $3}')"
-BD_MAJOR="${BD_VERSION%%.*}"
-BD_MINOR="${BD_VERSION#*.}"
-BD_MINOR="${BD_MINOR%%.*}"
-if [[ "$BD_MAJOR" -lt 1 || ( "$BD_MAJOR" -eq 1 && "$BD_MINOR" -lt 3 ) ]]; then
-  echo "Beads 1.3.0+ required: parent closure with open children must be rejected (found bd $BD_VERSION)" >&2
-  exit 1
-fi
-
-echo "==> using Beads $BD_VERSION (parent-child close guard enabled)"
 
 NODE_MAJOR="$(node -p "process.versions.node.split('.')[0]")"
 if [[ "$NODE_MAJOR" -lt 22 ]]; then

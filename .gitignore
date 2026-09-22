@@ -14,4 +14,3 @@ e2e/e2e-artifacts
 e2e/coordinator-artifacts/
 e2e/swarm-artifacts/
 quality-agent-artifacts/
-.beads.gate.lock
